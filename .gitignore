@@ -4,9 +4,11 @@ node_modules/
 # Build output
 dist/
 
-# Environment secrets
+# Environment secrets & keys
 .env
 .env.*
+*.pem
+deploy.sh
 
 # Temporary / sensitive data files
 data/*.db-wal
