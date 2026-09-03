@@ -15,18 +15,35 @@ export interface SearchFilter {
   /** Maximum price in USD dollars (not cents) */
   max_price: number | null;
   /**
-   * null = any. 0 = studio. 4 = "4 or more".
+   * null or empty = any. Array of bedroom counts: 0 = studio, 1 = 1 BR, 2 = 2 BR, 3 = 3 BR, 4 = 4+ BR.
    */
-  bedrooms: number | null;
+  bedrooms: number[] | null;
   locations: string[];
   city: CityKey;
   is_active: 0 | 1;
   created_at: string;
 }
 
-interface SearchFilterRow extends Omit<SearchFilter, 'locations' | 'requires_pool'> {
+interface SearchFilterRow extends Omit<SearchFilter, 'locations' | 'requires_pool' | 'bedrooms'> {
   requires_pool: 0 | 1;
   locations: string; // JSON string in DB
+  bedrooms: string | number | null;
+}
+
+function parseBedroomsField(val: unknown): number[] | null {
+  if (val === null || val === undefined) return null;
+  if (typeof val === 'number') return [val];
+  if (typeof val === 'string') {
+    try {
+      const parsed = JSON.parse(val);
+      if (Array.isArray(parsed)) return parsed.map(Number);
+      if (typeof parsed === 'number') return [parsed];
+    } catch {
+      const parts = val.split(',').map((s) => parseInt(s.trim(), 10)).filter((n) => !isNaN(n));
+      if (parts.length > 0) return parts;
+    }
+  }
+  return null;
 }
 
 function rowToFilter(row: SearchFilterRow): SearchFilter {
@@ -34,10 +51,13 @@ function rowToFilter(row: SearchFilterRow): SearchFilter {
     ...row,
     requires_pool: Boolean(row.requires_pool),
     locations: JSON.parse(row.locations || '[]') as string[],
+    bedrooms: parseBedroomsField(row.bedrooms),
   };
 }
 
-export type CreateFilterInput = Omit<SearchFilter, 'id' | 'created_at' | 'is_active'>;
+export type CreateFilterInput = Omit<SearchFilter, 'id' | 'created_at' | 'is_active' | 'bedrooms'> & {
+  bedrooms: number[] | number | null;
+};
 
 // ─── Repository ───────────────────────────────────────────────────────────────
 
@@ -45,6 +65,12 @@ export class FiltersRepository {
   constructor(private readonly db: DatabaseSync) {}
 
   createFilter(input: CreateFilterInput): SearchFilter {
+    const bedroomsValue = Array.isArray(input.bedrooms)
+      ? JSON.stringify(input.bedrooms)
+      : typeof input.bedrooms === 'number'
+        ? JSON.stringify([input.bedrooms])
+        : null;
+
     const result = this.db
       .prepare(
         `INSERT INTO search_filters
@@ -60,7 +86,7 @@ export class FiltersRepository {
         input.min_lease_preferred ?? null,
         input.min_price ?? null,
         input.max_price ?? null,
-        input.bedrooms ?? null,
+        bedroomsValue,
         JSON.stringify(input.locations ?? []),
         input.city,
       );
@@ -82,6 +108,13 @@ export class FiltersRepository {
   getUserFilters(userId: number): SearchFilter[] {
     const rows = this.db
       .prepare('SELECT * FROM search_filters WHERE user_id = ? ORDER BY created_at DESC')
+      .all(userId) as unknown as SearchFilterRow[];
+    return rows.map(rowToFilter);
+  }
+
+  getUserActiveFilters(userId: number): SearchFilter[] {
+    const rows = this.db
+      .prepare('SELECT * FROM search_filters WHERE user_id = ? AND is_active = 1 ORDER BY created_at DESC')
       .all(userId) as unknown as SearchFilterRow[];
     return rows.map(rowToFilter);
   }

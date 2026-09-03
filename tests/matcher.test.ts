@@ -91,4 +91,57 @@ describe('Matching Engine', () => {
     const deactMatches = container.matcherService.matchProperty(deactivatedProperty);
     expect(deactMatches.length).toBe(0);
   });
+
+  test('matches property against multi-bedroom filter (e.g. 1 and 2 BR)', () => {
+    const multiBedFilter = container.filtersRepo.createFilter({
+      user_id: testUserId,
+      type: 'rent',
+      city: 'siem_reap',
+      category: null,
+      requires_pool: false,
+      min_lease_preferred: null,
+      locations: [],
+      min_price: null,
+      max_price: null,
+      bedrooms: [1, 2], // 1 BR OR 2 BR
+    });
+
+    const prop1BR: Property = {
+      id: 201,
+      hash: 'test201',
+      title: 'Cozy 1BR',
+      description: '',
+      price: 30000,
+      currency: 'USD',
+      type: 'rent',
+      category: 'apartment',
+      bedrooms: 1,
+      bathrooms: 1,
+      deposit: null,
+      min_lease: null,
+      has_pool: false,
+      location: 'Slor Kram',
+      city: 'siem_reap',
+      maps_url: null,
+      source_url: null,
+      photos: [],
+      image_phash: null,
+      image_phashes: [],
+      direct_contact: {},
+      original_url: '',
+      reports_count: 0,
+      is_active: 1,
+      parsed_at: new Date().toISOString(),
+      created_at: new Date().toISOString(),
+    };
+
+    const prop2BR: Property = { ...prop1BR, id: 202, bedrooms: 2 };
+    const prop3BR: Property = { ...prop1BR, id: 203, bedrooms: 3 };
+    const propStudio: Property = { ...prop1BR, id: 204, bedrooms: 0 };
+
+    expect(container.matcherService.propertyMatchesFilter(prop1BR, multiBedFilter)).toBe(true);
+    expect(container.matcherService.propertyMatchesFilter(prop2BR, multiBedFilter)).toBe(true);
+    expect(container.matcherService.propertyMatchesFilter(prop3BR, multiBedFilter)).toBe(false);
+    expect(container.matcherService.propertyMatchesFilter(propStudio, multiBedFilter)).toBe(false);
+  });
 });

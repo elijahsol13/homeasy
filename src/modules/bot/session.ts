@@ -11,7 +11,7 @@ export interface FilterDraft {
   locations: string[];
   min_price?: number;
   max_price?: number;
-  bedrooms?: number | null;
+  bedrooms?: number[] | null;
   requires_pool?: boolean;
   min_lease_preferred?: number | null;
 }
