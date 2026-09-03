@@ -6,6 +6,7 @@ import {
   categoryKeyboard,
   cityKeyboard,
   confirmKeyboard,
+  formatBedroomsLabel,
   leaseKeyboard,
   locationsKeyboard,
   poolKeyboard,
@@ -25,7 +26,8 @@ import {
   POOL_OPTIONS,
   type CityKey,
 } from '../../../config/settings';
-import type { FilterDraft } from '../session';
+import type { FilterDraft, WizardStep } from '../session';
+import type { SearchFilter } from '../../../database/repositories/filters.repo';
 
 // ─── Free-form text input for custom budget ───────────────────────────────────
 
@@ -79,7 +81,7 @@ export function parseCustomBudgetInput(text: string): { min?: number; max?: numb
 
 export async function startFilterWizard(ctx: MyContext): Promise<void> {
   ctx.session.wizardStep = 'filter:type';
-  ctx.session.filterDraft = { locations: [], requires_pool: false };
+  ctx.session.filterDraft = { locations: [], bedrooms: [], requires_pool: false };
 
   await sendOrEdit(
     ctx,
@@ -90,27 +92,41 @@ export async function startFilterWizard(ctx: MyContext): Promise<void> {
 
 // ─── Filter list display ──────────────────────────────────────────────────────
 
+export function formatFilterButtonLabel(f: SearchFilter, index: number): string {
+  const typeIcon = f.type === 'rent' ? '🏠' : '🏷️';
+  const catShort =
+    f.category === 'apartment' ? 'Apt' : f.category === 'house' ? 'House' : f.category === 'room' ? 'Room' : 'Any';
+  const bedsShort = formatBedroomsLabel(f.bedrooms);
+  const priceShort = buildPriceRangeLabel(f.min_price, f.max_price);
+  const poolIcon = f.requires_pool ? ' · 🏊' : '';
+  const city = f.city === 'siem_reap' ? 'SR' : 'PP';
+
+  return `🗑 #${index + 1}: ${typeIcon} ${catShort} · ${bedsShort} · ${priceShort}${poolIcon} (${city})`;
+}
+
 export async function showUserFilters(ctx: MyContext): Promise<void> {
   const from = ctx.from;
   if (!from) return;
 
   const user = ctx.container.usersRepo.findByTelegramId(from.id);
   if (!user) {
-    await sendOrEdit(ctx, '❌ Please /start the bot first.', {});
+    await ctx.reply('Please start the bot first with /start');
     return;
   }
 
-  const activeFilters = ctx.container.filtersRepo.getUserFilters(user.id).filter((f) => f.is_active === 1);
+  const activeFilters = ctx.container.filtersRepo.getUserActiveFilters(user.id);
 
   if (activeFilters.length === 0) {
     await sendOrEdit(
       ctx,
-      '🛠 <b>Manage Alerts</b>\n\nYou have no active search alerts yet.\n\nTap <b>🔍 Search & Alerts</b> to create one!',
+      '🛠 <b>Manage Alerts</b>\n\n' +
+        'You have no active search alerts.\n\n' +
+        'Tap <b>➕ Set Search Alert</b> to create one!',
       {
         parse_mode: 'HTML' as const,
         reply_markup: {
           inline_keyboard: [
-            [{ text: '🔍 Create Alert', callback_data: 'cb:menu:search' }],
+            [{ text: '➕ Set Search Alert', callback_data: 'cb:menu:search' }],
             [{ text: '🔙 Main Menu', callback_data: 'cb:menu:main' }],
           ],
         },
@@ -125,8 +141,7 @@ export async function showUserFilters(ctx: MyContext): Promise<void> {
     const catLabel =
       CATEGORY_OPTIONS.find((c) => c.value === f.category)?.label ?? '🏢 Any Category';
     const priceRange = buildPriceRangeLabel(f.min_price, f.max_price);
-    const beds =
-      f.bedrooms === null ? 'Any' : f.bedrooms === 0 ? 'Studio' : `${f.bedrooms} BR`;
+    const beds = formatBedroomsLabel(f.bedrooms);
     const locs = f.locations.length > 0 ? f.locations.join(', ') : 'All Areas';
     const pool = f.requires_pool ? '🏊 Pool: Required' : '🏊 Pool: Any';
     const lease =
@@ -141,12 +156,15 @@ export async function showUserFilters(ctx: MyContext): Promise<void> {
     text += `   📍 ${locs}\n`;
     text += `   💰 ${priceRange}/mo\n`;
     text += `   🛏 ${beds} · ${pool}\n`;
-    text += `   ⏱️ ${lease}\n\n`;
+    if (f.type === 'rent') {
+      text += `   ⏱️ ${lease}\n`;
+    }
+    text += '\n';
   });
 
   const deleteButtons = activeFilters.map((f, i) => [
     {
-      text: `🗑 Delete Alert #${i + 1} (${f.type === 'rent' ? 'Rent' : 'Sale'} · ${CITIES[f.city] ?? f.city})`,
+      text: formatFilterButtonLabel(f, i),
       callback_data: `cb:filter:delete:${f.id}`,
     },
   ]);
@@ -184,6 +202,88 @@ export async function handleFilterCallback(ctx: MyContext, data: string): Promis
 
   if (data === 'cb:filter:restart') {
     await startFilterWizard(ctx);
+    await ctx.answerCallbackQuery();
+    return;
+  }
+
+  if (data.startsWith('cb:filter:back:')) {
+    const targetStep = data.replace('cb:filter:back:', '') as WizardStep;
+    ctx.session.wizardStep = targetStep;
+
+    switch (targetStep) {
+      case 'filter:type':
+        await ctx.editMessageText('🏠 <b>Step 1 / 8 — Listing Type</b>\n\nAre you looking to rent or buy?', {
+          parse_mode: 'HTML',
+          reply_markup: typeKeyboard(),
+        });
+        break;
+
+      case 'filter:category':
+        await ctx.editMessageText(
+          `✅ <b>${draft.type === 'rent' ? 'For Rent' : 'For Sale'}</b> selected.\n\n` +
+            `🏢 <b>Step 2 / 8 — Property Category</b>\n\nWhat category of property are you looking for?`,
+          { parse_mode: 'HTML', reply_markup: categoryKeyboard() },
+        );
+        break;
+
+      case 'filter:city':
+        await ctx.editMessageText(
+          `✅ <b>Category:</b> ${
+            CATEGORY_OPTIONS.find((c) => c.value === draft.category)?.label ?? 'Any'
+          }\n\n` + `🌆 <b>Step 3 / 8 — City</b>\n\nWhich city are you looking in?`,
+          { parse_mode: 'HTML', reply_markup: cityKeyboard() },
+        );
+        break;
+
+      case 'filter:locations':
+        if (!draft.city) draft.city = 'siem_reap';
+        await ctx.editMessageText(
+          `✅ <b>${CITIES[draft.city]}</b> selected.\n\n` +
+            `📍 <b>Step 4 / 8 — Districts / Sangkats</b>\n\n` +
+            `Pick specific areas or tap <b>Any Area</b> for the whole city. Tap <b>✅ Done</b> when ready.`,
+          { parse_mode: 'HTML', reply_markup: locationsKeyboard(draft.city, draft.locations) },
+        );
+        break;
+
+      case 'filter:budget':
+        await ctx.editMessageText(
+          `✅ <b>Areas:</b> ${draft.locations.length > 0 ? draft.locations.join(', ') : 'All Areas'}\n\n` +
+            `💰 <b>Step 5 / 8 — Monthly Budget</b>\n\n` +
+            `Select a preset range or <b>type your custom budget directly</b> (e.g. <code>150-300</code>, <code>under 250</code>, or <code>200</code>):`,
+          { parse_mode: 'HTML', reply_markup: budgetKeyboard() },
+        );
+        break;
+
+      case 'filter:bedrooms':
+        await ctx.editMessageText(
+          `✅ <b>Budget:</b> ${buildPriceRangeLabel(draft.min_price ?? null, draft.max_price ?? null)}\n\n` +
+            `🛏 <b>Step 6 / 8 — Bedrooms</b>\n\n` +
+            `Select one or more bedroom options (e.g. 1 and 2 BR), or tap <b>Any</b>:`,
+          { parse_mode: 'HTML', reply_markup: bedroomsKeyboard(draft.bedrooms ?? []) },
+        );
+        break;
+
+      case 'filter:pool':
+        await ctx.editMessageText(
+          `✅ <b>Bedrooms:</b> ${formatBedroomsLabel(draft.bedrooms)}\n\n` +
+            `🏊 <b>Step 7 / 8 — Swimming Pool</b>\n\nDo you require a swimming pool?`,
+          { parse_mode: 'HTML', reply_markup: poolKeyboard() },
+        );
+        break;
+
+      case 'filter:lease':
+        await ctx.editMessageText(
+          `✅ <b>Pool:</b> ${draft.requires_pool ? 'Required 🏊' : 'Any'}\n\n` +
+            `⏱️ <b>Step 8 / 8 — Lease Term</b>\n\nWhat is your preferred lease duration?`,
+          { parse_mode: 'HTML', reply_markup: leaseKeyboard() },
+        );
+        break;
+
+      default:
+        await startFilterWizard(ctx);
+        break;
+    }
+
     await ctx.answerCallbackQuery();
     return;
   }
@@ -365,10 +465,12 @@ export async function handleFilterCallback(ctx: MyContext, data: string): Promis
     }
 
     ctx.session.wizardStep = 'filter:bedrooms';
+    if (!draft.bedrooms) draft.bedrooms = [];
     await ctx.editMessageText(
       `✅ <b>Budget:</b> ${buildPriceRangeLabel(draft.min_price ?? null, draft.max_price ?? null)}\n\n` +
-        `🛏 <b>Step 6 / 8 — Bedrooms</b>\n\nHow many bedrooms do you need?`,
-      { parse_mode: 'HTML', reply_markup: bedroomsKeyboard() },
+        `🛏 <b>Step 6 / 8 — Bedrooms</b>\n\n` +
+        `Select one or more bedroom options (e.g. 1 and 2 BR), or tap <b>Any</b>:`,
+      { parse_mode: 'HTML', reply_markup: bedroomsKeyboard(draft.bedrooms) },
     );
     await ctx.answerCallbackQuery();
     return;
@@ -377,23 +479,69 @@ export async function handleFilterCallback(ctx: MyContext, data: string): Promis
   // ── Step 6: filter:bedrooms ────────────────────────────────────────────────
 
   if (step === 'filter:bedrooms' && data.startsWith('cb:filter:beds:')) {
-    const idx = parseInt(data.replace('cb:filter:beds:', ''), 10);
-    const opt = BEDROOM_OPTIONS[idx];
-    if (opt !== undefined) {
-      draft.bedrooms = opt.value;
+    if (!Array.isArray(draft.bedrooms)) {
+      draft.bedrooms = [];
     }
 
-    ctx.session.wizardStep = 'filter:pool';
-    const bedsLabel =
-      draft.bedrooms === null ? 'Any' : draft.bedrooms === 0 ? 'Studio' : `${draft.bedrooms} BR`;
+    if (data.startsWith('cb:filter:beds:toggle:')) {
+      const val = parseInt(data.replace('cb:filter:beds:toggle:', ''), 10);
+      if (!isNaN(val)) {
+        if (draft.bedrooms.includes(val)) {
+          draft.bedrooms = draft.bedrooms.filter((b) => b !== val);
+        } else {
+          draft.bedrooms = [...draft.bedrooms, val].sort((a, b) => a - b);
+        }
+      }
+      await ctx.editMessageReplyMarkup({
+        reply_markup: bedroomsKeyboard(draft.bedrooms),
+      });
+      await ctx.answerCallbackQuery(
+        draft.bedrooms.includes(val) ? '✅ Selected' : 'Deselected',
+      );
+      return;
+    }
 
-    await ctx.editMessageText(
-      `✅ <b>Bedrooms:</b> ${bedsLabel}\n\n` +
-        `🏊 <b>Step 7 / 8 — Swimming Pool</b>\n\nDo you require a swimming pool?`,
-      { parse_mode: 'HTML', reply_markup: poolKeyboard() },
-    );
-    await ctx.answerCallbackQuery();
-    return;
+    if (data === 'cb:filter:beds:any') {
+      draft.bedrooms = null;
+      ctx.session.wizardStep = 'filter:pool';
+      await ctx.editMessageText(
+        `✅ <b>Bedrooms:</b> Any\n\n` +
+          `🏊 <b>Step 7 / 8 — Swimming Pool</b>\n\nDo you require a swimming pool?`,
+        { parse_mode: 'HTML', reply_markup: poolKeyboard() },
+      );
+      await ctx.answerCallbackQuery();
+      return;
+    }
+
+    if (data === 'cb:filter:beds:done') {
+      if (draft.bedrooms.length === 0) {
+        draft.bedrooms = null;
+      }
+      ctx.session.wizardStep = 'filter:pool';
+      const bedsLabel = formatBedroomsLabel(draft.bedrooms);
+
+      await ctx.editMessageText(
+        `✅ <b>Bedrooms:</b> ${bedsLabel}\n\n` +
+          `🏊 <b>Step 7 / 8 — Swimming Pool</b>\n\nDo you require a swimming pool?`,
+        { parse_mode: 'HTML', reply_markup: poolKeyboard() },
+      );
+      await ctx.answerCallbackQuery();
+      return;
+    }
+
+    // Direct index fallback (e.g. legacy/tests cb:filter:beds:0, cb:filter:beds:1)
+    const idx = parseInt(data.replace('cb:filter:beds:', ''), 10);
+    if (!isNaN(idx)) {
+      draft.bedrooms = idx === 0 ? null : [idx - 1];
+      ctx.session.wizardStep = 'filter:pool';
+      await ctx.editMessageText(
+        `✅ <b>Bedrooms:</b> ${formatBedroomsLabel(draft.bedrooms)}\n\n` +
+          `🏊 <b>Step 7 / 8 — Swimming Pool</b>\n\nDo you require a swimming pool?`,
+        { parse_mode: 'HTML', reply_markup: poolKeyboard() },
+      );
+      await ctx.answerCallbackQuery();
+      return;
+    }
   }
 
   // ── Step 7: filter:pool ────────────────────────────────────────────────────
@@ -403,6 +551,17 @@ export async function handleFilterCallback(ctx: MyContext, data: string): Promis
     const opt = POOL_OPTIONS[idx];
     if (opt !== undefined) {
       draft.requires_pool = opt.value;
+    }
+
+    if (draft.type === 'sale') {
+      ctx.session.wizardStep = 'filter:confirm';
+      const summary = buildFilterSummary(draft);
+      await ctx.editMessageText(
+        `📋 <b>Alert Summary</b>\n\n${summary}\n\nDoes everything look right?`,
+        { parse_mode: 'HTML', reply_markup: confirmKeyboard(draft.type) },
+      );
+      await ctx.answerCallbackQuery();
+      return;
     }
 
     ctx.session.wizardStep = 'filter:lease';
@@ -429,7 +588,7 @@ export async function handleFilterCallback(ctx: MyContext, data: string): Promis
 
     await ctx.editMessageText(
       `📋 <b>Alert Summary</b>\n\n${summary}\n\nDoes everything look right?`,
-      { parse_mode: 'HTML', reply_markup: confirmKeyboard() },
+      { parse_mode: 'HTML', reply_markup: confirmKeyboard(draft.type) },
     );
     await ctx.answerCallbackQuery();
     return;
@@ -511,15 +670,9 @@ function buildFilterSummary(draft: FilterDraft): string {
     CATEGORY_OPTIONS.find((c) => c.value === draft.category)?.label ?? '🏢 Any Category';
   const cityLabel = draft.city ? CITIES[draft.city] : '—';
   const locsLabel = draft.locations.length > 0 ? draft.locations.join(', ') : 'All Areas';
-  const budgetLabel = buildPriceRangeLabel(draft.min_price ?? null, draft.max_price ?? null);
-  const bedsLabel =
-    draft.bedrooms === undefined || draft.bedrooms === null
-      ? 'Any'
-      : draft.bedrooms === 0
-        ? 'Studio'
-        : draft.bedrooms >= 4
-          ? '4+ BR'
-          : `${draft.bedrooms} BR`;
+  const priceSuffix = draft.type === 'rent' ? '/mo' : '';
+  const budgetLabel = `${buildPriceRangeLabel(draft.min_price ?? null, draft.max_price ?? null)}${priceSuffix}`;
+  const bedsLabel = formatBedroomsLabel(draft.bedrooms);
   const poolLabel = draft.requires_pool ? '🏊 Pool Required' : 'Any';
   const leaseLabel =
     draft.min_lease_preferred === 5
@@ -533,10 +686,10 @@ function buildFilterSummary(draft: FilterDraft): string {
     `• Category: <b>${catLabel}</b>\n` +
     `• City: <b>${cityLabel}</b>\n` +
     `• Areas: <b>${locsLabel}</b>\n` +
-    `• Budget: <b>${budgetLabel}/mo</b>\n` +
+    `• Budget: <b>${budgetLabel}</b>\n` +
     `• Bedrooms: <b>${bedsLabel}</b>\n` +
     `• Pool: <b>${poolLabel}</b>\n` +
-    `• Lease Term: <b>${leaseLabel}</b>`
+    (draft.type === 'rent' ? `• Lease Term: <b>${leaseLabel}</b>` : '')
   );
 }
 
@@ -590,11 +743,13 @@ export function createFiltersHandler(_container: AppContainer): Composer<MyConte
     draft.min_price = parsed.min;
     draft.max_price = parsed.max;
     ctx.session.wizardStep = 'filter:bedrooms';
+    if (!draft.bedrooms) draft.bedrooms = [];
 
     await ctx.reply(
       `✅ <b>Budget:</b> ${buildPriceRangeLabel(draft.min_price ?? null, draft.max_price ?? null)}\n\n` +
-        `🛏 <b>Step 6 / 8 — Bedrooms</b>\n\nHow many bedrooms do you need?`,
-      { parse_mode: 'HTML', reply_markup: bedroomsKeyboard() },
+        `🛏 <b>Step 6 / 8 — Bedrooms</b>\n\n` +
+        `Select one or more bedroom options (e.g. 1 and 2 BR), or tap <b>Any</b>:`,
+      { parse_mode: 'HTML', reply_markup: bedroomsKeyboard(draft.bedrooms) },
     );
   });
 

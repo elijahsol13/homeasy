@@ -8,12 +8,15 @@ import {
   bedroomsKeyboard,
   poolKeyboard,
   leaseKeyboard,
+  formatBedroomsLabel,
 } from '../src/modules/bot/keyboards/filter.keyboard';
 import {
   listingActionKeyboard,
   favoritesListKeyboard,
   favoriteDetailKeyboard,
 } from '../src/modules/bot/keyboards/listing.keyboard';
+import { formatFilterButtonLabel } from '../src/modules/bot/handlers/filters.handler';
+import type { SearchFilter } from '../src/database/repositories/filters.repo';
 import type { Property } from '../src/database/repositories/properties.repo';
 
 type FlatBtn = { text: string; callback_data?: string; url?: string };
@@ -61,22 +64,25 @@ describe('Telegram Bot Keyboard Generators', () => {
       expect(flat.some((b) => b.text.includes('Cancel') && b.callback_data === 'cb:filter:cancel')).toBe(true);
     });
 
-    test('categoryKeyboard renders category options and cancel', () => {
+    test('categoryKeyboard renders category options, back, and cancel', () => {
       const kb = categoryKeyboard();
       const flat = kb.inline_keyboard.flat() as FlatBtn[];
 
-      expect(flat.length).toBe(5); // 4 category options ('Any', 'Apartment', 'House', 'Room') + cancel
+      expect(flat.length).toBe(6); // 4 category options ('Any', 'Apartment', 'House', 'Room') + back + cancel
       expect(flat.some((b) => b.text.includes('Apartment'))).toBe(true);
       expect(flat.some((b) => b.text.includes('House'))).toBe(true);
       expect(flat.some((b) => b.text.includes('Room'))).toBe(true);
+      expect(flat.some((b) => b.text.includes('Back'))).toBe(true);
+      expect(flat.some((b) => b.text.includes('Cancel'))).toBe(true);
     });
 
-    test('cityKeyboard renders Phnom Penh and Siem Reap', () => {
+    test('cityKeyboard renders Phnom Penh, Siem Reap, and Back', () => {
       const kb = cityKeyboard();
       const flat = kb.inline_keyboard.flat() as FlatBtn[];
 
       expect(flat.some((b) => b.text.includes('Phnom Penh') && b.callback_data === 'cb:filter:city:phnom_penh')).toBe(true);
       expect(flat.some((b) => b.text.includes('Siem Reap') && b.callback_data === 'cb:filter:city:siem_reap')).toBe(true);
+      expect(flat.some((b) => b.text.includes('Back'))).toBe(true);
     });
 
     test('locationsKeyboard renders districts and selected states', () => {
@@ -93,24 +99,29 @@ describe('Telegram Bot Keyboard Generators', () => {
 
       expect(flat.some((b) => b.text.includes('Done'))).toBe(true);
       expect(flat.some((b) => b.text.includes('Any Area'))).toBe(true);
+      expect(flat.some((b) => b.text.includes('Back'))).toBe(true);
     });
 
-    test('budgetKeyboard renders ranges, custom, any, and cancel', () => {
+    test('budgetKeyboard renders ranges, custom, any, back, and cancel', () => {
       const kb = budgetKeyboard();
       const flat = kb.inline_keyboard.flat() as FlatBtn[];
 
       expect(flat.some((b) => b.text.includes('Custom Budget'))).toBe(true);
       expect(flat.some((b) => b.text.includes('Any Budget'))).toBe(true);
+      expect(flat.some((b) => b.text.includes('Back'))).toBe(true);
       expect(flat.some((b) => b.text.includes('Cancel'))).toBe(true);
     });
 
-    test('bedroomsKeyboard renders bedroom options', () => {
-      const kb = bedroomsKeyboard();
+    test('bedroomsKeyboard renders bedroom options, multi-select toggles, and continue', () => {
+      const kb = bedroomsKeyboard([1, 2]);
       const flat = kb.inline_keyboard.flat() as FlatBtn[];
 
       expect(flat.some((b) => b.text.includes('Studio'))).toBe(true);
-      expect(flat.some((b) => b.text.includes('1 BR'))).toBe(true);
+      expect(flat.some((b) => b.text.includes('✅ 1 BR'))).toBe(true);
+      expect(flat.some((b) => b.text.includes('✅ 2 BR'))).toBe(true);
       expect(flat.some((b) => b.text.includes('Any'))).toBe(true);
+      expect(flat.some((b) => b.text.includes('Continue'))).toBe(true);
+      expect(flat.some((b) => b.text.includes('Back'))).toBe(true);
     });
 
     test('poolKeyboard and leaseKeyboard render properly', () => {
@@ -186,6 +197,65 @@ describe('Telegram Bot Keyboard Generators', () => {
       const detail = favoriteDetailKeyboard(99);
       const detailFlat = detail.inline_keyboard.flat() as FlatBtn[];
       expect(detailFlat.some((b) => b.text.includes('Remove') && b.callback_data === 'cb:fav:remove:99')).toBe(true);
+    });
+  });
+
+  describe('Filter Formatting & Labels', () => {
+    test('formatBedroomsLabel formats multiple bedrooms accurately', () => {
+      expect(formatBedroomsLabel(null)).toBe('Any');
+      expect(formatBedroomsLabel([])).toBe('Any');
+      expect(formatBedroomsLabel([0])).toBe('Studio');
+      expect(formatBedroomsLabel([1])).toBe('1 BR');
+      expect(formatBedroomsLabel([1, 2])).toBe('1, 2 BR');
+      expect(formatBedroomsLabel([0, 1])).toBe('Studio, 1 BR');
+      expect(formatBedroomsLabel([2, 3, 4])).toBe('2, 3, 4+ BR');
+      expect(formatBedroomsLabel(2)).toBe('2 BR'); // legacy integer
+    });
+
+    test('formatFilterButtonLabel produces clear, distinguishable button text', () => {
+      const filter1: SearchFilter = {
+        id: 10,
+        user_id: 1,
+        type: 'rent',
+        category: 'apartment',
+        city: 'siem_reap',
+        locations: ['Svay Dangkum'],
+        min_price: 200,
+        max_price: 500,
+        bedrooms: [1, 2],
+        requires_pool: true,
+        min_lease_preferred: 6,
+        is_active: 1,
+        created_at: new Date().toISOString(),
+      };
+
+      const btn1 = formatFilterButtonLabel(filter1, 0);
+      expect(btn1).toContain('🗑 #1:');
+      expect(btn1).toContain('🏠 Apt');
+      expect(btn1).toContain('1, 2 BR');
+      expect(btn1).toContain('$200 – $500');
+      expect(btn1).toContain('🏊');
+      expect(btn1).toContain('(SR)');
+
+      const filter2: SearchFilter = {
+        ...filter1,
+        id: 11,
+        type: 'sale',
+        category: 'house',
+        city: 'phnom_penh',
+        bedrooms: [3],
+        requires_pool: false,
+        min_price: null,
+        max_price: 150000,
+      };
+
+      const btn2 = formatFilterButtonLabel(filter2, 1);
+      expect(btn2).toContain('🗑 #2:');
+      expect(btn2).toContain('🏷️ House');
+      expect(btn2).toContain('3 BR');
+      expect(btn2).toContain('Up to $150,000');
+      expect(btn2).not.toContain('🏊');
+      expect(btn2).toContain('(PP)');
     });
   });
 });

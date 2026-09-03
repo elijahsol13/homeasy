@@ -51,13 +51,13 @@ export function propertyMatchesFilter(property: Property, filter: SearchFilter):
   if (filter.min_price !== null && property.price < filter.min_price * 100) return false;
   if (filter.max_price !== null && property.price > filter.max_price * 100) return false;
 
-  // 8. Bedrooms
-  if (filter.bedrooms !== null && property.bedrooms !== null) {
-    if (filter.bedrooms === 4) {
-      if (property.bedrooms < 4) return false;
-    } else {
-      if (property.bedrooms !== filter.bedrooms) return false;
-    }
+  // 8. Bedrooms (null or empty = any; otherwise property.bedrooms must match one of selected)
+  if (filter.bedrooms && filter.bedrooms.length > 0 && property.bedrooms !== null) {
+    const matches = filter.bedrooms.some((b) => {
+      if (b === 4) return property.bedrooms! >= 4;
+      return property.bedrooms === b;
+    });
+    if (!matches) return false;
   }
 
   return true;
