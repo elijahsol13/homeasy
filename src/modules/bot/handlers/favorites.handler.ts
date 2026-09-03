@@ -3,7 +3,7 @@ import type { MyContext } from '../session';
 import type { AppContainer } from '../../../container';
 import { favoriteDetailKeyboard, favoritesListKeyboard } from '../keyboards/listing.keyboard';
 import { mainMenuKeyboard } from '../keyboards/main.keyboard';
-import { formatListingCard } from '../../../services/notifier';
+import { formatListingCard, sendListingCard } from '../../../services/notifier';
 import { MAX_FAVORITES_PER_USER } from '../../../config/settings';
 
 // ─── Favorites list ───────────────────────────────────────────────────────────
@@ -74,21 +74,10 @@ export async function handleViewFavorite(ctx: MyContext, propertyId: number): Pr
     return;
   }
 
-  const card = formatListingCard(property);
+  const from = ctx.from;
+  if (!from) return;
 
-  if (property.photos.length > 0) {
-    await ctx.replyWithPhoto(property.photos[0]!, {
-      caption: card,
-      parse_mode: 'HTML',
-      reply_markup: favoriteDetailKeyboard(property.id),
-    });
-  } else {
-    await ctx.reply(card, {
-      parse_mode: 'HTML',
-      reply_markup: favoriteDetailKeyboard(property.id),
-    });
-  }
-
+  await sendListingCard(from.id, property, ctx.api, favoriteDetailKeyboard(property.id));
   await ctx.answerCallbackQuery();
 }
 

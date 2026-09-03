@@ -41,15 +41,18 @@ export interface ScrapeTarget {
   name: string;
   category: PropertyCategory;
   city: 'siem_reap' | 'phnom_penh';
+  type?: 'rent' | 'sale';
   categorySlug: string;
   locationSlug: string;
 }
 
 export const KHMER24_TARGETS: ScrapeTarget[] = [
+  // ─── Siem Reap Rentals ───────────────────────────────────────────────────────
   {
     name: 'Siem Reap — Houses for Rent',
     category: 'house',
     city: 'siem_reap',
+    type: 'rent',
     categorySlug: 'house-for-rent',
     locationSlug: 'siem-reap',
   },
@@ -57,6 +60,7 @@ export const KHMER24_TARGETS: ScrapeTarget[] = [
     name: 'Siem Reap — Apartments & Condos for Rent',
     category: 'apartment',
     city: 'siem_reap',
+    type: 'rent',
     categorySlug: 'apartment-for-rent',
     locationSlug: 'siem-reap',
   },
@@ -64,8 +68,71 @@ export const KHMER24_TARGETS: ScrapeTarget[] = [
     name: 'Siem Reap — Rooms for Rent',
     category: 'room',
     city: 'siem_reap',
+    type: 'rent',
     categorySlug: 'room-for-rent',
     locationSlug: 'siem-reap',
+  },
+
+  // ─── Siem Reap Sales ────────────────────────────────────────────────────────
+  {
+    name: 'Siem Reap — Houses for Sale',
+    category: 'house',
+    city: 'siem_reap',
+    type: 'sale',
+    categorySlug: 'house-for-sale',
+    locationSlug: 'siem-reap',
+  },
+  {
+    name: 'Siem Reap — Condos for Sale',
+    category: 'apartment',
+    city: 'siem_reap',
+    type: 'sale',
+    categorySlug: 'condo-for-sale',
+    locationSlug: 'siem-reap',
+  },
+
+  // ─── Phnom Penh Rentals ─────────────────────────────────────────────────────
+  {
+    name: 'Phnom Penh — Houses for Rent',
+    category: 'house',
+    city: 'phnom_penh',
+    type: 'rent',
+    categorySlug: 'house-for-rent',
+    locationSlug: 'phnom-penh',
+  },
+  {
+    name: 'Phnom Penh — Apartments for Rent',
+    category: 'apartment',
+    city: 'phnom_penh',
+    type: 'rent',
+    categorySlug: 'apartment-for-rent',
+    locationSlug: 'phnom-penh',
+  },
+  {
+    name: 'Phnom Penh — Rooms for Rent',
+    category: 'room',
+    city: 'phnom_penh',
+    type: 'rent',
+    categorySlug: 'room-for-rent',
+    locationSlug: 'phnom-penh',
+  },
+
+  // ─── Phnom Penh Sales ───────────────────────────────────────────────────────
+  {
+    name: 'Phnom Penh — Houses for Sale',
+    category: 'house',
+    city: 'phnom_penh',
+    type: 'sale',
+    categorySlug: 'house-for-sale',
+    locationSlug: 'phnom-penh',
+  },
+  {
+    name: 'Phnom Penh — Condos for Sale',
+    category: 'apartment',
+    city: 'phnom_penh',
+    type: 'sale',
+    categorySlug: 'condo-for-sale',
+    locationSlug: 'phnom-penh',
   },
 ];
 
@@ -225,6 +292,28 @@ function parseSize(specs?: K24Post['object_highlight_specs']): string | undefine
   return raw != null ? String(raw) : undefined;
 }
 
+function extractSpecsDetails(specs?: K24Post['object_highlight_specs']): string[] {
+  if (!specs) return [];
+  const parts: string[] = [];
+
+  const size = specs.size?.display_value ?? specs.size?.value;
+  if (size) parts.push(`Size: ${size}`);
+
+  const floor = specs.floor?.display_value ?? specs.floor?.value;
+  if (floor) parts.push(`Floor: ${floor}`);
+
+  const furniture = specs.furniture?.display_value ?? specs.furniture?.value;
+  if (furniture) parts.push(`Furniture: ${furniture}`);
+
+  const facing = specs.facing?.display_value ?? specs.facing?.value;
+  if (facing) parts.push(`Facing: ${facing}`);
+
+  const parking = specs.parking?.display_value ?? specs.parking?.value;
+  if (parking) parts.push(`Parking: ${parking}`);
+
+  return parts;
+}
+
 function parsePrice(price: string): number | undefined {
   const cleaned = price.replace(/[^0-9.]/g, '');
   const n = parseFloat(cleaned);
@@ -236,14 +325,16 @@ export function postToRawListing(post: K24Post, target: ScrapeTarget, phone?: st
   const location = extractLocationText(post.location);
   const priceRaw = parsePrice(post.price);
   const mapsUrl = extractMapsUrl(post.location, target.city, location);
-  const size = parseSize(post.object_highlight_specs);
   const listingUrl =
     post.link ?? post.short_link ?? `https://www.khmer24.com/post-adid-${post.id}`;
 
-  // Append size to description so ingestor regex can surface it in notifications
   let description = post.description ?? '';
-  if (size && !description.includes(size)) {
-    description = description ? `${description}\nSize: ${size}` : `Size: ${size}`;
+  const specDetails = extractSpecsDetails(post.object_highlight_specs);
+  if (specDetails.length > 0) {
+    const specsStr = specDetails.join(' · ');
+    if (!description.includes(specsStr)) {
+      description = description ? `${description}\n\n${specsStr}` : specsStr;
+    }
   }
 
   return {
@@ -251,7 +342,7 @@ export function postToRawListing(post: K24Post, target: ScrapeTarget, phone?: st
     description,
     price: priceRaw,
     currency: 'USD',
-    type: 'rent',
+    type: target.type ?? 'rent',
     category: target.category,
     location,
     city: target.city,
