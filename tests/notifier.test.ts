@@ -1,4 +1,9 @@
-import { formatListingCard, formatListingTimestamp, NotifierService } from '../src/services/notifier';
+import {
+  formatListingCard,
+  formatListingTimestamp,
+  sendListingCard,
+  NotifierService,
+} from '../src/services/notifier';
 import type { Property } from '../src/database/repositories/properties.repo';
 
 describe('Dynamic Telegram Listing Card Formatter', () => {
@@ -133,5 +138,50 @@ describe('Dynamic Telegram Listing Card Formatter', () => {
 
     const notifier = new NotifierService(mockApi, [111222]);
     expect(notifier.getApi()).toBe(mockApi);
+  });
+
+  test('formats extra amenities and specs when present in description', () => {
+    const richProperty: Property = {
+      ...baseProperty,
+      description:
+        'Stunning luxury villa. Size: 120m² · Floor: 2nd · Furnished: Fully. Includes gym, pool, elevator, balcony, and free wifi.',
+      bedrooms: 3,
+      bathrooms: 3,
+      has_pool: true,
+    };
+
+    const card = formatListingCard(richProperty);
+    expect(card).toContain('📐 120m²');
+    expect(card).toContain('🏢 2nd');
+    expect(card).toContain('🛋️ Furnished');
+    expect(card).toContain('🏋️ Gym');
+    expect(card).toContain('🛗 Elevator');
+    expect(card).toContain('🌅 Balcony');
+    expect(card).toContain('📶 Free Wi-Fi');
+  });
+
+  test('sendListingCard sends media group capped at 3 photos', async () => {
+    const mockApi = {
+      sendMediaGroup: jest.fn().mockResolvedValue([]),
+      sendMessage: jest.fn().mockResolvedValue({}),
+      sendPhoto: jest.fn().mockResolvedValue({}),
+    } as unknown as import('grammy').Api;
+
+    const multiPhotoProperty: Property = {
+      ...baseProperty,
+      photos: [
+        'https://example.com/p1.jpg',
+        'https://example.com/p2.jpg',
+        'https://example.com/p3.jpg',
+        'https://example.com/p4.jpg',
+      ],
+    };
+
+    await sendListingCard(12345, multiPhotoProperty, mockApi);
+    expect(mockApi.sendMediaGroup).toHaveBeenCalledTimes(1);
+    const callArgs = (mockApi.sendMediaGroup as jest.Mock).mock.calls[0];
+    expect(callArgs[0]).toBe(12345);
+    expect(callArgs[1]).toHaveLength(3);
+    expect(mockApi.sendMessage).toHaveBeenCalledTimes(1);
   });
 });

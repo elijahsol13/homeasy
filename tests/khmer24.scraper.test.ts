@@ -74,15 +74,14 @@ describe('Khmer24 API Scraper', () => {
   });
 
   describe('KHMER24_TARGETS configuration', () => {
-    test('has exactly 3 Siem Reap targets', () => {
-      expect(KHMER24_TARGETS).toHaveLength(3);
+    test('has 10 targets covering Siem Reap and Phnom Penh', () => {
+      expect(KHMER24_TARGETS).toHaveLength(10);
     });
 
-    test('all targets point to siem_reap city', () => {
-      KHMER24_TARGETS.forEach((t) => {
-        expect(t.city).toBe('siem_reap');
-        expect(t.locationSlug).toBe('siem-reap');
-      });
+    test('covers both siem_reap and phnom_penh cities', () => {
+      const cities = new Set(KHMER24_TARGETS.map((t) => t.city));
+      expect(cities.has('siem_reap')).toBe(true);
+      expect(cities.has('phnom_penh')).toBe(true);
     });
 
     test('covers house, apartment, and room categories', () => {
@@ -92,11 +91,19 @@ describe('Khmer24 API Scraper', () => {
       expect(categories).toContain('room');
     });
 
+    test('covers both rent and sale types', () => {
+      const types = KHMER24_TARGETS.map((t) => t.type);
+      expect(types).toContain('rent');
+      expect(types).toContain('sale');
+    });
+
     test('category slugs match expected Khmer24 API slugs', () => {
       const slugs = KHMER24_TARGETS.map((t) => t.categorySlug);
       expect(slugs).toContain('house-for-rent');
       expect(slugs).toContain('apartment-for-rent');
       expect(slugs).toContain('room-for-rent');
+      expect(slugs).toContain('house-for-sale');
+      expect(slugs).toContain('condo-for-sale');
     });
   });
 

@@ -13,7 +13,7 @@ import {
 } from '../keyboards/filter.keyboard';
 import { mainMenuKeyboard } from '../keyboards/main.keyboard';
 import type { AppContainer } from '../../../container';
-import { formatListingCard } from '../../../services/notifier';
+import { formatListingCard, sendListingCard } from '../../../services/notifier';
 import { listingActionKeyboard } from '../keyboards/listing.keyboard';
 import {
   BEDROOM_OPTIONS,
@@ -472,22 +472,8 @@ export async function handleFilterCallback(ctx: MyContext, data: string): Promis
         { parse_mode: 'HTML', reply_markup: mainMenuKeyboard(user.alerts_paused === 1) },
       );
       for (const prop of instantMatches) {
-        const text = formatListingCard(prop);
-        const reply_markup = listingActionKeyboard(prop);
-        const validPhoto = prop.photos?.find((u) => u.startsWith('http'));
         try {
-          if (validPhoto) {
-            await ctx.api.sendPhoto(from.id, validPhoto, {
-              caption: text,
-              parse_mode: 'HTML',
-              reply_markup,
-            });
-          } else {
-            await ctx.api.sendMessage(from.id, text, {
-              parse_mode: 'HTML',
-              reply_markup,
-            });
-          }
+          await sendListingCard(from.id, prop, ctx.api);
         } catch (err) {
           console.warn(`[ColdStart] Failed to send match #${prop.id}:`, err);
         }

@@ -1,4 +1,4 @@
-import { Api } from 'grammy';
+import { Api, InlineKeyboard } from 'grammy';
 import type { Property } from '../database/repositories/properties.repo';
 import { CITIES, KHR_TO_USD_RATE, RATE_LIMIT } from '../config/settings';
 import { listingActionKeyboard } from '../modules/bot/keyboards/listing.keyboard';
@@ -109,7 +109,7 @@ export function formatListingCard(property: Property): string {
     ? `<a href="${escapeHtml(finalMapsUrl)}">📍 <b>${escapeHtml(property.location)}</b>, ${cityLabel} ↗</a>`
     : `<a href="${escapeHtml(finalMapsUrl)}">📍 <b>${cityLabel}</b> ↗</a>`;
 
-  // 4. Features line (Bedrooms, Bathrooms, Pool) - Dynamic, ONLY render if present
+  // 4. Features line (Bedrooms, Bathrooms, Pool, Size, Floor, Furnishing)
   const features: string[] = [];
   if (property.bedrooms === 0) {
     features.push('Studio');
@@ -122,17 +122,54 @@ export function formatListingCard(property: Property): string {
   if (property.has_pool) {
     features.push('🏊 Pool');
   }
+
+  // Extract additional specs (Size, Floor, Furniture) from description if present
+  const desc = property.description || '';
+  const sizeMatch =
+    desc.match(/(?:Size|📐 Size):\s*([0-9]+(?:\.[0-9]+)?\s*(?:m²|m2|sqm|sq\.?m\.?|[xX*]\s*[0-9]+m?))/i) ||
+    desc.match(/\b([0-9]{2,4}\s*(?:m²|m2|sqm))\b/i);
+  if (sizeMatch && sizeMatch[1]) {
+    features.push(`📐 ${sizeMatch[1].trim()}`);
+  }
+
+  const floorMatch = desc.match(/(?:Floor|🏢 Floor):\s*([0-9a-zA-Z\s]+?)(?:·|\n|$)/i);
+  if (floorMatch && floorMatch[1]) {
+    features.push(`🏢 ${floorMatch[1].trim()}`);
+  }
+
+  if (
+    /\b(?:fully furnished|full furniture|furnished)\b/i.test(desc) &&
+    !/\bunfurnished|non-furnished\b/i.test(desc)
+  ) {
+    features.push('🛋️ Furnished');
+  }
+
   const featuresLine = features.length > 0 ? `\n🛏 ${features.join(' · ')}` : '';
 
-  // 5. Description (strictly capped to ensure total caption stays under 1000 chars)
-  const descLine = property.description
-    ? `\n\n${escapeHtml(truncate(property.description, 220))}`
+  // 5. Amenities row (Gym, Elevator, Balcony, Parking, Security, Wi-Fi, Pets)
+  const amenities: string[] = [];
+  if (/\b(?:gym|fitness)\b/i.test(desc)) amenities.push('🏋️ Gym');
+  if (/\b(?:elevator|lift)\b/i.test(desc)) amenities.push('🛗 Elevator');
+  if (/\b(?:balcony|terrace)\b/i.test(desc)) amenities.push('🌅 Balcony');
+  if (/\b(?:parking|garage)\b/i.test(desc)) amenities.push('🚗 Parking');
+  if (/\b(?:security|24\/7|guard)\b/i.test(desc)) amenities.push('🛡️ Security');
+  if (/\b(?:pet friendly|pets allowed)\b/i.test(desc)) amenities.push('🐾 Pet-friendly');
+  if (/\b(?:free wifi|free internet|high speed wifi|wifi included)\b/i.test(desc)) amenities.push('📶 Free Wi-Fi');
+
+  const amenitiesLine = amenities.length > 0 ? `\n✨ ${amenities.join(' · ')}` : '';
+
+  // 6. Description excerpt (cleaned of technical tags and capped under 240 chars)
+  const cleanedDesc = desc
+    .replace(/(?:Size|Floor|Furniture|Facing|Parking):[^\n]+/gi, '')
+    .trim();
+  const descLine = cleanedDesc
+    ? `\n\n${escapeHtml(truncate(cleanedDesc, 240))}`
     : '';
 
-  // 6. Processing timestamp (placed right above contact section)
+  // 7. Processing timestamp (placed right above contact section)
   const timestampText = `\n\n${formatListingTimestamp(property.created_at || property.parsed_at)}`;
 
-  // 7. Direct contact details (formatted with standardized phone mask)
+  // 8. Direct contact details (formatted with standardized phone mask)
   const contactLines: string[] = [];
   if (property.direct_contact.phone) {
     const formattedPhone =
@@ -158,6 +195,7 @@ export function formatListingCard(property: Property): string {
     `${priceLine}${termsLine}\n` +
     `${locText}` +
     `${featuresLine}` +
+    `${amenitiesLine}` +
     `${descLine}` +
     `${timestampText}` +
     `${contactSection}\n\n` +
@@ -169,14 +207,40 @@ export async function sendListingCard(
   telegramId: number,
   property: Property,
   api: Api,
+  customKeyboard?: InlineKeyboard,
 ): Promise<void> {
   const caption = formatListingCard(property);
-  const keyboard = listingActionKeyboard(property);
+  const keyboard = customKeyboard ?? listingActionKeyboard(property);
 
-  // If photos exist, prioritize sendPhoto / sendMediaGroup
-  if (property.photos.length > 0 && property.photos[0]) {
+  const validPhotos = (property.photos || [])
+    .filter((p): p is string => typeof p === 'string' && (p.startsWith('http://') || p.startsWith('https://')))
+    .slice(0, 3);
+
+  // If 2 or 3 photos: send as an album (MediaGroup) with caption on first photo, then action buttons
+  if (validPhotos.length > 1) {
     try {
-      await api.sendPhoto(telegramId, property.photos[0], {
+      const media = validPhotos.map((url, idx) => ({
+        type: 'photo' as const,
+        media: url,
+        caption: idx === 0 ? caption : undefined,
+        parse_mode: idx === 0 ? ('HTML' as const) : undefined,
+      }));
+
+      await api.sendMediaGroup(telegramId, media);
+      await api.sendMessage(telegramId, '👇 <b>Listing Actions:</b>', {
+        parse_mode: 'HTML',
+        reply_markup: keyboard,
+      });
+      return;
+    } catch (err: unknown) {
+      console.warn(`[Notifier] sendMediaGroup failed for user ${telegramId}, falling back to sendPhoto:`, err);
+    }
+  }
+
+  // If 1 photo (or fallback): send single photo with keyboard attached
+  if (validPhotos.length > 0 && validPhotos[0]) {
+    try {
+      await api.sendPhoto(telegramId, validPhotos[0], {
         caption,
         parse_mode: 'HTML',
         reply_markup: keyboard,
@@ -187,7 +251,7 @@ export async function sendListingCard(
     }
   }
 
-  // Text message fallback (or if photo failed to load)
+  // Text message fallback
   await api.sendMessage(telegramId, caption, {
     parse_mode: 'HTML',
     reply_markup: keyboard,
