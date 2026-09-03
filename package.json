@@ -11,6 +11,7 @@
     "lint": "eslint src --ext .ts --max-warnings 0",
     "format": "prettier --write \"src/**/*.ts\"",
     "scrape:khmer24": "ts-node src/modules/parser/khmer24.scraper.ts",
+    "k24:login": "ts-node src/modules/parser/k24-login.ts",
     "fb:login": "ts-node src/modules/parser/fb-login.ts",
     "scrape:fb": "ts-node src/modules/parser/facebook.scraper.ts",
     "test": "jest"

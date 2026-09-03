@@ -19,6 +19,8 @@
  *   "featured" → paid featured banner ❌  (skipped)
  */
 
+import path from 'path';
+import fs from 'fs';
 import { chromium } from 'playwright-extra';
 import stealthPlugin from 'puppeteer-extra-plugin-stealth';
 import type { Browser, BrowserContext } from 'playwright';
@@ -27,6 +29,8 @@ import { runMigrations } from '../../database/migrate';
 import type { AppContainer } from '../../container';
 import { createContainer } from '../../container';
 import type { PropertyCategory } from '../../config/settings';
+
+export const K24_SESSION_PATH = path.join(process.cwd(), 'data', 'k24_session.json');
 
 // Apply stealth plugin once at module load
 chromium.use(stealthPlugin());
@@ -366,8 +370,24 @@ async function fetchPostPhone(ctx: BrowserContext, adId: string): Promise<string
       const telLinks = await page.locator('a[href^="tel:"]').all();
       for (const link of telLinks) {
         const href = await link.getAttribute('href');
-        if (href) {
+        if (href && !href.toUpperCase().includes('X')) {
           phone = href.replace(/^tel:/i, '').trim();
+          break;
+        }
+      }
+    }
+
+    // Extract from phone/contact elements in DOM (unmasked when authenticated)
+    if (!phone) {
+      const phoneElements = page.locator(
+        '[class*="contact"] a, [class*="phone"] a, .phone-number, [data-phone], [class*="contact-phone"]',
+      );
+      const count = await phoneElements.count();
+      for (let i = 0; i < count; i++) {
+        const text = (await phoneElements.nth(i).innerText()).trim();
+        const m = /(\+855[\d\s-]{6,12}|0\d{1,2}[\s-]?\d{3}[\s-]?\d{3,4})/.exec(text);
+        if (m?.[1] && !m[1].toUpperCase().includes('X')) {
+          phone = m[1].trim();
           break;
         }
       }
@@ -379,7 +399,12 @@ async function fetchPostPhone(ctx: BrowserContext, adId: string): Promise<string
         () => (globalThis as unknown as { document: { body: { innerText: string } } }).document.body.innerText,
       )) as string;
       const m = /(\+855[\d\s-]{6,10}|0\d{1,2}[\s-]?\d{3}[\s-]?\d{3,4})/.exec(bodyText);
-      if (m?.[1]) phone = m[1].trim();
+      if (m?.[1] && !m[1].toUpperCase().includes('X')) phone = m[1].trim();
+    }
+
+    // Never return masked phone numbers ending in XXX
+    if (phone && phone.toUpperCase().includes('X')) {
+      phone = undefined;
     }
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
@@ -401,12 +426,21 @@ export async function scrapeTargetWithBrowser(
   console.log(`\n🔎 Scraping [${target.name}]...`);
   const listings: RawListing[] = [];
 
-  const ctx = await browser.newContext({
+  const contextOptions: Parameters<Browser['newContext']>[0] = {
     userAgent:
       'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
     viewport: { width: 1280, height: 800 },
     extraHTTPHeaders: { 'Accept-Language': 'en-US,en;q=0.9' },
-  });
+  };
+
+  if (fs.existsSync(K24_SESSION_PATH)) {
+    contextOptions.storageState = K24_SESSION_PATH;
+    console.log('🔑 [Khmer24] Using saved authenticated session from data/k24_session.json');
+  } else {
+    console.log('ℹ️  [Khmer24] Running unauthenticated. For 100% unmasked phone numbers, run: npm run k24:login');
+  }
+
+  const ctx = await browser.newContext(contextOptions);
 
   try {
     let offset = 0;

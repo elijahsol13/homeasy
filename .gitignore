@@ -12,6 +12,7 @@ dist/
 data/*.db-wal
 data/*.db-shm
 data/fb_session.json
+data/k24_session.json
 
 # Logs
 *.log
