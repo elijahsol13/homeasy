@@ -426,6 +426,15 @@ async function fetchPostPhone(ctx: BrowserContext, adId: string): Promise<string
   let phone: string | undefined;
 
   try {
+    // Block heavy media/fonts/images/css — we only need HTML text and API responses
+    await page.route('**/*', (route) => {
+      const type = route.request().resourceType();
+      if (['image', 'media', 'font', 'stylesheet'].includes(type)) {
+        return route.abort();
+      }
+      return route.continue();
+    });
+
     // Listen for any API response that might contain the phone number
     page.on('response', async (resp) => {
       const u = resp.url();
@@ -652,8 +661,16 @@ export async function runKhmer24Scraper(containerInstance?: AppContainer): Promi
       args: [
         '--no-sandbox',
         '--disable-setuid-sandbox',
+        '--disable-dev-shm-usage',
+        '--disable-gpu',
+        '--no-zygote',
+        '--disable-extensions',
+        '--disable-default-apps',
+        '--mute-audio',
+        '--disable-background-networking',
         '--disable-blink-features=AutomationControlled',
         '--disable-infobars',
+        '--js-flags=--max-old-space-size=128',
       ],
     });
 

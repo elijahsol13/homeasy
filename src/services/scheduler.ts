@@ -45,6 +45,17 @@ export function startScheduler(container: AppContainer, cronExpression = '*/20 *
       console.error(`💥 [Scheduler] Error during scheduled scraping cycle: ${msg}`);
     } finally {
       isScrapingRunning = false;
+      if (typeof global.gc === 'function') {
+        try {
+          global.gc();
+          const mem = process.memoryUsage();
+          const heapUsedMb = Math.round(mem.heapUsed / 1024 / 1024);
+          const rssMb = Math.round(mem.rss / 1024 / 1024);
+          console.log(`🧹 [Scheduler] Forced GC completed (Heap: ${heapUsedMb}MB, RSS: ${rssMb}MB).`);
+        } catch {
+          // ignore
+        }
+      }
       console.log('🏁 [Scheduler] Scraping cycle completed.');
     }
   });

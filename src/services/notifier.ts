@@ -355,6 +355,16 @@ export class NotifierService {
 
     const now = Date.now();
 
+    // Prune stale rate limit entries to prevent unbounded Map memory growth
+    if (this.lastSentAt.size > 200) {
+      const ONE_HOUR = 60 * 60 * 1000;
+      for (const [id, time] of this.lastSentAt.entries()) {
+        if (now - time > ONE_HOUR) {
+          this.lastSentAt.delete(id);
+        }
+      }
+    }
+
     const idx = this.queue.findIndex((item) => {
       const last = this.lastSentAt.get(item.telegramId) ?? 0;
       return now - last >= RATE_LIMIT.PER_USER_INTERVAL_MS;
