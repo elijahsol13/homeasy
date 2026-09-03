@@ -1,0 +1,26 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+
+# Environment secrets
+.env
+.env.*
+
+# Temporary / sensitive data files
+data/*.db-wal
+data/*.db-shm
+data/fb_session.json
+
+# Logs
+*.log
+
+# OS & IDE artifacts
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Tool artifacts
+repomix-output.xml
