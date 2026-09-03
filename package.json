@@ -1,0 +1,50 @@
+{
+  "name": "homeasy",
+  "version": "1.0.0",
+  "description": "Cambodia Real Estate Aggregator & Notification Telegram Bot (Siem Reap / Phnom Penh)",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "dev": "nodemon",
+    "start": "node dist/index.js",
+    "lint": "eslint src --ext .ts --max-warnings 0",
+    "format": "prettier --write \"src/**/*.ts\"",
+    "scrape:khmer24": "ts-node src/modules/parser/khmer24.scraper.ts",
+    "fb:login": "ts-node src/modules/parser/fb-login.ts",
+    "scrape:fb": "ts-node src/modules/parser/facebook.scraper.ts",
+    "test": "jest"
+  },
+  "dependencies": {
+    "@google/genai": "^2.20.0",
+    "@google/generative-ai": "^0.24.1",
+    "axios": "^1.20.0",
+    "cheerio": "^1.2.0",
+    "dotenv": "^16.4.5",
+    "grammy": "^1.26.0",
+    "jimp": "^1.6.1",
+    "node-cron": "^4.6.0",
+    "openai": "^7.9.0",
+    "playwright": "^1.62.1",
+    "playwright-extra": "^4.3.6",
+    "puppeteer-extra-plugin-stealth": "^2.11.2",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/jest": "^30.0.0",
+    "@types/node": "^22.0.0",
+    "@types/node-cron": "^3.0.11",
+    "@typescript-eslint/eslint-plugin": "^7.3.1",
+    "@typescript-eslint/parser": "^7.3.1",
+    "eslint": "^8.57.0",
+    "jest": "^30.5.0",
+    "nodemon": "^3.1.0",
+    "prettier": "^3.2.5",
+    "ts-jest": "^29.4.12",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.4.3"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}

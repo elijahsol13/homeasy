@@ -1,0 +1,106 @@
+import type { DatabaseSync } from 'node:sqlite';
+import type { CityKey, PropertyCategory } from '../../config/settings';
+
+// ─── Types ────────────────────────────────────────────────────────────────────
+
+export interface SearchFilter {
+  id: number;
+  user_id: number;
+  type: 'rent' | 'sale';
+  category: PropertyCategory | null;
+  requires_pool: boolean;
+  min_lease_preferred: number | null; // e.g. 5 (short-term), 6 (long-term), or null (any)
+  /** Minimum price in USD dollars (not cents) */
+  min_price: number | null;
+  /** Maximum price in USD dollars (not cents) */
+  max_price: number | null;
+  /**
+   * null = any. 0 = studio. 4 = "4 or more".
+   */
+  bedrooms: number | null;
+  locations: string[];
+  city: CityKey;
+  is_active: 0 | 1;
+  created_at: string;
+}
+
+interface SearchFilterRow extends Omit<SearchFilter, 'locations' | 'requires_pool'> {
+  requires_pool: 0 | 1;
+  locations: string; // JSON string in DB
+}
+
+function rowToFilter(row: SearchFilterRow): SearchFilter {
+  return {
+    ...row,
+    requires_pool: Boolean(row.requires_pool),
+    locations: JSON.parse(row.locations || '[]') as string[],
+  };
+}
+
+export type CreateFilterInput = Omit<SearchFilter, 'id' | 'created_at' | 'is_active'>;
+
+// ─── Repository ───────────────────────────────────────────────────────────────
+
+export class FiltersRepository {
+  constructor(private readonly db: DatabaseSync) {}
+
+  createFilter(input: CreateFilterInput): SearchFilter {
+    const result = this.db
+      .prepare(
+        `INSERT INTO search_filters
+           (user_id, type, category, requires_pool, min_lease_preferred,
+            min_price, max_price, bedrooms, locations, city, is_active)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`,
+      )
+      .run(
+        input.user_id,
+        input.type,
+        input.category ?? null,
+        input.requires_pool ? 1 : 0,
+        input.min_lease_preferred ?? null,
+        input.min_price ?? null,
+        input.max_price ?? null,
+        input.bedrooms ?? null,
+        JSON.stringify(input.locations ?? []),
+        input.city,
+      );
+
+    const row = this.db
+      .prepare('SELECT * FROM search_filters WHERE id = ?')
+      .get(result.lastInsertRowid) as unknown as SearchFilterRow;
+
+    return rowToFilter(row);
+  }
+
+  getAllActiveFilters(): SearchFilter[] {
+    const rows = this.db
+      .prepare('SELECT * FROM search_filters WHERE is_active = 1')
+      .all() as unknown as SearchFilterRow[];
+    return rows.map(rowToFilter);
+  }
+
+  getUserFilters(userId: number): SearchFilter[] {
+    const rows = this.db
+      .prepare('SELECT * FROM search_filters WHERE user_id = ? ORDER BY created_at DESC')
+      .all(userId) as unknown as SearchFilterRow[];
+    return rows.map(rowToFilter);
+  }
+
+  deactivateFilter(filterId: number, userId: number): boolean {
+    const result = this.db
+      .prepare('UPDATE search_filters SET is_active = 0 WHERE id = ? AND user_id = ?')
+      .run(filterId, userId);
+    return result.changes > 0;
+  }
+
+  deactivateAllUserFilters(userId: number): void {
+    this.db.prepare('UPDATE search_filters SET is_active = 0 WHERE user_id = ?').run(userId);
+  }
+
+  getFilterCount(): number {
+    const row = this.db
+      .prepare('SELECT COUNT(*) as count FROM search_filters WHERE is_active = 1')
+      .get() as unknown as { count: number };
+    return row.count;
+  }
+}
