@@ -343,6 +343,15 @@ export async function scrapeFacebookGroup(
   const seenUrls = new Set<string>();
 
   try {
+    // Block video media and custom fonts to minimize Chromium memory footprint
+    await page.route('**/*', (route) => {
+      const type = route.request().resourceType();
+      if (['media', 'font'].includes(type)) {
+        return route.abort();
+      }
+      return route.continue();
+    });
+
     await page.goto(target.url, { waitUntil: 'domcontentloaded', timeout: 45000 });
     await sleepRandom(3000, 5000);
 
@@ -511,6 +520,7 @@ export async function runFacebookScraper(containerInstance?: AppContainer): Prom
   let totalDuplicates = 0;
   let totalErrors = 0;
   let browser: Browser | null = null;
+  let context: BrowserContext | null = null;
 
   try {
     console.log('🌐 Launching headless browser with saved session...');
@@ -519,12 +529,20 @@ export async function runFacebookScraper(containerInstance?: AppContainer): Prom
       args: [
         '--no-sandbox',
         '--disable-setuid-sandbox',
+        '--disable-dev-shm-usage',
+        '--disable-gpu',
+        '--no-zygote',
+        '--disable-extensions',
+        '--disable-default-apps',
+        '--mute-audio',
+        '--disable-background-networking',
         '--disable-blink-features=AutomationControlled',
         '--disable-infobars',
+        '--js-flags=--max-old-space-size=128',
       ],
     });
 
-    const context = await browser.newContext({
+    context = await browser.newContext({
       storageState: FB_SESSION_PATH,
       userAgent:
         'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
@@ -585,6 +603,7 @@ export async function runFacebookScraper(containerInstance?: AppContainer): Prom
   } catch (err: unknown) {
     console.error('💥 Fatal Facebook scraper error:', err instanceof Error ? err.message : String(err));
   } finally {
+    if (context) await context.close().catch(() => {});
     if (browser) await browser.close().catch(() => {});
     await container.notifierService.flushNotificationQueue().catch((err) => console.error('[Notifier] Flush error:', err));
   }

@@ -25,14 +25,15 @@ export function createDatabase(customPath?: string): DatabaseSync {
     db = new DatabaseSync(dbPath);
   }
 
-  // Performance & safety pragmas
+  // Performance & safety pragmas (low-RAM optimized for 1GB VPS)
   if (!isMemory) {
     db.exec('PRAGMA journal_mode = WAL');
     db.exec('PRAGMA synchronous = NORMAL');
+    db.exec('PRAGMA wal_autocheckpoint = 500'); // Checkpoint WAL frequently to avoid disk/RAM ballooning
   }
   db.exec('PRAGMA foreign_keys = ON');
-  db.exec('PRAGMA cache_size = -32000'); // 32 MB page cache
-  db.exec('PRAGMA temp_store = MEMORY');
+  db.exec('PRAGMA cache_size = -2000'); // 2 MB page cache instead of 32 MB
+  db.exec('PRAGMA temp_store = FILE');   // Offload temporary tables to disk rather than RAM
 
   return db;
 }
