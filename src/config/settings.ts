@@ -122,16 +122,6 @@ export interface FBGroupConfig {
 
 export const FB_GROUPS: readonly FBGroupConfig[] = [
   {
-    name: 'Siem Reap Real Estate',
-    url: 'https://www.facebook.com/groups/siemreaprealestate?sorting_setting=CHRONOLOGICAL',
-    city: 'siem_reap',
-  },
-  {
-    name: 'Cheap Rent Siem Reap',
-    url: 'https://www.facebook.com/groups/cheaprentsiemreap?sorting_setting=CHRONOLOGICAL',
-    city: 'siem_reap',
-  },
-  {
     name: 'Siem Reap Expats & Locals',
     url: 'https://www.facebook.com/groups/SiemReapExpatsLocals?sorting_setting=CHRONOLOGICAL',
     city: 'siem_reap',
@@ -142,18 +132,63 @@ export const FB_GROUPS: readonly FBGroupConfig[] = [
     city: 'siem_reap',
   },
   {
-    name: 'Siem Reap Real Estate Marketing (ទីផ្សារអចលនទ្រព្យ)',
-    url: 'https://www.facebook.com/groups/siemreaprentals?sorting_setting=CHRONOLOGICAL',
+    name: 'Siem Reap Rent, Sell and Buy properties (សៀមរាប ជួល លក់ និងទិញ)',
+    url: 'https://www.facebook.com/groups/527059360763438?sorting_setting=CHRONOLOGICAL',
     city: 'siem_reap',
   },
   {
-    name: 'Siem Reap Real Estate & Rentals (Group 2)',
+    name: 'Siem Reap Real Estate (Group 1435)',
+    url: 'https://www.facebook.com/groups/1435004449876640?sorting_setting=CHRONOLOGICAL',
+    city: 'siem_reap',
+  },
+  {
+    name: 'Cheap Rent Siem Reap',
+    url: 'https://www.facebook.com/groups/cheaprentsiemreap?sorting_setting=CHRONOLOGICAL',
+    city: 'siem_reap',
+  },
+  {
+    name: 'Siem Reap Real Estate & Rentals (Group 1449)',
     url: 'https://www.facebook.com/groups/1449080965124368?sorting_setting=CHRONOLOGICAL',
     city: 'siem_reap',
   },
   {
-    name: 'Siem Reap Rent House, Villa, Apartment, Flat, Condo',
+    name: 'SIEM REAP - Rent House, Villa, Apartment, Flat, Condo',
     url: 'https://www.facebook.com/groups/201561753758474?sorting_setting=CHRONOLOGICAL',
+    city: 'siem_reap',
+  },
+  {
+    name: 'Siem Reap Real Estate',
+    url: 'https://www.facebook.com/groups/siemreaprealestate?sorting_setting=CHRONOLOGICAL',
+    city: 'siem_reap',
+  },
+  {
+    name: 'Siem Reap Brother Property Service',
+    url: 'https://www.facebook.com/groups/524937017713486?sorting_setting=CHRONOLOGICAL',
+    city: 'siem_reap',
+  },
+  {
+    name: 'Apartments & Houses In Siem Reap for Rent or Sale',
+    url: 'https://www.facebook.com/groups/templecityrealestate?sorting_setting=CHRONOLOGICAL',
+    city: 'siem_reap',
+  },
+  {
+    name: 'Siem Reap Real Estate S R',
+    url: 'https://www.facebook.com/groups/632004323920718?sorting_setting=CHRONOLOGICAL',
+    city: 'siem_reap',
+  },
+  {
+    name: 'Siem Reap Real Estate Unique',
+    url: 'https://www.facebook.com/groups/534172030116578?sorting_setting=CHRONOLOGICAL',
+    city: 'siem_reap',
+  },
+  {
+    name: 'Sell and Buy Everything in Siem Reap',
+    url: 'https://www.facebook.com/groups/2033812786836267?sorting_setting=CHRONOLOGICAL',
+    city: 'siem_reap',
+  },
+  {
+    name: 'Siem Reap Buy and Sell',
+    url: 'https://www.facebook.com/groups/youthfitness2014?sorting_setting=CHRONOLOGICAL',
     city: 'siem_reap',
   },
 ] as const;
