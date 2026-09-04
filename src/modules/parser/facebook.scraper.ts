@@ -63,11 +63,62 @@ export const FB_GROUP_TARGETS: FBGroupTarget[] = FB_GROUPS.map((g) => ({
   defaultCategory: g.defaultCategory,
 }));
 
-// ─── Helpers ──────────────────────────────────────────────────────────────────
+// ─── Helpers & Anti-Bot Human Simulation ──────────────────────────────────────
 
 function sleepRandom(minMs: number, maxMs: number): Promise<void> {
   const ms = Math.floor(Math.random() * (maxMs - minMs + 1)) + minMs;
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+export function shuffleArray<T>(items: readonly T[]): T[] {
+  const arr = [...items];
+  for (let i = arr.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [arr[i], arr[j]] = [arr[j]!, arr[i]!];
+  }
+  return arr;
+}
+
+const VIEWPORT_PRESETS = [
+  { width: 1280, height: 850 },
+  { width: 1366, height: 768 },
+  { width: 1440, height: 900 },
+  { width: 1536, height: 864 },
+];
+
+const USER_AGENTS = [
+  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
+  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36',
+];
+
+async function simulateHumanMouseMove(page: Page): Promise<void> {
+  try {
+    const x = Math.floor(Math.random() * 700) + 150;
+    const y = Math.floor(Math.random() * 450) + 150;
+    await page.mouse.move(x, y, { steps: Math.floor(Math.random() * 7) + 3 });
+  } catch {
+    // ignore
+  }
+}
+
+async function simulateHumanScroll(page: Page): Promise<void> {
+  // 15% chance of small reverse scroll up (mimics re-reading or re-checking a listing)
+  if (Math.random() < 0.15) {
+    const upDist = -(Math.floor(Math.random() * 180) + 80);
+    await page.evaluate((top) => {
+      const win = globalThis as unknown as { scrollBy: (opt: { top: number; behavior: string }) => void };
+      if (typeof win.scrollBy === 'function') win.scrollBy({ top, behavior: 'smooth' });
+    }, upDist);
+    await sleepRandom(700, 1500);
+  }
+
+  // Downward scroll with variable distance
+  const downDist = Math.floor(Math.random() * 380) + 380;
+  await page.evaluate((top) => {
+    const win = globalThis as unknown as { scrollBy: (opt: { top: number; behavior: string }) => void };
+    if (typeof win.scrollBy === 'function') win.scrollBy({ top, behavior: 'smooth' });
+  }, downDist);
 }
 
 /**
@@ -407,17 +458,22 @@ export async function scrapeFacebookGroup(
     }
 
     let scrollAttempts = 0;
-    const maxScrolls = 8;
+    const maxScrolls = 6;
 
     while (listings.length < maxPosts && scrollAttempts < maxScrolls) {
-      // Expand "See more" buttons to reveal full description text
+      // Natural human mouse movement across the viewport
+      await simulateHumanMouseMove(page);
+
+      // Expand "See more" buttons with realistic human cadence
       try {
         const seeMoreBtns = page.locator(
           'div[role="button"]:has-text("See more"), div[role="button"]:has-text("See More"), div[role="button"]:has-text("Показать больше")',
         );
         const count = await seeMoreBtns.count();
-        for (let i = 0; i < Math.min(count, 5); i++) {
+        for (let i = 0; i < Math.min(count, 4); i++) {
+          await simulateHumanMouseMove(page);
           await seeMoreBtns.nth(i).click().catch(() => {});
+          await sleepRandom(350, 950);
         }
       } catch {
         // Continue if expanding fails
@@ -469,15 +525,17 @@ export async function scrapeFacebookGroup(
         if (listings.length >= maxPosts) break;
       }
 
-      // Gentle smooth scroll down to trigger React virtualized rendering
-      await page.evaluate(() => {
-        const win = globalThis as unknown as { scrollBy: (opt: { top: number; behavior: string }) => void };
-        if (typeof win.scrollBy === 'function') {
-          win.scrollBy({ top: 600, behavior: 'smooth' });
-        }
-      });
+      // Variable human scroll with occasional slight upward backtrack
+      await simulateHumanScroll(page);
       scrollAttempts++;
-      await sleepRandom(2500, 4500);
+
+      // Realistic reading pause between scroll iterations
+      await sleepRandom(2800, 5200);
+
+      // 12% probability of a longer human reading pause (6s - 11s)
+      if (Math.random() < 0.12) {
+        await sleepRandom(6000, 11000);
+      }
     }
   } catch (err: unknown) {
     if (err instanceof FacebookSessionExpiredError) {
@@ -542,17 +600,23 @@ export async function runFacebookScraper(containerInstance?: AppContainer): Prom
       ],
     });
 
+    const chosenViewport = VIEWPORT_PRESETS[Math.floor(Math.random() * VIEWPORT_PRESETS.length)]!;
+    const chosenUserAgent = USER_AGENTS[Math.floor(Math.random() * USER_AGENTS.length)]!;
+
     context = await browser.newContext({
       storageState: FB_SESSION_PATH,
-      userAgent:
-        'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-      viewport: { width: 1280, height: 850 },
+      userAgent: chosenUserAgent,
+      viewport: chosenViewport,
       locale: 'en-US',
       extraHTTPHeaders: { 'Accept-Language': 'en-US,en;q=0.9' },
     });
 
-    for (let i = 0; i < FB_GROUP_TARGETS.length; i++) {
-      const target = FB_GROUP_TARGETS[i]!;
+    // Shuffle groups to break predictable traversal patterns
+    const targets = shuffleArray(FB_GROUP_TARGETS);
+    console.log(`🎲 [Anti-Bot] Randomized group traversal order (${targets.length} groups, viewport ${chosenViewport.width}x${chosenViewport.height}).`);
+
+    for (let i = 0; i < targets.length; i++) {
+      const target = targets[i]!;
 
       try {
         const listings = await scrapeFacebookGroup(context, target, 10, container);
@@ -594,10 +658,11 @@ export async function runFacebookScraper(containerInstance?: AppContainer): Prom
         }
       }
 
-      // Randomized delay (10-30s) between groups to avoid rate-limiting
-      if (i < FB_GROUP_TARGETS.length - 1) {
-        console.log('⏳ Waiting 10-30s before scraping next group to avoid rate-limiting...');
-        await sleepRandom(10000, 30000);
+      // Randomized human-like cooldown (15s to 35s) between groups to evade rate-limits
+      if (i < targets.length - 1) {
+        const cooldownMs = Math.floor(Math.random() * 20000) + 15000;
+        console.log(`⏳ Anti-bot cooldown: waiting ${Math.round(cooldownMs / 1000)}s before next group...`);
+        await sleepRandom(cooldownMs, cooldownMs + 1000);
       }
     }
   } catch (err: unknown) {
