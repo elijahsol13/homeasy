@@ -121,8 +121,8 @@ export async function runFbLogin(): Promise<void> {
       // ignore
     }
 
+
     if (isHeadless) {
-      // ── Headless terminal login ────────────────────────────────────────────
       console.log('\n📝 Please enter your Facebook credentials to log in via terminal:');
       const email = await askQuestion('👤 Facebook Email or Phone: ');
       const pass = await askQuestion('🔑 Facebook Password: ');
@@ -142,7 +142,6 @@ export async function runFbLogin(): Promise<void> {
       const currentUrl = page.url();
       const pageHtml = (await page.content()).toLowerCase();
 
-      // Check if 2FA code is requested
       const is2FA =
         currentUrl.includes('checkpoint') ||
         pageHtml.includes('two-factor') ||
@@ -165,42 +164,51 @@ export async function runFbLogin(): Promise<void> {
         }
       }
 
-      // If "Save browser" prompt appears
       try {
-        const saveBrowserBtn = page.locator('button:has-text("Continue"), button:has-text("Продолжить"), #checkpointSubmitButton').first();
+        const saveBrowserBtn = page
+          .locator('button:has-text("Continue"), button:has-text("Продолжить"), #checkpointSubmitButton')
+          .first();
         if ((await saveBrowserBtn.count()) > 0) {
           await saveBrowserBtn.click().catch(() => {});
           await page.waitForTimeout(3000);
         }
-      } catch {
-        // ignore
-      }
+      } catch {}
     } else {
-      // ── Visual browser login on desktop ────────────────────────────────────
-      console.log('⏳ Please log into your Facebook account in the opened browser window.');
-      await waitForEnterOrTimeout(120000);
+      console.log('\n⏳ Browser window opened! Please log into Facebook in the browser.');
+      console.log('   (Enter email, password, and 2FA code if requested)');
+
+      // Wait for user to log in manually (up to 180s or on Enter press)
+      await waitForEnterOrTimeout(180000);
+    }
+
+    // Verify if login was successful by checking for the 'c_user' cookie
+    const cookies = await context.cookies();
+    const cUser = cookies.find((c) => c.name === 'c_user');
+
+    if (cUser) {
+      console.log(`\n🎉 Logged-in Facebook user detected! (c_user: ${cUser.value})`);
+    } else {
+      console.warn('\n⚠️  WARNING: "c_user" cookie not found in session!');
+      console.warn('   It seems login was not completed. Facebook will reject unauthenticated sessions.');
     }
 
     // Save storage state (cookies + localStorage)
-    console.log('\n💾 Saving session state...');
+    console.log('💾 Saving session state...');
     await context.storageState({ path: FB_SESSION_PATH });
 
     if (fs.existsSync(FB_SESSION_PATH)) {
       const stats = fs.statSync(FB_SESSION_PATH);
       console.log(`✅ Session saved successfully to ${FB_SESSION_PATH} (${stats.size} bytes)`);
-      console.log('🎉 You can now run the Facebook scraper with: npm run scrape:fb\n');
+      if (cUser) {
+        console.log('🎉 You can now run the Facebook scraper with: npm run scrape:fb\n');
+      } else {
+        console.log('👉 Please re-run "npm run fb:login", finish logging in, and press ENTER.\n');
+      }
     } else {
       console.error('❌ Failed to create session file.');
-      // Save screenshot for debugging
-      const debugScreenshotPath = path.join(dataDir, 'fb_login_failed.png');
-      await page.screenshot({ path: debugScreenshotPath }).catch(() => {});
-      console.log(`📸 Screenshot saved to ${debugScreenshotPath}`);
     }
   } catch (err: unknown) {
     console.error('❌ Error during Facebook login:', err instanceof Error ? err.message : String(err));
-    const debugScreenshotPath = path.join(dataDir, 'fb_login_error.png');
-    await page.screenshot({ path: debugScreenshotPath }).catch(() => {});
-    console.log(`📸 Error screenshot saved to ${debugScreenshotPath}`);
   } finally {
     await browser.close().catch(() => {});
   }
