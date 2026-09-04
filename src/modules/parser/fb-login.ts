@@ -174,7 +174,7 @@ export async function runFbLogin(): Promise<void> {
         }
       } catch {}
     } else {
-      console.log('\n⏳ Browser window opened! Please log into Facebook in the browser.');
+      console.log('\n⏳ Browser window opened! Please log into Facebook in the browser window.');
       console.log('   (Enter email, password, and 2FA code if requested)');
 
       // Wait for user to log in manually (up to 180s or on Enter press)
