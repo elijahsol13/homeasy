@@ -380,8 +380,8 @@ export function extractCoordinatesFromMapsUrl(
     if (!isNaN(lat) && !isNaN(lng)) return { latitude: lat, longitude: lng };
   }
 
-  // 2. q=lat,lng
-  const qMatch = /[?&]q=(-?\d+\.\d+),(-?\d+\.\d+)/.exec(url);
+  // 2. query=lat,lng or q=lat,lng
+  const qMatch = /[?&](?:query|q)=(-?\d+\.\d+),(-?\d+\.\d+)/.exec(url);
   if (qMatch) {
     const lat = parseFloat(qMatch[1]);
     const lng = parseFloat(qMatch[2]);

@@ -203,7 +203,10 @@ export function extractElectricity(text: string): string | null {
 
 export function extractWater(text: string): string | null {
   // 1. Included / Free
-  if (/\b(?:free\s+water|water\s+free|water\s*:\s*included|water\s*:\s*free)\b/i.test(text)) {
+  if (
+    /\b(?:free\s+water|water\s+free|water\s*(?::|\s+is)?\s*included|including\s+water|water\s*:\s*free)\b/i.test(text) ||
+    /ទឹកឥតគិតថ្លៃ|ទឹកហ្វ្រី|រួមបញ្ចូលទឹក/.test(text)
+  ) {
     return 'Included';
   }
 

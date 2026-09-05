@@ -82,8 +82,9 @@ function rowToProperty(row: PropertyRow): Property {
 
 export type CreatePropertyInput = Omit<
   Property,
-  'id' | 'created_at' | 'updated_at' | 'parsed_at' | 'image_phashes' | 'reports_count' | 'is_active'
+  'id' | 'created_at' | 'updated_at' | 'parsed_at' | 'image_phashes' | 'image_phash' | 'reports_count' | 'is_active' | 'posted_at'
 > & {
+  image_phash?: string | null;
   image_phashes?: string[];
   reports_count?: number;
   is_active?: 0 | 1;
@@ -284,4 +285,190 @@ export class PropertiesRepository {
       .get() as unknown as { count: number };
     return row.count;
   }
+
+  /**
+   * Search and filter properties with pagination, sorting, and total count for Telegram Mini App.
+   */
+  searchProperties(options: PropertyFilterOptions = {}): { items: Property[]; total: number } {
+    const whereClauses: string[] = ['is_active = 1'];
+    const params: Array<string | number> = [];
+
+    if (options.city) {
+      whereClauses.push('city = ?');
+      params.push(options.city);
+    }
+
+    if (options.locations && options.locations.length > 0) {
+      const locConditions = options.locations.map(() => '(location LIKE ? OR location = ?)');
+      whereClauses.push(`(${locConditions.join(' OR ')})`);
+      for (const loc of options.locations) {
+        params.push(`%${loc}%`, loc);
+      }
+    }
+
+    if (options.category) {
+      whereClauses.push('category = ?');
+      params.push(options.category);
+    }
+
+    if (options.type) {
+      whereClauses.push('type = ?');
+      params.push(options.type);
+    }
+
+    if (typeof options.minPrice === 'number' && options.minPrice >= 0) {
+      whereClauses.push('price >= ?');
+      params.push(options.minPrice);
+    }
+
+    if (typeof options.maxPrice === 'number' && options.maxPrice > 0) {
+      whereClauses.push('price <= ?');
+      params.push(options.maxPrice);
+    }
+
+    if (options.bedrooms && options.bedrooms.length > 0) {
+      const placeholders = options.bedrooms.map(() => '?').join(', ');
+      whereClauses.push(`bedrooms IN (${placeholders})`);
+      params.push(...options.bedrooms);
+    }
+
+    if (options.bathrooms && options.bathrooms.length > 0) {
+      const placeholders = options.bathrooms.map(() => '?').join(', ');
+      whereClauses.push(`bathrooms IN (${placeholders})`);
+      params.push(...options.bathrooms);
+    }
+
+    if (options.hasPool === true) {
+      whereClauses.push('has_pool = 1');
+    }
+
+    if (typeof options.minLeaseMax === 'number' && options.minLeaseMax > 0) {
+      whereClauses.push('(min_lease IS NULL OR min_lease <= ?)');
+      params.push(options.minLeaseMax);
+    }
+
+    if (options.query && options.query.trim().length > 0) {
+      whereClauses.push('(title LIKE ? OR description LIKE ? OR location LIKE ?)');
+      const q = `%${options.query.trim()}%`;
+      params.push(q, q, q);
+    }
+
+    const whereSql = whereClauses.length > 0 ? `WHERE ${whereClauses.join(' AND ')}` : '';
+
+    // Count total matches
+    const countRow = this.db
+      .prepare(`SELECT COUNT(*) as count FROM properties ${whereSql}`)
+      .get(...params) as unknown as { count: number };
+    const total = countRow?.count ?? 0;
+
+    // Sorting
+    let orderBy = 'ORDER BY COALESCE(posted_at, created_at) DESC';
+    if (options.sort === 'price_asc') {
+      orderBy = 'ORDER BY price ASC, COALESCE(posted_at, created_at) DESC';
+    } else if (options.sort === 'price_desc') {
+      orderBy = 'ORDER BY price DESC, COALESCE(posted_at, created_at) DESC';
+    }
+
+    const limit = Math.max(1, Math.min(options.limit ?? 20, 100));
+    const offset = Math.max(0, options.offset ?? 0);
+
+    const querySql = `SELECT * FROM properties ${whereSql} ${orderBy} LIMIT ? OFFSET ?`;
+    const rows = this.db.prepare(querySql).all(...params, limit, offset) as unknown as PropertyRow[];
+
+    return {
+      items: rows.map(rowToProperty),
+      total,
+    };
+  }
+
+  /**
+   * Lightweight query for map markers.
+   */
+  getPropertiesForMap(
+    city: CityKey,
+    options: { category?: string; type?: 'rent' | 'sale'; limit?: number } = {},
+  ): Property[] {
+    const whereClauses: string[] = ['is_active = 1', 'city = ?'];
+    const params: Array<string | number> = [city];
+
+    if (options.category) {
+      whereClauses.push('category = ?');
+      params.push(options.category);
+    }
+
+    if (options.type) {
+      whereClauses.push('type = ?');
+      params.push(options.type);
+    }
+
+    const limit = Math.min(options.limit ?? 300, 500);
+    const sql = `SELECT * FROM properties WHERE ${whereClauses.join(' AND ')} ORDER BY COALESCE(posted_at, created_at) DESC LIMIT ?`;
+    const rows = this.db.prepare(sql).all(...params, limit) as unknown as PropertyRow[];
+    return rows.map(rowToProperty);
+  }
+
+  /**
+   * Returns aggregated metadata for the city filter dropdowns:
+   * locations with listing counts, categories with listing counts, and min/max prices.
+   */
+  getMetadata(city: CityKey): {
+    locations: Array<{ location: string; count: number }>;
+    categories: Array<{ category: string; count: number }>;
+    priceRange: { minPrice: number; maxPrice: number };
+  } {
+    const locations = this.db
+      .prepare(
+        `SELECT location, COUNT(*) as count
+         FROM properties
+         WHERE city = ? AND is_active = 1 AND location != ''
+         GROUP BY location
+         ORDER BY count DESC
+         LIMIT 30`,
+      )
+      .all(city) as unknown as Array<{ location: string; count: number }>;
+
+    const categories = this.db
+      .prepare(
+        `SELECT COALESCE(category, 'other') as category, COUNT(*) as count
+         FROM properties
+         WHERE city = ? AND is_active = 1
+         GROUP BY category
+         ORDER BY count DESC`,
+      )
+      .all(city) as unknown as Array<{ category: string; count: number }>;
+
+    const priceRow = this.db
+      .prepare(
+        `SELECT MIN(price) as minPrice, MAX(price) as maxPrice
+         FROM properties
+         WHERE city = ? AND is_active = 1 AND price > 0`,
+      )
+      .get(city) as unknown as { minPrice: number | null; maxPrice: number | null };
+
+    return {
+      locations: locations ?? [],
+      categories: categories ?? [],
+      priceRange: {
+        minPrice: priceRow?.minPrice ?? 5000,
+        maxPrice: priceRow?.maxPrice ?? 500000,
+      },
+    };
+  }
+}
+
+export interface PropertyFilterOptions {
+  city?: CityKey;
+  locations?: string[];
+  category?: PropertyCategory | string;
+  type?: 'rent' | 'sale';
+  minPrice?: number;
+  maxPrice?: number;
+  bedrooms?: number[];
+  bathrooms?: number[];
+  hasPool?: boolean;
+  minLeaseMax?: number;
+  query?: string;
+  sort?: 'newest' | 'price_asc' | 'price_desc';
+  limit?: number;
+  offset?: number;
 }
