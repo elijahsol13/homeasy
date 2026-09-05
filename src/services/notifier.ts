@@ -3,6 +3,7 @@ import type { Property } from '../database/repositories/properties.repo';
 import { CITIES, KHR_TO_USD_RATE, RATE_LIMIT } from '../config/settings';
 import { listingActionKeyboard } from '../modules/bot/keyboards/listing.keyboard';
 import { formatPhoneNumber } from '../modules/parser/normalizer';
+import { formatGoogleMapsUrl } from '../config/locations';
 import { env } from '../config/env';
 
 // ─── Formatters & Pure Utilities ─────────────────────────────────────────────
@@ -193,15 +194,11 @@ export function formatListingCard(property: Property): string {
     property.location.toLowerCase() !== 'siem reap' &&
     property.location.toLowerCase() !== 'phnom penh';
 
-  const finalMapsUrl = property.maps_url
-    ? property.maps_url
-    : hasSpecificLocation
-      ? `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(
-          `${property.location}, ${cityLabel}, Cambodia`,
-        )}`
-      : `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(
-          `${cityLabel}, Cambodia`,
-        )}`;
+  const finalMapsUrl = formatGoogleMapsUrl(
+    property.location,
+    property.city,
+    property.maps_url,
+  );
 
   const locText = hasSpecificLocation
     ? `<a href="${escapeHtml(finalMapsUrl)}">📍 <b>${escapeHtml(property.location)}</b>, ${cityLabel} ↗</a>`

@@ -104,7 +104,7 @@ describe('Dynamic Telegram Listing Card Formatter', () => {
       location: 'Sala Kamreuk',
       city: 'siem_reap',
     });
-    expect(cardWithSpecificMaps).toContain('href="https://www.google.com/maps/search/?api=1&amp;query=Sala%20Kamreuk%2C%20Siem%20Reap%2C%20Cambodia"');
+    expect(cardWithSpecificMaps).toContain('href="https://www.google.com/maps/search/?api=1&amp;query=Sangkat%20Sala%20Kamreuk%2C%20Krong%20Siem%20Reap%2C%20Cambodia"');
     expect(cardWithSpecificMaps).toContain('📍 <b>Sala Kamreuk</b>, Siem Reap ↗');
 
     const cardWithCityOnlyMaps = formatListingCard({
