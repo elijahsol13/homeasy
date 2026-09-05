@@ -15,3 +15,4 @@ main().catch((err) => {
   console.error('Fatal error starting HomEasy API:', err);
   process.exit(1);
 });
+

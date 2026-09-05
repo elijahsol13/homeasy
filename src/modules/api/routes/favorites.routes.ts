@@ -77,3 +77,4 @@ export const favoritesRoutes: FastifyPluginAsync<{ container: AppContainer }> = 
     },
   );
 };
+

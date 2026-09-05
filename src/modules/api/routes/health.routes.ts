@@ -19,3 +19,4 @@ export const healthRoutes: FastifyPluginAsync<{ container: AppContainer }> = asy
     };
   });
 };
+
