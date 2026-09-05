@@ -228,12 +228,18 @@ describe('Dynamic Telegram Listing Card Formatter', () => {
   });
 
   describe('Card Summary Integration for Category, Cleaning & Restrictions', () => {
-    test('renders Apartment / Condo / Hotel Room category label', () => {
-      const card = formatListingCard({
+    test('renders Apartment / Condo and Hotel Room category labels', () => {
+      const aptCard = formatListingCard({
         ...baseProperty,
         category: 'apartment',
       });
-      expect(card).toContain('🏬 Apartment / Condo / Hotel Room');
+      expect(aptCard).toContain('🏬 Apartment / Condo');
+
+      const hotelCard = formatListingCard({
+        ...baseProperty,
+        category: 'hotel',
+      });
+      expect(hotelCard).toContain('🏨 Hotel Room');
     });
 
     test('renders cleaning in amenities and prominent restrictions row', () => {

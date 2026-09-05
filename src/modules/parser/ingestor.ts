@@ -87,8 +87,12 @@ export function normalizeRawToClean(
         : (extractType(combinedText) ?? 'rent');
 
   // ── Category ───────────────────────────────────────────────────────────────
-  const category: PropertyCategory | null =
-    (raw.category as PropertyCategory | undefined) ?? extractCategory(combinedText);
+  const extractedCat = extractCategory(combinedText);
+  let category: PropertyCategory | null =
+    (raw.category as PropertyCategory | undefined) ?? extractedCat;
+  if (extractedCat === 'hotel') {
+    category = 'hotel';
+  }
 
   // ── Bedrooms ───────────────────────────────────────────────────────────────
   let bedrooms: number | null = null;
@@ -98,7 +102,7 @@ export function normalizeRawToClean(
   } else {
     bedrooms = extractBedrooms(combinedText);
   }
-  if (bedrooms === null && category === 'room') {
+  if (bedrooms === null && (category === 'room' || category === 'hotel')) {
     bedrooms = 1;
   }
 

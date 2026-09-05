@@ -49,12 +49,13 @@ export const DISTRICTS: Record<CityKey, readonly string[]> = {
 
 export const CATEGORY_OPTIONS = [
   { label: '🏢 Any Category', value: null },
-  { label: '🏬 Apartment / Condo / Hotel Room', value: 'apartment' as const },
+  { label: '🏬 Apartment / Condo', value: 'apartment' as const },
   { label: '🏡 House / Villa', value: 'house' as const },
   { label: '🛏️ Room', value: 'room' as const },
+  { label: '🏨 Hotel Room', value: 'hotel' as const },
 ] as const;
 
-export type PropertyCategory = 'apartment' | 'house' | 'room';
+export type PropertyCategory = 'apartment' | 'house' | 'room' | 'hotel';
 
 // ─── Pool Options ─────────────────────────────────────────────────────────────
 

@@ -144,7 +144,9 @@ export function enrichPropertyRecord(prop: PropertyRecord): EnrichmentResult {
   // 2. Category recovery
   let category = prop.category;
   if (!category) {
-    if (/វីឡា|ផ្ទះ|\b(?:villa|house|townhouse|borey)\b/i.test(text)) {
+    if (/\b(?:hotel\s+room|boutique\s+hotel|hotel\s+suite|hotel-style|hotel)\b/i.test(text)) {
+      category = 'hotel';
+    } else if (/វីឡា|ផ្ទះ|\b(?:villa|house|townhouse|borey)\b/i.test(text)) {
       category = 'house';
     } else if (/ខុនដូ|អាផាតមិន|\b(?:condo|apartment|flat|serviced apartment)\b/i.test(text)) {
       category = 'apartment';
@@ -160,7 +162,7 @@ export function enrichPropertyRecord(prop: PropertyRecord): EnrichmentResult {
   // 3. Bedrooms recovery
   let bedrooms = prop.bedrooms;
   if (bedrooms === null) {
-    if (category === 'room') {
+    if (category === 'room' || category === 'hotel') {
       bedrooms = 1;
     } else {
       // Khmer: e.g. "2បន្ទប់គេង", "3 បន្ទប់គេង"

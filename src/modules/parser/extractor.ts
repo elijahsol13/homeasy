@@ -11,7 +11,7 @@ export interface LLMExtractedListing {
   title: string;
   price: number | null;
   currency: 'USD' | 'KHR';
-  category: 'apartment' | 'house' | 'room' | 'land' | null;
+  category: 'apartment' | 'house' | 'room' | 'hotel' | 'land' | null;
   bedrooms: number | null;
   bathrooms: number | null;
   min_lease: number | null; // in months
@@ -34,7 +34,7 @@ const SYSTEM_INSTRUCTIONS =
   '  "title": string,\n' +
   '  "price": number,\n' +
   '  "currency": "USD" | "KHR",\n' +
-  '  "category": "apartment" | "house" | "room" | "land",\n' +
+  '  "category": "apartment" | "house" | "room" | "hotel" | "land",\n' +
   '  "bedrooms": number | null,\n' +
   '  "bathrooms": number | null,\n' +
   '  "min_lease": number | null,\n' +
@@ -53,7 +53,7 @@ const SYSTEM_INSTRUCTIONS =
   "- `description_en`: DO NOT repeat the price, location, or title. Extract ONLY actual amenities (e.g. Fridge, Washing Machine, AC, Secure Parking, Balcony, WiFi) and lease conditions (e.g. Excludes Electricity, Free Water, Pet Friendly). Return strictly as 1-3 short bullet points.\n" +
   `- \`location\`: Analyze the text and map the location to ONE of these exact values: [${VALID_SANGKATS.join(', ')}]. If the text mentions a location that matches or falls within one of these areas, return that specific area name. If NO location is mentioned, you MUST return null. Do not guess or invent a location.\n` +
   "- `maps_url`: If the post contains a Google Maps link (goo.gl, google.com/maps, maps.app.goo.gl), extract it here. Otherwise, return null.\n" +
-  "- If the property is a hotel room, hotel suite, or boutique hotel room, map category to 'apartment'.\n" +
+  "- If the property is a hotel room, hotel suite, or boutique hotel room, return category: 'hotel'.\n" +
   "- If the post is selling land, return category: 'land'.";
 
 let genAIInstance: GoogleGenerativeAI | null = null;
@@ -85,7 +85,7 @@ function sanitizeLlmResult(rawJson: string): LLMExtractedListing | null {
     let price: number | null = typeof parsed.price === 'number' && parsed.price > 0 ? parsed.price : null;
     const currency: 'USD' | 'KHR' = parsed.currency === 'KHR' ? 'KHR' : 'USD';
     let category: LLMExtractedListing['category'] = null;
-    if (parsed.category && ['apartment', 'house', 'room', 'land'].includes(parsed.category.toLowerCase())) {
+    if (parsed.category && ['apartment', 'house', 'room', 'hotel', 'land'].includes(parsed.category.toLowerCase())) {
       category = parsed.category.toLowerCase() as LLMExtractedListing['category'];
     }
 
@@ -290,10 +290,13 @@ export function extractMinLease(text: string): number | null {
 // ─── Category extraction ──────────────────────────────────────────────────────
 
 export function extractCategory(text: string): PropertyCategory | null {
+  if (/\b(hotel\s+room|boutique\s+hotel|hotel\s+suite|hotel-style|hotel)\b/i.test(text)) {
+    return 'hotel';
+  }
   if (/\b(villa|house|townhouse|shophouse|borey)\b/i.test(text)) {
     return 'house';
   }
-  if (/\b(condo|condominium|apartment|flat|serviced apartment|penthouse|hotel room|boutique hotel|hotel-style|hotel)\b/i.test(text)) {
+  if (/\b(condo|condominium|apartment|flat|serviced apartment|penthouse)\b/i.test(text)) {
     return 'apartment';
   }
   if (/\b(room|studio|single room|private room)\b/i.test(text)) {

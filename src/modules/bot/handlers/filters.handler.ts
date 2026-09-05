@@ -95,7 +95,15 @@ export async function startFilterWizard(ctx: MyContext): Promise<void> {
 export function formatFilterButtonLabel(f: SearchFilter, index: number): string {
   const typeIcon = f.type === 'rent' ? '🏠' : '🏷️';
   const catShort =
-    f.category === 'apartment' ? 'Apt' : f.category === 'house' ? 'House' : f.category === 'room' ? 'Room' : 'Any';
+    f.category === 'apartment'
+      ? 'Apt'
+      : f.category === 'house'
+        ? 'House'
+        : f.category === 'hotel'
+          ? 'Hotel'
+          : f.category === 'room'
+            ? 'Room'
+            : 'Any';
   const bedsShort = formatBedroomsLabel(f.bedrooms);
   const priceShort = buildPriceRangeLabel(f.min_price, f.max_price);
   const poolIcon = f.requires_pool ? ' · 🏊' : '';
@@ -275,7 +283,7 @@ export async function handleFilterCallback(ctx: MyContext, data: string): Promis
         break;
 
       case 'filter:pool':
-        if (draft.category === 'room') {
+        if (draft.category === 'room' || draft.category === 'hotel') {
           ctx.session.wizardStep = 'filter:budget';
           await ctx.editMessageText(
             `✅ <b>Areas:</b> ${draft.locations.length > 0 ? draft.locations.join(', ') : 'All Areas'}\n\n` +
@@ -579,7 +587,7 @@ export async function handleFilterCallback(ctx: MyContext, data: string): Promis
       }
     }
 
-    if (draft.category === 'room') {
+    if (draft.category === 'room' || draft.category === 'hotel') {
       draft.bedrooms = [1];
       ctx.session.wizardStep = 'filter:pool';
       await ctx.editMessageText(
@@ -891,7 +899,7 @@ export function createFiltersHandler(_container: AppContainer): Composer<MyConte
     draft.min_price = parsed.min;
     draft.max_price = parsed.max;
 
-    if (draft.category === 'room') {
+    if (draft.category === 'room' || draft.category === 'hotel') {
       draft.bedrooms = [1];
       ctx.session.wizardStep = 'filter:pool';
       await ctx.reply(
