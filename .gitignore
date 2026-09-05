@@ -26,8 +26,17 @@ Thumbs.db
 .vscode/
 .idea/
 
-# Tool artifacts
+# Tool & agent artifacts
 repomix-output.xml
 BACKLOG.md
+implementation_plan*.md
+walkthrough*.md
+task*.md
+scratch/
+
+# Database and backups
 data/homeasy.db
-.gitignore
+data/backups/
+backups/
+*.tar.gz
+*.zip
