@@ -23,6 +23,8 @@ INFRASTRUCTURE_SETUP.md
 # OS & IDE artifacts
 .DS_Store
 Thumbs.db
+.nosync
+*.nosync
 .vscode/
 .idea/
 
