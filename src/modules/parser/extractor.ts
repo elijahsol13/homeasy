@@ -1,6 +1,7 @@
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import OpenAI from 'openai';
 import { DISTRICTS, type CityKey, type PropertyCategory } from '../../config/settings';
+import { findLandmarksInText } from '../../config/landmarks';
 import { khrToUsdCents, normalizeLocationString, normalizePriceString, usdToUsdCents } from './normalizer';
 import { env } from '../../config/env';
 
@@ -12,10 +13,14 @@ export interface LLMExtractedListing {
   price: number | null;
   currency: 'USD' | 'KHR';
   category: 'apartment' | 'house' | 'room' | 'hotel' | 'land' | null;
+  property_type?: string | null;
   bedrooms: number | null;
   bathrooms: number | null;
   min_lease: number | null; // in months
   has_pool: boolean;
+  electricity?: string | null;
+  water?: string | null;
+  landmarks?: string[];
   location: string | null;
   phone_numbers: string[]; // Extract all phone numbers found
   maps_url: string | null;
@@ -35,10 +40,14 @@ const SYSTEM_INSTRUCTIONS =
   '  "price": number,\n' +
   '  "currency": "USD" | "KHR",\n' +
   '  "category": "apartment" | "house" | "room" | "hotel" | "land",\n' +
+  '  "property_type": "Flat House" | "Private Villa" | "Private House" | "Condo" | "Apartment" | "Hotel Room" | "Room" | null,\n' +
   '  "bedrooms": number | null,\n' +
   '  "bathrooms": number | null,\n' +
   '  "min_lease": number | null,\n' +
   '  "has_pool": boolean,\n' +
+  '  "electricity": "Included" | "EDC (State Rate) ~$0.20/kWh" | string | null,\n' +
+  '  "water": "Included" | "State Rate (~1000៛/m³)" | string | null,\n' +
+  '  "landmarks": string[],\n' +
   '  "location": string | null,\n' +
   '  "phone_numbers": string[],\n' +
   '  "maps_url": string | null,\n' +
@@ -49,8 +58,11 @@ const SYSTEM_INSTRUCTIONS =
   "- `title`: Must be a short, catchy title (max 5 words, e.g., 'Modern 2BR Apartment'). Do NOT just copy the description.\n" +
   "- `price`: The total price or monthly rent amount as a clean number without symbols (e.g. 350 for '$350/month', '$350' or '350$'). If not found, return null.\n" +
   "- `min_lease`: Read the text carefully! If it mentions '6 months lease', '6 Months at lease', '6 months contract' or 'from 6 months', return 6. If '1 year' or '12 months', return 12. If 'long term', return 6. If 'short term' or 'monthly', return 1. If not mentioned, return null.\n" +
+  "- `electricity`: If free/included or all-inclusive, return 'Included'. If EDC or government/state rate or ភ្លើងរដ្ឋ, return 'EDC (State Rate) ~$0.20/kWh'. If a fixed rate is mentioned (e.g. $0.25/kWh, 0.25$, 1000r, 1200r), return formatted as 'Fixed Rate ($0.25/kWh)' or 'Fixed Rate (1000៛/kWh)'. Otherwise null.\n" +
+  "- `water`: If free/included, return 'Included'. If state/gov water or ទឹកដ្ឋ or ~1000r/m3, return 'State Rate (~1000៛/m³)'. If fixed per person (e.g. $5/person), return 'Fixed ($5/person)'. Otherwise null.\n" +
+  "- `property_type`: 'Flat House' (for flat house, shophouse, ផ្ទះល្វែង), 'Private Villa' (for villa, ផ្ទះវីឡា), 'Private House' (for house, detached house), 'Condo', 'Apartment', or 'Hotel Room'.\n" +
   "- `phone_numbers`: Extract ALL phone numbers found (WhatsApp, Telegram, local, international). Strip non-numeric characters except leading '+'. Example: ['+85577448002', '089899084'].\n" +
-  "- `description_en`: DO NOT repeat the price, location, or title. Extract ONLY actual amenities (e.g. Fridge, Washing Machine, AC, Secure Parking, Balcony, WiFi) and lease conditions (e.g. Excludes Electricity, Free Water, Pet Friendly). Return strictly as 1-3 short bullet points.\n" +
+  "- `description_en`: DO NOT repeat the price, location, or title. Extract ONLY actual amenities (e.g. Fridge, Washing Machine, AC, Secure Parking, Balcony, WiFi) and lease conditions (e.g. Pet Friendly). Return strictly as 1-3 short bullet points.\n" +
   `- \`location\`: Analyze the text and map the location to ONE of these exact values: [${VALID_SANGKATS.join(', ')}]. If the text mentions a location that matches or falls within one of these areas, return that specific area name. If NO location is mentioned, you MUST return null. Do not guess or invent a location.\n` +
   "- `maps_url`: If the post contains a Google Maps link (goo.gl, google.com/maps, maps.app.goo.gl), extract it here. Otherwise, return null.\n" +
   "- If the property is a hotel room, hotel suite, or boutique hotel room, return category: 'hotel'.\n" +
@@ -122,16 +134,33 @@ function sanitizeLlmResult(rawJson: string): LLMExtractedListing | null {
     const maps_url = typeof parsed.maps_url === 'string' && parsed.maps_url.startsWith('http') ? parsed.maps_url.trim() : null;
     const description_en = typeof parsed.description_en === 'string' ? parsed.description_en.trim() : '';
 
+    const electricity = typeof parsed.electricity === 'string' && parsed.electricity.trim().length > 0
+      ? parsed.electricity.trim()
+      : null;
+    const water = typeof parsed.water === 'string' && parsed.water.trim().length > 0
+      ? parsed.water.trim()
+      : null;
+    const property_type = typeof parsed.property_type === 'string' && parsed.property_type.trim().length > 0
+      ? parsed.property_type.trim()
+      : null;
+    const landmarks = Array.isArray(parsed.landmarks)
+      ? parsed.landmarks.filter((l): l is string => typeof l === 'string')
+      : [];
+
     return {
       is_real_estate,
       title,
       price,
       currency,
       category,
+      property_type,
       bedrooms,
       bathrooms,
       min_lease,
       has_pool,
+      electricity,
+      water,
+      landmarks,
       location,
       phone_numbers,
       maps_url,
@@ -142,29 +171,136 @@ function sanitizeLlmResult(rawJson: string): LLMExtractedListing | null {
   }
 }
 
+// ─── Regex Heuristic Fallbacks for Utilities & Property Types ─────────────────
+
+export function extractElectricity(text: string): string | null {
+  // 1. Included / All inclusive
+  if (/\b(?:free\s+electric(?:ity)?|electric(?:ity)?\s+free|utilities\s+included|all\s+inclusive|electricity\s*:\s*included)\b/i.test(text)) {
+    return 'Included';
+  }
+
+  // 2. EDC / State rate
+  if (
+    /\b(?:edc|state\s+rate|gov(?:ernment)?\s+rate|state\s+electric(?:ity)?)\b/i.test(text) ||
+    /ភ្លើងរដ្ឋ/.test(text)
+  ) {
+    return 'EDC (State Rate) ~$0.20/kWh';
+  }
+
+  // 3. Fixed dollar rate (e.g. $0.25/kWh, 0.25$, $0.30)
+  const dollarMatch = /(?:electricity|electric|power|⚡)?\s*(?::\s*)?\$?(0\.\d{2})\s*\$?(?:\s*\/\s*kwh|\s*per\s*kwh|\s*\/unit)?\b/i.exec(text);
+  if (dollarMatch && parseFloat(dollarMatch[1]) >= 0.15 && parseFloat(dollarMatch[1]) <= 0.60) {
+    return `Fixed Rate ($${dollarMatch[1]}/kWh)`;
+  }
+
+  // 4. Fixed Riel rate (e.g. 1000r, 1000 riel, 1200r/kwh)
+  const rielMatch = /(?:electricity|electric|power|⚡)?\s*(?::\s*)?([1-9]\d{2,3})\s*(?:r|riel|៛)(?:\s*\/\s*kwh|\s*per\s*kwh|\s*\/unit)?\b/i.exec(text);
+  if (rielMatch && parseInt(rielMatch[1], 10) >= 500 && parseInt(rielMatch[1], 10) <= 3000) {
+    return `Fixed Rate (${rielMatch[1]}៛/kWh)`;
+  }
+
+  return null;
+}
+
+export function extractWater(text: string): string | null {
+  // 1. Included / Free
+  if (/\b(?:free\s+water|water\s+free|water\s*:\s*included|water\s*:\s*free)\b/i.test(text)) {
+    return 'Included';
+  }
+
+  // 2. State rate
+  if (
+    /\b(?:state\s+water|gov(?:ernment)?\s+water|1000\s*(?:r|riel)\s*\/\s*m3)\b/i.test(text) ||
+    /ទឹករដ្ឋ|ទឹកដ្ឋ/.test(text)
+  ) {
+    return 'State Rate (~1000៛/m³)';
+  }
+
+  // 3. Fixed per person / per month
+  const fixedMatch = /(?:water|💧)?\s*(?::\s*)?\$?(\d+(?:\.\d+)?)\s*\$?\s*(?:\/\s*person|\/\s*pax|\/\s*people|\/\s*month|\/\s*mo)\b/i.exec(text);
+  if (fixedMatch) {
+    const val = fixedMatch[1];
+    const unit = /month|mo/i.test(fixedMatch[0]) ? '/month' : '/person';
+    return `Fixed ($${val}${unit})`;
+  }
+
+  return null;
+}
+
+export function extractPropertyType(text: string, category?: PropertyCategory | string | null): string | null {
+  // 1. Flat House (Shophouse / ផ្ទះល្វែង)
+  if (
+    /\b(?:flat\s*house|shophouse|shop\s*house|flathouse)\b/i.test(text) ||
+    /ផ្ទះល្វែង/.test(text)
+  ) {
+    return 'Flat House';
+  }
+
+  // 2. Private Villa (ផ្ទះវីឡា)
+  if (
+    /\b(?:villa|private\s+villa|detached\s+villa|luxury\s+villa)\b/i.test(text) ||
+    /ផ្ទះវីឡា/.test(text)
+  ) {
+    return 'Private Villa';
+  }
+
+  // 3. Private House
+  if (/\b(?:private\s+house|detached\s+house|entire\s+house|whole\s+house|wooden\s+house|khmer\s+house)\b/i.test(text)) {
+    return 'Private House';
+  }
+
+  // 4. Hotel Room
+  if (category === 'hotel' || /\b(?:hotel\s+room|boutique\s+hotel|hotel\s+suite)\b/i.test(text)) {
+    return 'Hotel Room';
+  }
+
+  // 5. Condo
+  if (/\b(?:condo|condominium)\b/i.test(text)) {
+    return 'Condo';
+  }
+
+  // 6. Apartment
+  if (category === 'apartment' || /\b(?:apartment|serviced\s+apartment|studio\s+apartment)\b/i.test(text)) {
+    return 'Apartment';
+  }
+
+  return null;
+}
+
+// ─── Single Item LLM Extraction with Model Cascade ────────────────────────────
+
 export async function extractListingWithLLM(text: string): Promise<LLMExtractedListing | null> {
   const geminiKey = getGeminiKey();
   if (geminiKey) {
-    try {
-      if (!genAIInstance) {
-        genAIInstance = new GoogleGenerativeAI(geminiKey);
-      }
-      const model = genAIInstance.getGenerativeModel({
-        model: 'gemini-3.5-flash-lite',
-        generationConfig: {
-          responseMimeType: 'application/json',
-        },
-        systemInstruction: SYSTEM_INSTRUCTIONS,
-      });
+    // Model hierarchy: gemini-2.5-flash -> gemini-2.5-flash-lite
+    for (const modelName of ['gemini-2.5-flash', 'gemini-2.5-flash-lite']) {
+      try {
+        if (!genAIInstance) {
+          genAIInstance = new GoogleGenerativeAI(geminiKey);
+        }
+        const model = genAIInstance.getGenerativeModel({
+          model: modelName,
+          generationConfig: {
+            responseMimeType: 'application/json',
+          },
+          systemInstruction: SYSTEM_INSTRUCTIONS,
+        });
 
-      const result = await model.generateContent(text);
-      const raw = result.response.text();
-      if (raw) {
-        const sanitized = sanitizeLlmResult(raw);
-        if (sanitized) return sanitized;
+        const result = await model.generateContent(text);
+        const raw = result.response.text();
+        if (raw) {
+          const sanitized = sanitizeLlmResult(raw);
+          if (sanitized) {
+            // Heuristic fill-ins if model omitted them
+            if (!sanitized.electricity) sanitized.electricity = extractElectricity(text);
+            if (!sanitized.water) sanitized.water = extractWater(text);
+            if (!sanitized.property_type) sanitized.property_type = extractPropertyType(text, sanitized.category);
+            return sanitized;
+          }
+        }
+      } catch (err: unknown) {
+        console.warn(`[Extractor] Gemini ${modelName} extraction error: ${err instanceof Error ? err.message : String(err)}`);
       }
-    } catch (err: unknown) {
-      console.warn(`[Extractor] Gemini extraction error: ${err instanceof Error ? err.message : String(err)}`);
     }
   }
 
@@ -187,7 +323,12 @@ export async function extractListingWithLLM(text: string): Promise<LLMExtractedL
       const raw = response.choices[0]?.message?.content;
       if (raw) {
         const sanitized = sanitizeLlmResult(raw);
-        if (sanitized) return sanitized;
+        if (sanitized) {
+          if (!sanitized.electricity) sanitized.electricity = extractElectricity(text);
+          if (!sanitized.water) sanitized.water = extractWater(text);
+          if (!sanitized.property_type) sanitized.property_type = extractPropertyType(text, sanitized.category);
+          return sanitized;
+        }
       }
     } catch (err: unknown) {
       console.warn(`[Extractor] OpenAI extraction error: ${err instanceof Error ? err.message : String(err)}`);
@@ -195,6 +336,83 @@ export async function extractListingWithLLM(text: string): Promise<LLMExtractedL
   }
 
   return null;
+}
+
+// ─── Batch LLM Extraction for Scrapers & Maintenance (Saves 80–90% Quotas) ─────
+
+export async function extractListingsBatchWithLLM(
+  items: Array<{ id: string | number; text: string }>,
+): Promise<Map<string | number, LLMExtractedListing>> {
+  const results = new Map<string | number, LLMExtractedListing>();
+  if (items.length === 0) return results;
+
+  const geminiKey = getGeminiKey();
+  if (geminiKey && items.length > 1) {
+    const batchPrompt = JSON.stringify(
+      items.map((it) => ({ id: it.id, text: it.text })),
+    );
+
+    const batchSystemInstruction =
+      SYSTEM_INSTRUCTIONS +
+      '\n\nYou will receive a JSON array of items: `[{"id": ..., "text": "..."}]`.\n' +
+      'Return a JSON array of objects: `[{"id": ..., "result": {<schema>}}]` where result matches the extraction schema.\n' +
+      'Do not skip any items.';
+
+    for (const modelName of ['gemini-2.5-flash', 'gemini-2.5-flash-lite']) {
+      try {
+        if (!genAIInstance) {
+          genAIInstance = new GoogleGenerativeAI(geminiKey);
+        }
+        const model = genAIInstance.getGenerativeModel({
+          model: modelName,
+          generationConfig: {
+            responseMimeType: 'application/json',
+          },
+          systemInstruction: batchSystemInstruction,
+        });
+
+        const res = await model.generateContent(batchPrompt);
+        const raw = res.response.text();
+        if (raw) {
+          const parsedArray = JSON.parse(
+            raw.replace(/```(?:json)?/gi, '').replace(/```/g, '').trim(),
+          );
+          if (Array.isArray(parsedArray)) {
+            for (const entry of parsedArray) {
+              if (entry.id !== undefined && entry.result) {
+                const sanitized = sanitizeLlmResult(JSON.stringify(entry.result));
+                if (sanitized) {
+                  const original = items.find((it) => it.id === entry.id);
+                  if (original) {
+                    if (!sanitized.electricity) sanitized.electricity = extractElectricity(original.text);
+                    if (!sanitized.water) sanitized.water = extractWater(original.text);
+                    if (!sanitized.property_type) sanitized.property_type = extractPropertyType(original.text, sanitized.category);
+                  }
+                  results.set(entry.id, sanitized);
+                }
+              }
+            }
+            // If batch was successful, stop attempting other models
+            if (results.size > 0) break;
+          }
+        }
+      } catch (batchErr) {
+        console.warn(`[Extractor] Batch ${modelName} error:`, batchErr instanceof Error ? batchErr.message : String(batchErr));
+      }
+    }
+  }
+
+  // Fail-Safe Fallback: process any items missing from the batch individually
+  for (const item of items) {
+    if (!results.has(item.id)) {
+      const single = await extractListingWithLLM(item.text);
+      if (single) {
+        results.set(item.id, single);
+      }
+    }
+  }
+
+  return results;
 }
 
 // ─── Price extraction ─────────────────────────────────────────────────────────

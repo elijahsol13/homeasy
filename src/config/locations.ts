@@ -452,3 +452,174 @@ export async function resolveGoogleMapsShortlink(
   }
 }
 
+/**
+ * City Centers and Max Radii for sanity checking coordinates.
+ */
+const CITY_GEO_BOUNDS = {
+  siem_reap: {
+    centerLat: 13.3611,
+    centerLng: 103.8596,
+    maxRadiusKm: 25,
+    // Reject water coordinates inside Lake Tonle Sap
+    isWater: (lat: number, lng: number) => lat < 13.18 && lng > 103.75,
+  },
+  phnom_penh: {
+    centerLat: 11.5564,
+    centerLng: 104.9282,
+    maxRadiusKm: 30,
+    isWater: () => false,
+  },
+} as const;
+
+/**
+ * Calculates distance in km between two GPS points using Haversine formula.
+ */
+export function calculateDistanceKm(
+  lat1: number,
+  lon1: number,
+  lat2: number,
+  lon2: number,
+): number {
+  const R = 6371; // Earth's radius in km
+  const dLat = ((lat2 - lat1) * Math.PI) / 180;
+  const dLon = ((lon2 - lon1) * Math.PI) / 180;
+  const a =
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos((lat1 * Math.PI) / 180) *
+      Math.cos((lat2 * Math.PI) / 180) *
+      Math.sin(dLon / 2) *
+      Math.sin(dLon / 2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  return R * c;
+}
+
+/**
+ * Checks if coordinates are realistically within the residential/commercial bounds of the city
+ * and not dumped into Lake Tonle Sap or distant provinces.
+ */
+export function isCoordinateInSanityBounds(
+  lat: number,
+  lng: number,
+  city: CityKey,
+): boolean {
+  const bounds = CITY_GEO_BOUNDS[city];
+  if (!bounds) return false;
+
+  // Check water zone (e.g. Tonle Sap)
+  if (bounds.isWater(lat, lng)) return false;
+
+  // Check radius from city center
+  const dist = calculateDistanceKm(bounds.centerLat, bounds.centerLng, lat, lng);
+  return dist <= bounds.maxRadiusKm;
+}
+
+export interface CrossValidatedLocation {
+  resolvedLocation: string;
+  finalMapsUrl: string;
+  isExactPin: boolean;
+  trustLevel: 'pin' | 'text' | 'attribute' | 'fallback';
+}
+
+/**
+ * Cross-validates 3 location sources (Pin coordinates, Text mention, Platform attribute)
+ * using a 2-against-1 majority vote to reject accidental copy-pastes or defaulted dropdowns.
+ */
+export function crossValidateLocation(
+  city: CityKey,
+  options: {
+    pinCoords?: { latitude: number; longitude: number } | null;
+    rawMapsUrl?: string | null;
+    textLocation?: string | null;
+    attributeLocation?: string | null;
+    hotelName?: string | null;
+  },
+): CrossValidatedLocation {
+  const cityLabel = city === 'phnom_penh' ? 'Phnom Penh' : 'Siem Reap';
+
+  // Hotel special case: if a verified hotel name is detected
+  if (options.hotelName && options.hotelName.trim().length > 2) {
+    const query = `${options.hotelName.trim()}, ${cityLabel}, Cambodia`;
+    return {
+      resolvedLocation: options.textLocation || options.hotelName.trim(),
+      finalMapsUrl: `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(query)}`,
+      isExactPin: false,
+      trustLevel: 'text',
+    };
+  }
+
+  // Canonical matches for Text & Attribute
+  const textMatch = options.textLocation ? findCanonicalLocation(options.textLocation, city) : undefined;
+  const attrMatch = options.attributeLocation ? findCanonicalLocation(options.attributeLocation, city) : undefined;
+
+  // Sanity check coordinates if provided
+  let coordsRejected = false;
+  let validCoords = options.pinCoords;
+  if (validCoords) {
+    if (!isCoordinateInSanityBounds(validCoords.latitude, validCoords.longitude, city)) {
+      validCoords = null; // Discard wild / water coordinates
+      coordsRejected = true;
+    }
+  }
+
+  // Case 1: Text and Attribute both agree (2 against 1 consensus)
+  if (textMatch && attrMatch && textMatch.canonicalName === attrMatch.canonicalName) {
+    // Both text and form attribute agree! Maximum text confidence.
+    // If map URL is provided and not rejected, use it for navigation link
+    if (!coordsRejected && options.rawMapsUrl) {
+      return {
+        resolvedLocation: textMatch.canonicalName,
+        finalMapsUrl: options.rawMapsUrl,
+        isExactPin: true,
+        trustLevel: 'pin',
+      };
+    }
+    return {
+      resolvedLocation: textMatch.canonicalName,
+      finalMapsUrl: formatGoogleMapsUrl(textMatch.canonicalName, city),
+      isExactPin: false,
+      trustLevel: 'text',
+    };
+  }
+
+  // Case 2: Valid map URL provided and not rejected
+  if (!coordsRejected && options.rawMapsUrl) {
+    // If text was mentioned and valid, use text name for label, exact pin for URL
+    const label = textMatch?.canonicalName || options.textLocation || attrMatch?.canonicalName || cityLabel;
+    return {
+      resolvedLocation: label,
+      finalMapsUrl: options.rawMapsUrl,
+      isExactPin: true,
+      trustLevel: 'pin',
+    };
+  }
+
+  // Case 3: Text mention exists
+  if (textMatch) {
+    return {
+      resolvedLocation: textMatch.canonicalName,
+      finalMapsUrl: formatGoogleMapsUrl(textMatch.canonicalName, city),
+      isExactPin: false,
+      trustLevel: 'text',
+    };
+  }
+
+  // Case 4: Attribute fallback (Khmer24 dropdown)
+  if (attrMatch) {
+    return {
+      resolvedLocation: attrMatch.canonicalName,
+      finalMapsUrl: formatGoogleMapsUrl(attrMatch.canonicalName, city),
+      isExactPin: false,
+      trustLevel: 'attribute',
+    };
+  }
+
+  // Case 5: Fallback to city
+  return {
+    resolvedLocation: cityLabel,
+    finalMapsUrl: formatGoogleMapsUrl(cityLabel, city),
+    isExactPin: false,
+    trustLevel: 'fallback',
+  };
+}
+
+

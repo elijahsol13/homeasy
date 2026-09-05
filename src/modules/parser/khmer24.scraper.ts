@@ -32,6 +32,13 @@ import type { PropertyCategory } from '../../config/settings';
 
 export const K24_SESSION_PATH = path.join(process.cwd(), 'data', 'k24_session.json');
 
+export class Khmer24SessionExpiredError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'Khmer24SessionExpiredError';
+  }
+}
+
 // Apply stealth plugin once at module load
 chromium.use(stealthPlugin());
 
@@ -426,7 +433,14 @@ async function fetchFeedPage(
 
     if (offset === 0) {
       // Navigate to the front-end page — triggers CF cookie resolution + API call
-      await page.goto(pageUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
+      const resp = await page.goto(pageUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
+      const status = resp?.status();
+      const title = await page.title().catch(() => '');
+      if (status === 403 || title.includes('Attention Required') || title.includes('Just a moment')) {
+        throw new Khmer24SessionExpiredError(
+          `Cloudflare 403 / Challenge detected on ${pageUrl} (status: ${status}, title: "${title}")`,
+        );
+      }
     } else {
       // For subsequent pages use fetch() in the page context (reuses existing CF cookies)
       feedData = (await page.evaluate(async (url: string) => {
@@ -453,6 +467,9 @@ async function fetchFeedPage(
       }, apiUrl)) as K24FeedResponse | null;
     }
   } catch (err: unknown) {
+    if (err instanceof Khmer24SessionExpiredError) {
+      throw err;
+    }
     const msg = err instanceof Error ? err.message : String(err);
     console.warn(`⚠️  [Scraper] fetchFeedPage error: ${msg}`);
   } finally {
@@ -730,29 +747,48 @@ export async function runKhmer24Scraper(containerInstance?: AppContainer): Promi
     });
 
     for (const target of KHMER24_TARGETS) {
-      const listings = await scrapeTargetWithBrowser(browser, target, 10);
-      totalScraped += listings.length;
-      console.log(`\n📥 Ingesting ${listings.length} listings from [${target.name}]...`);
+      try {
+        const listings = await scrapeTargetWithBrowser(browser, target, 10);
+        totalScraped += listings.length;
+        console.log(`\n📥 Ingesting ${listings.length} listings from [${target.name}]...`);
 
-      for (const listing of listings) {
-        try {
-          const result = await container.ingestionService.ingestRawListing(listing);
-          if (result.status === 'inserted') {
-            totalInserted++;
-            console.log(
-              `  ✅ Inserted: "${listing.title?.slice(0, 40)}" (ID #${result.propertyId})`,
-            );
-          } else if (result.status === 'duplicate') {
-            totalDuplicates++;
-            console.log(`  🔁 Duplicate: "${listing.title?.slice(0, 40)}"`);
-          } else {
+        for (const listing of listings) {
+          try {
+            const result = await container.ingestionService.ingestRawListing(listing);
+            if (result.status === 'inserted') {
+              totalInserted++;
+              console.log(
+                `  ✅ Inserted: "${listing.title?.slice(0, 40)}" (ID #${result.propertyId})`,
+              );
+            } else if (result.status === 'duplicate') {
+              totalDuplicates++;
+              console.log(`  🔁 Duplicate: "${listing.title?.slice(0, 40)}"`);
+            } else {
+              totalErrors++;
+              console.log(`  ❌ Error: ${result.error}`);
+            }
+          } catch (err: unknown) {
             totalErrors++;
-            console.log(`  ❌ Error: ${result.error}`);
+            console.error(
+              `  ❌ Ingest error: ${err instanceof Error ? err.message : String(err)}`,
+            );
           }
-        } catch (err: unknown) {
+        }
+      } catch (err: unknown) {
+        if (err instanceof Khmer24SessionExpiredError) {
+          console.error(`💥 Khmer24 session expired or Cloudflare 403 blocked: ${err.message}`);
+          console.error('📢 Sending high-priority alert to administrators...');
+          await container.notifierService.notifyAdmins(
+            '⚠️ Khmer24 session expired or Cloudflare 403 blocked. Run <code>npm run k24:login</code> on the server.',
+          );
+          totalErrors++;
+          // Halt further Khmer24 targets in this cycle so it moves immediately to Facebook
+          break;
+        } else {
           totalErrors++;
           console.error(
-            `  ❌ Ingest error: ${err instanceof Error ? err.message : String(err)}`,
+            `💥 Error processing Khmer24 target [${target.name}]:`,
+            err instanceof Error ? err.message : String(err),
           );
         }
       }

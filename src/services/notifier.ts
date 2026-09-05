@@ -3,7 +3,17 @@ import type { Property } from '../database/repositories/properties.repo';
 import { CITIES, KHR_TO_USD_RATE, RATE_LIMIT } from '../config/settings';
 import { listingActionKeyboard } from '../modules/bot/keyboards/listing.keyboard';
 import { formatPhoneNumber } from '../modules/parser/normalizer';
-import { formatGoogleMapsUrl } from '../config/locations';
+import {
+  formatGoogleMapsUrl,
+  crossValidateLocation,
+  extractCoordinatesFromMapsUrl,
+} from '../config/locations';
+import { findLandmarksInText } from '../config/landmarks';
+import {
+  extractElectricity,
+  extractWater,
+  extractPropertyType,
+} from '../modules/parser/extractor';
 import { env } from '../config/env';
 
 // ─── Formatters & Pure Utilities ─────────────────────────────────────────────
@@ -161,15 +171,48 @@ export function formatListingCard(property: Property): string {
   const cityLabel = CITIES[property.city] ?? property.city;
   const typeEmoji = property.type === 'rent' ? '🏠' : '🏷️';
   const typeLabel = property.type === 'rent' ? 'For Rent' : 'For Sale';
-  const catLabel = property.category
-    ? property.category === 'apartment'
-      ? '🏬 Apartment / Condo'
-      : property.category === 'house'
-        ? '🏡 House / Villa'
-        : property.category === 'hotel'
-          ? '🏨 Hotel Room'
-          : '🛏️ Room'
-    : null;
+  const desc = property.description || '';
+
+  // 1. Specific Property Type extraction
+  const specificType = extractPropertyType(desc, property.category);
+  let catLabel: string | null = null;
+  if (specificType) {
+    switch (specificType) {
+      case 'Flat House':
+        catLabel = '🏘️ Flat House';
+        break;
+      case 'Private Villa':
+        catLabel = '🏡 Private Villa';
+        break;
+      case 'Private House':
+        catLabel = '🏡 Private House';
+        break;
+      case 'Condo':
+        catLabel = '🏢 Condo';
+        break;
+      case 'Apartment':
+        catLabel = '🏬 Apartment';
+        break;
+      case 'Hotel Room':
+        catLabel = '🏨 Hotel Room';
+        break;
+      case 'Room':
+        catLabel = '🛏️ Room';
+        break;
+      default:
+        catLabel = specificType;
+        break;
+    }
+  } else if (property.category) {
+    catLabel =
+      property.category === 'apartment'
+        ? '🏬 Apartment'
+        : property.category === 'house'
+          ? '🏡 House'
+          : property.category === 'hotel'
+            ? '🏨 Hotel Room'
+            : '🛏️ Room';
+  }
 
   // 1. Price line
   const priceLine = priceStr
@@ -186,23 +229,51 @@ export function formatListingCard(property: Property): string {
   }
   const termsLine = terms.length > 0 ? ` · ${terms.join(' · ')}` : '';
 
-  // 3. Location line with smart Google Maps search link fallback
-  const hasSpecificLocation =
-    property.location &&
-    property.location.trim().length > 0 &&
-    property.location.toLowerCase() !== property.city.toLowerCase() &&
-    property.location.toLowerCase() !== 'siem reap' &&
-    property.location.toLowerCase() !== 'phnom penh';
+  // 3. Location line with cross-validation & sanity checks
+  const pinCoords = property.maps_url
+    ? extractCoordinatesFromMapsUrl(property.maps_url)
+    : null;
 
-  const finalMapsUrl = formatGoogleMapsUrl(
-    property.location,
-    property.city,
-    property.maps_url,
-  );
+  let hotelName: string | null = null;
+  if (specificType === 'Hotel Room' || property.category === 'hotel') {
+    const hotelMatch =
+      desc.match(/(?:at|in|hotel:?)\s+([A-Z][A-Za-z0-9\s'&-]{2,30}(?:Hotel|Boutique|Resort|Lodge|Suites|Villa))/i) ||
+      property.title.match(/([A-Z][A-Za-z0-9\s'&-]{2,30}(?:Hotel|Boutique|Resort|Lodge|Suites|Villa))/i);
+    if (hotelMatch && hotelMatch[1]) {
+      hotelName = hotelMatch[1].trim();
+    }
+  }
 
-  const locText = hasSpecificLocation
-    ? `<a href="${escapeHtml(finalMapsUrl)}">📍 <b>${escapeHtml(property.location)}</b>, ${cityLabel} ↗</a>`
+  const crossVal = crossValidateLocation(property.city, {
+    pinCoords,
+    rawMapsUrl: property.maps_url,
+    textLocation: property.location,
+    attributeLocation: null,
+    hotelName,
+  });
+
+  const finalMapsUrl = crossVal.finalMapsUrl;
+  const displayLocation = crossVal.resolvedLocation;
+
+  const isSpecific =
+    displayLocation &&
+    displayLocation.trim().length > 0 &&
+    displayLocation.toLowerCase() !== cityLabel.toLowerCase() &&
+    displayLocation.toLowerCase() !== property.city.toLowerCase() &&
+    displayLocation.toLowerCase() !== 'siem reap' &&
+    displayLocation.toLowerCase() !== 'phnom penh';
+
+  const locText = isSpecific
+    ? `<a href="${escapeHtml(finalMapsUrl)}">📍 <b>${escapeHtml(displayLocation)}</b>, ${cityLabel} ↗</a>`
     : `<a href="${escapeHtml(finalMapsUrl)}">📍 <b>${cityLabel}</b> ↗</a>`;
+
+  // Landmarks line
+  const detectedLandmarks = findLandmarksInText(desc, property.city);
+  let landmarkLine = '';
+  if (detectedLandmarks.length > 0) {
+    const lm = detectedLandmarks[0];
+    landmarkLine = `\n<a href="${escapeHtml(lm.gmapsLink)}">🚩 Landmark: <b>${escapeHtml(lm.canonicalName)}</b> ↗</a>`;
+  }
 
   // 4. Features line (Bedrooms, Bathrooms, Pool, Size, Floor, Furnishing)
   const features: string[] = [];
@@ -218,7 +289,6 @@ export function formatListingCard(property: Property): string {
   }
 
   // Extract additional specs (Size, Floor, Furniture) from description if present
-  const desc = property.description || '';
   const sizeMatch =
     desc.match(/(?:Size|📐 Size):\s*([0-9]+(?:\.[0-9]+)?\s*(?:m²|m2|sqm|sq\.?m\.?|[xX*]\s*[0-9]+m?))/i) ||
     desc.match(/\b([0-9]{2,4}\s*(?:m²|m2|sqm))\b/i);
@@ -240,7 +310,19 @@ export function formatListingCard(property: Property): string {
 
   const featuresLine = features.length > 0 ? `\n🛏 ${features.join(' · ')}` : '';
 
-  // 5. Amenities row (Gym, Elevator, Balcony, Parking, Security, Cleaning, Wi-Fi, Pets)
+  // 5. Utilities line (EDC / Fixed electricity, State / Fixed water)
+  const electricity = extractElectricity(desc);
+  const water = extractWater(desc);
+  const utilities: string[] = [];
+  if (electricity) {
+    utilities.push(`⚡ Electricity: ${electricity}`);
+  }
+  if (water) {
+    utilities.push(`💧 Water: ${water}`);
+  }
+  const utilitiesLine = utilities.length > 0 ? `\n${utilities.join(' · ')}` : '';
+
+  // 6. Amenities row (Gym, Elevator, Balcony, Parking, Security, Cleaning, Wi-Fi, Pets)
   const amenities: string[] = [];
   if (/\b(?:gym|fitness)\b/i.test(desc)) amenities.push('🏋️ Gym');
   if (/\b(?:elevator|lift)\b/i.test(desc)) amenities.push('🛗 Elevator');
@@ -260,10 +342,10 @@ export function formatListingCard(property: Property): string {
 
   const amenitiesLine = amenities.length > 0 ? `\n✨ ${amenities.join(' · ')}` : '';
 
-  // 6. Restrictions row (Prominently displays any bans: pets, smoking, parties, subleasing)
+  // 7. Restrictions row (Prominently displays any bans: pets, smoking, parties, subleasing)
   const restrictionsLine = restrictions.length > 0 ? `\n⛔ <b>Restrictions:</b> ${restrictions.join(' · ')}` : '';
 
-  // 7. Description excerpt (cleaned of technical tags and capped under 240 chars)
+  // 8. Description excerpt (cleaned of technical tags and capped under 240 chars)
   const cleanedDesc = desc
     .replace(/(?:Size|Floor|Furniture|Facing|Parking):[^\n]+/gi, '')
     .trim();
@@ -271,10 +353,10 @@ export function formatListingCard(property: Property): string {
     ? `\n\n${escapeHtml(truncate(cleanedDesc, 240))}`
     : '';
 
-  // 8. Processing timestamp (placed right above contact section)
+  // 9. Processing timestamp (placed right above contact section)
   const timestampText = `\n\n${formatListingTimestamp(property.created_at || property.parsed_at)}`;
 
-  // 9. Direct contact details (formatted with standardized phone mask)
+  // 10. Direct contact details (formatted with standardized phone mask)
   const contactLines: string[] = [];
   if (property.direct_contact.phone) {
     const formattedPhone =
@@ -298,8 +380,9 @@ export function formatListingCard(property: Property): string {
     `${typeEmoji} <b>${escapeHtml(property.title)}</b>\n` +
     `<i>${typeLabel}</i>${catLine}\n\n` +
     `${priceLine}${termsLine}\n` +
-    `${locText}` +
+    `${locText}${landmarkLine}` +
     `${featuresLine}` +
+    `${utilitiesLine}` +
     `${amenitiesLine}` +
     `${restrictionsLine}` +
     `${descLine}` +

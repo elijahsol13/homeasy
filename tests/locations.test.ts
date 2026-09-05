@@ -1,4 +1,11 @@
-import { formatGoogleMapsUrl, findCanonicalLocation, extractCoordinatesFromMapsUrl } from '../src/config/locations';
+import {
+  formatGoogleMapsUrl,
+  findCanonicalLocation,
+  extractCoordinatesFromMapsUrl,
+  calculateDistanceKm,
+  isCoordinateInSanityBounds,
+  crossValidateLocation,
+} from '../src/config/locations';
 
 describe('Cambodia Locations & Smart Google Maps Link Generator', () => {
   describe('Bakong Landmark Disambiguation', () => {
@@ -100,6 +107,82 @@ describe('Cambodia Locations & Smart Google Maps Link Generator', () => {
     it('returns null for URLs without coordinates', () => {
       expect(extractCoordinatesFromMapsUrl('https://maps.google.com/')).toBeNull();
       expect(extractCoordinatesFromMapsUrl('')).toBeNull();
+    });
+  });
+
+  describe('Geo Distance & Sanity Bounds', () => {
+    it('calculates Haversine distance between coordinates accurately', () => {
+      // Distance between Siem Reap city center (13.3611, 103.8596) and Angkor Wat (13.4125, 103.8670) is ~5.7 km
+      const dist = calculateDistanceKm(13.3611, 103.8596, 13.4125, 103.867);
+      expect(dist).toBeGreaterThan(5.0);
+      expect(dist).toBeLessThan(6.5);
+    });
+
+    it('accepts coordinates within city sanity bounds', () => {
+      // Pub Street area in Siem Reap
+      expect(isCoordinateInSanityBounds(13.3541, 103.8556, 'siem_reap')).toBe(true);
+      // BKK1 in Phnom Penh
+      expect(isCoordinateInSanityBounds(11.5508, 104.9272, 'phnom_penh')).toBe(true);
+    });
+
+    it('rejects coordinates inside Lake Tonle Sap', () => {
+      // Deep inside Lake Tonle Sap: lat 13.05, lng 103.95
+      expect(isCoordinateInSanityBounds(13.05, 103.95, 'siem_reap')).toBe(false);
+    });
+
+    it('rejects coordinates exceeding max radius (>25 km from Siem Reap)', () => {
+      // 50 km away from Siem Reap
+      expect(isCoordinateInSanityBounds(13.8, 103.85, 'siem_reap')).toBe(false);
+    });
+  });
+
+  describe('3-Way Location Cross-Validation & Consensus', () => {
+    it('uses 2-against-1 consensus when text and attribute agree', () => {
+      const result = crossValidateLocation('siem_reap', {
+        textLocation: 'Svay Dangkum',
+        attributeLocation: 'Svay Dangkum',
+        pinCoords: { latitude: 13.05, longitude: 103.95 }, // Bogus pin in Tonle Sap
+        rawMapsUrl: 'https://maps.google.com/?q=13.05,103.95',
+      });
+
+      expect(result.resolvedLocation).toBe('Svay Dangkum');
+      expect(result.trustLevel).toBe('text');
+      expect(result.isExactPin).toBe(false);
+      expect(result.finalMapsUrl).toContain('Sangkat%20Svay%20Dangkum');
+      expect(result.finalMapsUrl).not.toContain('13.05');
+    });
+
+    it('retains valid exact pin coordinates for URL while keeping text label', () => {
+      const validPinUrl = 'https://maps.google.com/?q=13.3541,103.8556';
+      const result = crossValidateLocation('siem_reap', {
+        textLocation: 'Sala Kamreuk',
+        attributeLocation: null,
+        pinCoords: { latitude: 13.3541, longitude: 103.8556 },
+        rawMapsUrl: validPinUrl,
+      });
+
+      expect(result.resolvedLocation).toBe('Sala Kamreuk');
+      expect(result.finalMapsUrl).toBe(validPinUrl);
+      expect(result.isExactPin).toBe(true);
+      expect(result.trustLevel).toBe('pin');
+    });
+
+    it('generates specific Google Maps search query for hotel name', () => {
+      const result = crossValidateLocation('siem_reap', {
+        textLocation: 'Wat Bo',
+        hotelName: 'FCC Angkor Boutique Hotel',
+      });
+
+      expect(result.resolvedLocation).toBe('Wat Bo');
+      expect(result.finalMapsUrl).toContain('FCC%20Angkor%20Boutique%20Hotel%2C%20Siem%20Reap%2C%20Cambodia');
+      expect(result.trustLevel).toBe('text');
+    });
+
+    it('falls back to city center when no valid location source exists', () => {
+      const result = crossValidateLocation('siem_reap', {});
+      expect(result.resolvedLocation).toBe('Siem Reap');
+      expect(result.trustLevel).toBe('fallback');
+      expect(result.finalMapsUrl).toContain('Siem%20Reap%2C%20Cambodia');
     });
   });
 });
