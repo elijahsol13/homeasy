@@ -179,3 +179,4 @@ export const propertiesRoutes: FastifyPluginAsync<{ container: AppContainer }> =
     },
   );
 };
+

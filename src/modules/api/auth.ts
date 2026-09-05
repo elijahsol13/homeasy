@@ -230,3 +230,4 @@ export async function optionalTelegramAuth(request: FastifyRequest): Promise<voi
     }
   }
 }
+
