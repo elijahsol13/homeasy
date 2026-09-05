@@ -116,9 +116,10 @@ describe('Telegram Bot Keyboard Generators', () => {
       const kb = bedroomsKeyboard([1, 2]);
       const flat = kb.inline_keyboard.flat() as FlatBtn[];
 
-      expect(flat.some((b) => b.text.includes('Studio'))).toBe(true);
       expect(flat.some((b) => b.text.includes('✅ 1 BR'))).toBe(true);
       expect(flat.some((b) => b.text.includes('✅ 2 BR'))).toBe(true);
+      expect(flat.some((b) => b.text.includes('3 BR'))).toBe(true);
+      expect(flat.some((b) => b.text.includes('4+ BR'))).toBe(true);
       expect(flat.some((b) => b.text.includes('Any'))).toBe(true);
       expect(flat.some((b) => b.text.includes('Continue'))).toBe(true);
       expect(flat.some((b) => b.text.includes('Back'))).toBe(true);
@@ -165,6 +166,8 @@ describe('Telegram Bot Keyboard Generators', () => {
       is_active: 1,
       created_at: new Date().toISOString(),
       parsed_at: new Date().toISOString(),
+      posted_at: null,
+      updated_at: new Date().toISOString(),
     };
 
     test('renders Telegram contact, Save, Hide, Original link, and Report button', () => {
@@ -204,10 +207,8 @@ describe('Telegram Bot Keyboard Generators', () => {
     test('formatBedroomsLabel formats multiple bedrooms accurately', () => {
       expect(formatBedroomsLabel(null)).toBe('Any');
       expect(formatBedroomsLabel([])).toBe('Any');
-      expect(formatBedroomsLabel([0])).toBe('Studio');
       expect(formatBedroomsLabel([1])).toBe('1 BR');
       expect(formatBedroomsLabel([1, 2])).toBe('1, 2 BR');
-      expect(formatBedroomsLabel([0, 1])).toBe('Studio, 1 BR');
       expect(formatBedroomsLabel([2, 3, 4])).toBe('2, 3, 4+ BR');
       expect(formatBedroomsLabel(2)).toBe('2 BR'); // legacy integer
     });

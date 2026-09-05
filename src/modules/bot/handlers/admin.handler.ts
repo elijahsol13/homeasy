@@ -1,6 +1,8 @@
 import { Composer } from 'grammy';
 import type { MyContext } from '../session';
 import type { AppContainer } from '../../../container';
+import { createDatabaseBackup } from '../../../database/backup';
+import { runEnrichment } from '../../../database/enrich-properties';
 
 export function createAdminHandler(container: AppContainer): Composer<MyContext> {
   const handler = new Composer<MyContext>();
@@ -122,8 +124,96 @@ export function createAdminHandler(container: AppContainer): Composer<MyContext>
     );
   });
 
-  // ─── /broadcast (stub for future use) ────────────────────────────────────────
+  // ─── /backup ──────────────────────────────────────────────────────────────────
+  handler.command('backup', async (ctx) => {
+    if (!isAdmin(ctx)) {
+      await ctx.reply('⛔ This command is for admins only.');
+      return;
+    }
 
+    const waitMsg = await ctx.reply('⏳ Creating database backup snapshot...');
+    const result = createDatabaseBackup();
+
+    if (result.success) {
+      const sizeKb = Math.round((result.sizeBytes ?? 0) / 1024);
+      await ctx.api.editMessageText(
+        waitMsg.chat.id,
+        waitMsg.message_id,
+        `📦 <b>Database Backup Complete</b>\n\n` +
+          `📁 <b>File:</b> <code>${result.filename}</code>\n` +
+          `⚖️ <b>Size:</b> <b>${sizeKb} KB</b>\n` +
+          `📚 <b>Retained Snapshots:</b> <b>${result.retainedCount}</b> (pruned ${result.prunedCount})`,
+        { parse_mode: 'HTML' },
+      );
+    } else {
+      await ctx.api.editMessageText(
+        waitMsg.chat.id,
+        waitMsg.message_id,
+        `❌ <b>Backup Failed:</b> ${result.error}`,
+        { parse_mode: 'HTML' },
+      );
+    }
+  });
+
+  // ─── /enrich ──────────────────────────────────────────────────────────────────
+  handler.command('enrich', async (ctx) => {
+    if (!isAdmin(ctx)) {
+      await ctx.reply('⛔ This command is for admins only.');
+      return;
+    }
+
+    const waitMsg = await ctx.reply('⏳ Step 1/2: Creating safety backup before enrichment...');
+
+    // Safety backup before any enrichment mutation
+    const backupResult = createDatabaseBackup();
+    if (!backupResult.success) {
+      await ctx.api.editMessageText(
+        waitMsg.chat.id,
+        waitMsg.message_id,
+        `🚨 <b>Enrichment Aborted:</b> Safety backup failed (${backupResult.error}). No changes were made.`,
+        { parse_mode: 'HTML' },
+      );
+      return;
+    }
+
+    await ctx.api.editMessageText(
+      waitMsg.chat.id,
+      waitMsg.message_id,
+      `⏳ Step 2/2: Safety backup OK (${backupResult.filename}). Scanning & enriching properties...`,
+      { parse_mode: 'HTML' },
+    );
+
+    try {
+      const stats = runEnrichment();
+      container.db.exec('PRAGMA optimize;');
+
+      await ctx.api.editMessageText(
+        waitMsg.chat.id,
+        waitMsg.message_id,
+        `✅ <b>Database Enrichment Complete</b>\n\n` +
+          `📦 Total Scanned:       <b>${stats.totalScanned}</b>\n` +
+          `✨ Total Enriched:      <b>${stats.totalUpdated}</b>\n` +
+          `🚫 Spam / Land Culled:  <b>${stats.deactivatedSpam}</b>\n` +
+          `🛏 Bedrooms Recovered:   <b>${stats.recoveredBedrooms}</b>\n` +
+          `🚿 Bathrooms Recovered:  <b>${stats.recoveredBathrooms}</b>\n` +
+          `📍 Sangkats Recovered:  <b>${stats.recoveredLocation}</b>\n` +
+          `📞 Contacts Recovered:  <b>${stats.recoveredPhone + stats.recoveredTelegram}</b>\n` +
+          `📅 Dates Backfilled:    <b>${stats.backfilledPostedAt}</b>\n\n` +
+          `🛡️ <i>Safety backup snapshot saved.</i>`,
+        { parse_mode: 'HTML' },
+      );
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      await ctx.api.editMessageText(
+        waitMsg.chat.id,
+        waitMsg.message_id,
+        `💥 <b>Enrichment Error:</b> ${msg}`,
+        { parse_mode: 'HTML' },
+      );
+    }
+  });
+
+  // ─── /broadcast (stub for future use) ────────────────────────────────────────
   handler.command('broadcast', async (ctx) => {
     if (!isAdmin(ctx)) {
       await ctx.reply('⛔ This command is for admins only.');

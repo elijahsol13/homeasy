@@ -25,6 +25,7 @@ export const RawListingSchema = z.object({
   phone: z.string().optional(),
   telegram_contact: z.string().optional(),
   url: z.string().optional(),
+  posted_at: z.string().optional(),
 });
 
 export type RawListing = z.infer<typeof RawListingSchema>;
@@ -61,6 +62,7 @@ export const CleanPropertySchema = z.object({
     })
     .default({}),
   original_url: z.string().default(''),
+  posted_at: z.string().nullable().default(null),
 });
 
 export type CleanProperty = z.infer<typeof CleanPropertySchema>;

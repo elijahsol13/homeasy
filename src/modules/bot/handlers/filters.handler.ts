@@ -162,18 +162,29 @@ export async function showUserFilters(ctx: MyContext): Promise<void> {
     text += '\n';
   });
 
-  const deleteButtons = activeFilters.map((f, i) => [
-    {
+  const filterButtons: Array<Array<{ text: string; callback_data: string }>> = [];
+
+  activeFilters.forEach((f, i) => {
+    const { total: matchCount } = ctx.container.matcherService.findMatchingPropertiesForFilter(f, 0, 0);
+    const row: Array<{ text: string; callback_data: string }> = [];
+    if (matchCount > 0) {
+      row.push({
+        text: `🔎 Смотреть объекты (${matchCount})`,
+        callback_data: `cb:filter:more:${f.id}:0`,
+      });
+    }
+    row.push({
       text: formatFilterButtonLabel(f, i),
       callback_data: `cb:filter:delete:${f.id}`,
-    },
-  ]);
+    });
+    filterButtons.push(row);
+  });
 
   await sendOrEdit(ctx, text, {
     parse_mode: 'HTML' as const,
     reply_markup: {
       inline_keyboard: [
-        ...deleteButtons,
+        ...filterButtons,
         [{ text: '🗑 Delete All Alerts', callback_data: 'cb:filter:delete_all' }],
         [{ text: '➕ Add New Alert', callback_data: 'cb:menu:search' }],
         [{ text: '🔙 Main Menu', callback_data: 'cb:menu:main' }],
@@ -264,11 +275,21 @@ export async function handleFilterCallback(ctx: MyContext, data: string): Promis
         break;
 
       case 'filter:pool':
-        await ctx.editMessageText(
-          `✅ <b>Bedrooms:</b> ${formatBedroomsLabel(draft.bedrooms)}\n\n` +
-            `🏊 <b>Step 7 / 8 — Swimming Pool</b>\n\nDo you require a swimming pool?`,
-          { parse_mode: 'HTML', reply_markup: poolKeyboard() },
-        );
+        if (draft.category === 'room') {
+          ctx.session.wizardStep = 'filter:budget';
+          await ctx.editMessageText(
+            `✅ <b>Areas:</b> ${draft.locations.length > 0 ? draft.locations.join(', ') : 'All Areas'}\n\n` +
+              `💰 <b>Step 5 / 8 — Monthly Budget</b>\n\n` +
+              `Select a preset range or <b>type your custom budget directly</b> (e.g. <code>150-300</code>, <code>under 250</code>, or <code>200</code>):`,
+            { parse_mode: 'HTML', reply_markup: budgetKeyboard() },
+          );
+        } else {
+          await ctx.editMessageText(
+            `✅ <b>Bedrooms:</b> ${formatBedroomsLabel(draft.bedrooms)}\n\n` +
+              `🏊 <b>Step 7 / 8 — Swimming Pool</b>\n\nDo you require a swimming pool?`,
+            { parse_mode: 'HTML', reply_markup: poolKeyboard(false) },
+          );
+        }
         break;
 
       case 'filter:lease':
@@ -311,6 +332,100 @@ export async function handleFilterCallback(ctx: MyContext, data: string): Promis
       reply_markup: mainMenuKeyboard(),
     });
     await ctx.answerCallbackQuery('✅ All alerts deleted');
+    return;
+  }
+
+  // ── Pagination: Browse / Show more matching properties ─────────────────────
+  if (data.startsWith('cb:filter:more:')) {
+    const parts = data.split(':');
+    const filterId = parseInt(parts[3] ?? '', 10);
+    const offset = parseInt(parts[4] ?? '0', 10);
+    const from = ctx.from;
+    if (!from || isNaN(filterId) || isNaN(offset)) {
+      await ctx.answerCallbackQuery('⚠️ Invalid request');
+      return;
+    }
+
+    const filter = ctx.container.filtersRepo.getFilterById(filterId);
+    if (!filter) {
+      await ctx.answerCallbackQuery('❌ Alert not found');
+      return;
+    }
+
+    await ctx.answerCallbackQuery();
+
+    // Disable inline button on the clicked message to prevent duplicate clicks
+    try {
+      await ctx.editMessageReplyMarkup({ reply_markup: { inline_keyboard: [] } });
+    } catch {
+      // Ignore if message could not be edited
+    }
+
+    const { properties, total } = ctx.container.matcherService.findMatchingPropertiesForFilter(filter, 3, offset);
+
+    if (properties.length === 0) {
+      await ctx.api.sendMessage(from.id, '🏁 Больше подходящих объектов не найдено.');
+      return;
+    }
+
+    for (const prop of properties) {
+      try {
+        await sendListingCard(from.id, prop, ctx.api);
+      } catch (err) {
+        console.warn(`[FilterMore] Failed to send prop #${prop.id}:`, err);
+      }
+    }
+
+    const nextOffset = offset + properties.length;
+    const remaining = total - nextOffset;
+
+    if (remaining > 0) {
+      await ctx.api.sendMessage(
+        from.id,
+        `📥 <b>Ещё ${remaining} подходящих объектов</b> в базе:`,
+        {
+          parse_mode: 'HTML',
+          reply_markup: {
+            inline_keyboard: [
+              [
+                {
+                  text: `📥 Показать ещё 3 объекта (осталось ${remaining})`,
+                  callback_data: `cb:filter:more:${filter.id}:${nextOffset}`,
+                },
+              ],
+              [
+                {
+                  text: '🛠 Мои фильтры',
+                  callback_data: 'cb:menu:filters',
+                },
+              ],
+            ],
+          },
+        },
+      );
+    } else {
+      await ctx.api.sendMessage(
+        from.id,
+        `🏁 <b>Вы посмотрели все ${total} подходящих объектов.</b>\n\nНовые варианты будут приходить автоматически при появлении!`,
+        {
+          parse_mode: 'HTML',
+          reply_markup: {
+            inline_keyboard: [
+              [
+                {
+                  text: '🛠 Мои фильтры',
+                  callback_data: 'cb:menu:filters',
+                },
+                {
+                  text: '🔙 Главное меню',
+                  callback_data: 'cb:menu:main',
+                },
+              ],
+            ],
+          },
+        },
+      );
+    }
     return;
   }
 
@@ -462,6 +577,18 @@ export async function handleFilterCallback(ctx: MyContext, data: string): Promis
         draft.min_price = range.min;
         draft.max_price = range.max ?? undefined;
       }
+    }
+
+    if (draft.category === 'room') {
+      draft.bedrooms = [1];
+      ctx.session.wizardStep = 'filter:pool';
+      await ctx.editMessageText(
+        `✅ <b>Budget:</b> ${buildPriceRangeLabel(draft.min_price ?? null, draft.max_price ?? null)}\n\n` +
+          `🏊 <b>Step 7 / 8 — Swimming Pool</b>\n\nDo you require a swimming pool?`,
+        { parse_mode: 'HTML', reply_markup: poolKeyboard(true) },
+      );
+      await ctx.answerCallbackQuery();
+      return;
     }
 
     ctx.session.wizardStep = 'filter:bedrooms';
@@ -623,11 +750,11 @@ export async function handleFilterCallback(ctx: MyContext, data: string): Promis
     ctx.session.wizardStep = 'idle';
     ctx.session.filterDraft = { locations: [] };
 
-    const instantMatches = ctx.container.matcherService.findMatchingPropertiesForFilter(savedFilter, 4);
+    const { properties: instantMatches, total } = ctx.container.matcherService.findMatchingPropertiesForFilter(savedFilter, 3, 0);
 
     if (instantMatches.length > 0) {
       await ctx.editMessageText(
-        `✅ <b>Search Alert Saved!</b>\n\n🎉 <i>Found ${instantMatches.length} matching listing(s) available right now:</i>`,
+        `✅ <b>Search Alert Saved!</b>\n\n🎉 <i>Found ${total} matching listing(s) available right now:</i>`,
         { parse_mode: 'HTML', reply_markup: mainMenuKeyboard(user.alerts_paused === 1) },
       );
       for (const prop of instantMatches) {
@@ -636,6 +763,27 @@ export async function handleFilterCallback(ctx: MyContext, data: string): Promis
         } catch (err) {
           console.warn(`[ColdStart] Failed to send match #${prop.id}:`, err);
         }
+      }
+
+      if (total > 3) {
+        const remaining = total - 3;
+        await ctx.api.sendMessage(
+          from.id,
+          `📥 <b>Ещё ${remaining} подходящих объектов</b> доступно в базе!`,
+          {
+            parse_mode: 'HTML',
+            reply_markup: {
+              inline_keyboard: [
+                [
+                  {
+                    text: `📥 Показать ещё 3 объекта (осталось ${remaining})`,
+                    callback_data: `cb:filter:more:${savedFilter.id}:3`,
+                  },
+                ],
+              ],
+            },
+          },
+        );
       }
     } else {
       await ctx.editMessageText(
@@ -742,6 +890,18 @@ export function createFiltersHandler(_container: AppContainer): Composer<MyConte
     const draft = ctx.session.filterDraft;
     draft.min_price = parsed.min;
     draft.max_price = parsed.max;
+
+    if (draft.category === 'room') {
+      draft.bedrooms = [1];
+      ctx.session.wizardStep = 'filter:pool';
+      await ctx.reply(
+        `✅ <b>Budget:</b> ${buildPriceRangeLabel(draft.min_price ?? null, draft.max_price ?? null)}\n\n` +
+          `🏊 <b>Step 7 / 8 — Swimming Pool</b>\n\nDo you require a swimming pool?`,
+        { parse_mode: 'HTML', reply_markup: poolKeyboard(true) },
+      );
+      return;
+    }
+
     ctx.session.wizardStep = 'filter:bedrooms';
     if (!draft.bedrooms) draft.bedrooms = [];
 

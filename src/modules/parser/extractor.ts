@@ -53,6 +53,7 @@ const SYSTEM_INSTRUCTIONS =
   "- `description_en`: DO NOT repeat the price, location, or title. Extract ONLY actual amenities (e.g. Fridge, Washing Machine, AC, Secure Parking, Balcony, WiFi) and lease conditions (e.g. Excludes Electricity, Free Water, Pet Friendly). Return strictly as 1-3 short bullet points.\n" +
   `- \`location\`: Analyze the text and map the location to ONE of these exact values: [${VALID_SANGKATS.join(', ')}]. If the text mentions a location that matches or falls within one of these areas, return that specific area name. If NO location is mentioned, you MUST return null. Do not guess or invent a location.\n` +
   "- `maps_url`: If the post contains a Google Maps link (goo.gl, google.com/maps, maps.app.goo.gl), extract it here. Otherwise, return null.\n" +
+  "- If the property is a hotel room, hotel suite, or boutique hotel room, map category to 'apartment'.\n" +
   "- If the post is selling land, return category: 'land'.";
 
 let genAIInstance: GoogleGenerativeAI | null = null;
@@ -292,7 +293,7 @@ export function extractCategory(text: string): PropertyCategory | null {
   if (/\b(villa|house|townhouse|shophouse|borey)\b/i.test(text)) {
     return 'house';
   }
-  if (/\b(condo|condominium|apartment|flat|serviced apartment|penthouse)\b/i.test(text)) {
+  if (/\b(condo|condominium|apartment|flat|serviced apartment|penthouse|hotel room|boutique hotel|hotel-style|hotel)\b/i.test(text)) {
     return 'apartment';
   }
   if (/\b(room|studio|single room|private room)\b/i.test(text)) {
@@ -304,7 +305,10 @@ export function extractCategory(text: string): PropertyCategory | null {
 // ─── Swimming Pool extraction ─────────────────────────────────────────────────
 
 export function extractHasPool(text: string): boolean {
-  return /\b(swimming pool|swimmingpool|private pool|rooftop pool|shared pool|pool access|with pool|has pool)\b/i.test(text);
+  return (
+    /អាងហែលទឹក/.test(text) ||
+    /\b(swimming pool|swimmingpool|private pool|rooftop pool|shared pool|pool access|with pool|has pool)\b/i.test(text)
+  );
 }
 
 // ─── Google Maps URL extraction ───────────────────────────────────────────────
@@ -317,6 +321,7 @@ export function extractMapsUrl(text: string): string | null {
 // ─── Bedrooms extraction ──────────────────────────────────────────────────────
 
 const BEDROOM_PATTERNS: RegExp[] = [
+  /(\d+)\s*បន្ទប់គេង/,
   /(\d+)\s*(?:BR|bed(?:room)?s?)\b/i,
   /(\d+)\s*(?:BDR|BDRM)\b/i,
   /(\d+)\s*-\s*bed(?:room)?s?\b/i,
@@ -339,6 +344,12 @@ export function extractBedrooms(text: string): number | null {
 // ─── Bathrooms extraction ─────────────────────────────────────────────────────
 
 export function extractBathrooms(text: string): number | null {
+  const khmerMatch = /(\d+)\s*បន្ទប់ទឹក/.exec(text);
+  if (khmerMatch?.[1]) {
+    const n = parseInt(khmerMatch[1], 10);
+    if (!isNaN(n) && n >= 0 && n <= 20) return n;
+  }
+
   const match = /(\d+)\s*(?:bath(?:room)?s?|WC)\b/i.exec(text);
   if (match?.[1]) {
     const n = parseInt(match[1], 10);
@@ -354,15 +365,42 @@ const ALL_DISTRICTS = (Object.entries(DISTRICTS) as [CityKey, readonly string[]]
   ([city, districts]) => districts.map((district) => ({ city, district })),
 );
 
+export const KHMER_SANGKAT_MAP: Array<{ regex: RegExp; location: string; city: CityKey }> = [
+  { regex: /ស្វាយដង្គុំ/i, location: 'Svay Dangkum', city: 'siem_reap' },
+  { regex: /សាលាកំរើក/i, location: 'Sala Kamreuk', city: 'siem_reap' },
+  { regex: /ស្លក្រាម/i, location: 'Slor Kram', city: 'siem_reap' },
+  { regex: /ជ្រាវ/i, location: 'Chreav', city: 'siem_reap' },
+  { regex: /វត្តបូព៌|វត្តបូ/i, location: 'Wat Bo', city: 'siem_reap' },
+  { regex: /វត្តដំណាក់/i, location: 'Wat Damnak', city: 'siem_reap' },
+  { regex: /គោកចក/i, location: 'Kouk Chak', city: 'siem_reap' },
+  { regex: /សំបួរ/i, location: 'Sambuor', city: 'siem_reap' },
+  { regex: /បឹងកេងកង|BKK1|BKK\s*1/i, location: 'BKK1', city: 'phnom_penh' },
+  { regex: /ទួលទំពូង/i, location: 'Toul Tom Poung', city: 'phnom_penh' },
+  { regex: /ទន្លេបាសាក់/i, location: 'Tonle Bassac', city: 'phnom_penh' },
+  { regex: /ដូនពេញ/i, location: 'Daun Penh', city: 'phnom_penh' },
+  { regex: /ទួលគោក/i, location: 'Tuol Kouk', city: 'phnom_penh' },
+  { regex: /ជ្រោយចង្វារ/i, location: 'Chroy Changvar', city: 'phnom_penh' },
+  { regex: /ច្បារអំពៅ/i, location: 'Chbar Ampov', city: 'phnom_penh' },
+  { regex: /បឹងកក់/i, location: 'Boeung Kak', city: 'phnom_penh' },
+];
+
 export interface ExtractedLocation {
   location: string;
   city: CityKey;
 }
 
 /**
- * Attempts to match text against the known district / sangkat list.
+ * Attempts to match text against known district / sangkat lists (supporting both Khmer & English).
  */
 export function extractLocation(text: string): ExtractedLocation | null {
+  // 1. Check direct Khmer Sangkat mentions
+  for (const entry of KHMER_SANGKAT_MAP) {
+    if (entry.regex.test(text)) {
+      return { location: entry.location, city: entry.city };
+    }
+  }
+
+  // 2. Check normalized English district names
   const normalized = normalizeLocationString(text);
 
   for (const { city, district } of ALL_DISTRICTS) {

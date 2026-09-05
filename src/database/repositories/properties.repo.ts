@@ -37,6 +37,8 @@ export interface Property {
   reports_count: number;
   is_active: 0 | 1;
   parsed_at: string;
+  posted_at: string | null;
+  updated_at: string;
   created_at: string;
 }
 
@@ -73,17 +75,20 @@ function rowToProperty(row: PropertyRow): Property {
     image_phashes: imagePhashes,
     reports_count: row.reports_count ?? 0,
     is_active: row.is_active !== undefined ? row.is_active : 1,
+    posted_at: row.posted_at ?? null,
+    updated_at: row.updated_at || row.created_at,
   };
 }
 
 export type CreatePropertyInput = Omit<
   Property,
-  'id' | 'created_at' | 'parsed_at' | 'image_phashes' | 'reports_count' | 'is_active'
+  'id' | 'created_at' | 'updated_at' | 'parsed_at' | 'image_phashes' | 'reports_count' | 'is_active'
 > & {
   image_phashes?: string[];
   reports_count?: number;
   is_active?: 0 | 1;
   parsed_at?: string;
+  posted_at?: string | null;
 };
 
 // ─── Repository ───────────────────────────────────────────────────────────────
@@ -103,8 +108,8 @@ export class PropertiesRepository {
         `INSERT INTO properties
            (hash, title, description, price, currency, type, category,
             bedrooms, bathrooms, deposit, min_lease, has_pool, location, city,
-            maps_url, source_url, photos, image_phash, image_phashes, direct_contact, original_url)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            maps_url, source_url, photos, image_phash, image_phashes, direct_contact, original_url, posted_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))`,
       )
       .run(
         input.hash,
@@ -128,6 +133,7 @@ export class PropertiesRepository {
         JSON.stringify(phashes),
         JSON.stringify(input.direct_contact ?? {}),
         input.original_url ?? '',
+        input.posted_at ?? null,
       );
 
     const row = this.db
@@ -178,26 +184,97 @@ export class PropertiesRepository {
   }
 
   /**
+   * Updates an existing master listing when a duplicate/re-post is discovered:
+   * - Bumps updated_at to NOW (making it fresh in search and catalogs).
+   * - Adopts lower genuine price if re-posted with a lower price.
+   * - Enriches phone number, location, and maps_url if missing in original.
+   * - Retains earliest posted_at timestamp.
+   */
+  bumpAndMerge(
+    id: number,
+    update: {
+      price?: number;
+      phone?: string;
+      location?: string;
+      maps_url?: string;
+      posted_at?: string | null;
+      source_url?: string;
+    },
+  ): Property | undefined {
+    const existing = this.getPropertyById(id);
+    if (!existing) return undefined;
+
+    let newPrice = existing.price;
+    if (update.price && update.price > 0) {
+      if (existing.price === 0 || update.price < existing.price) {
+        newPrice = update.price;
+      }
+    }
+
+    const contact = { ...existing.direct_contact };
+    if (update.phone && !contact.phone) {
+      contact.phone = update.phone;
+    }
+
+    let newLocation = existing.location;
+    if (update.location && (!existing.location || existing.location.toLowerCase() === existing.city)) {
+      newLocation = update.location;
+    }
+
+    let newMapsUrl = existing.maps_url;
+    if (update.maps_url && !existing.maps_url) {
+      newMapsUrl = update.maps_url;
+    }
+
+    let newPostedAt = existing.posted_at;
+    if (update.posted_at) {
+      if (!existing.posted_at || update.posted_at < existing.posted_at) {
+        newPostedAt = update.posted_at;
+      }
+    }
+
+    this.db
+      .prepare(
+        `UPDATE properties
+         SET price = ?,
+             direct_contact = ?,
+             location = ?,
+             maps_url = ?,
+             posted_at = ?,
+             updated_at = (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+         WHERE id = ?`,
+      )
+      .run(newPrice, JSON.stringify(contact), newLocation, newMapsUrl, newPostedAt, id);
+
+    return this.getPropertyById(id);
+  }
+
+  /**
    * Returns recent properties in the same city and area/location for deduplication checks.
-   * Restricts search to properties created within the last 45 days.
+   * Restricts search to properties active within the last 45 days.
    */
   findRecentPropertiesForDedup(city: CityKey, location: string, limit = 50): Property[] {
     const rows = this.db
       .prepare(
         `SELECT * FROM properties
          WHERE city = ? AND (location LIKE ? OR location = ?) AND is_active = 1
-           AND created_at >= datetime('now', '-45 days')
-         ORDER BY created_at DESC
+           AND COALESCE(updated_at, created_at) >= datetime('now', '-45 days')
+         ORDER BY COALESCE(updated_at, created_at) DESC
          LIMIT ?`,
       )
       .all(city, `%${location}%`, location, limit) as unknown as PropertyRow[];
     return rows.map(rowToProperty);
   }
 
-  getRecentProperties(limit = 20): Property[] {
+  getRecentProperties(limit = 20, offset = 0): Property[] {
     const rows = this.db
-      .prepare('SELECT * FROM properties WHERE is_active = 1 ORDER BY created_at DESC LIMIT ?')
-      .all(limit) as unknown as PropertyRow[];
+      .prepare(
+        `SELECT * FROM properties
+         WHERE is_active = 1
+         ORDER BY COALESCE(updated_at, created_at) DESC
+         LIMIT ? OFFSET ?`,
+      )
+      .all(limit, offset) as unknown as PropertyRow[];
     return rows.map(rowToProperty);
   }
 

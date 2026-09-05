@@ -56,6 +56,8 @@ describe('Matching Engine', () => {
       is_active: 1,
       parsed_at: new Date().toISOString(),
       created_at: new Date().toISOString(),
+      posted_at: null,
+      updated_at: new Date().toISOString(),
     };
 
     const matches = container.matcherService.matchProperty(matchingProperty);
@@ -133,6 +135,8 @@ describe('Matching Engine', () => {
       is_active: 1,
       parsed_at: new Date().toISOString(),
       created_at: new Date().toISOString(),
+      posted_at: null,
+      updated_at: new Date().toISOString(),
     };
 
     const prop2BR: Property = { ...prop1BR, id: 202, bedrooms: 2 };
@@ -143,5 +147,63 @@ describe('Matching Engine', () => {
     expect(container.matcherService.propertyMatchesFilter(prop2BR, multiBedFilter)).toBe(true);
     expect(container.matcherService.propertyMatchesFilter(prop3BR, multiBedFilter)).toBe(false);
     expect(container.matcherService.propertyMatchesFilter(propStudio, multiBedFilter)).toBe(false);
+  });
+
+  test('findMatchingPropertiesForFilter supports pagination with limit and offset', () => {
+    const filter = container.filtersRepo.createFilter({
+      user_id: testUserId,
+      type: 'rent',
+      city: 'phnom_penh',
+      category: 'apartment',
+      requires_pool: false,
+      min_lease_preferred: null,
+      locations: [],
+      min_price: 100,
+      max_price: 1000,
+      bedrooms: 1,
+    });
+
+    // Insert 5 matching properties
+    for (let i = 1; i <= 5; i++) {
+      container.propertiesRepo.insertProperty({
+        hash: `pagination-hash-${i}`,
+        title: `Apartment #${i}`,
+        description: `Description #${i}`,
+        price: 30000 + i * 1000,
+        currency: 'USD',
+        type: 'rent',
+        category: 'apartment',
+        bedrooms: 1,
+        bathrooms: 1,
+        deposit: null,
+        min_lease: null,
+        has_pool: false,
+        location: 'BKK1',
+        city: 'phnom_penh',
+        maps_url: null,
+        source_url: null,
+        photos: [],
+        image_phash: null,
+        image_phashes: [],
+        direct_contact: {},
+        original_url: `https://example.com/prop-${i}`,
+        posted_at: new Date(Date.now() - i * 3600000).toISOString(),
+      });
+    }
+
+    // Page 1: limit = 3, offset = 0
+    const page1 = container.matcherService.findMatchingPropertiesForFilter(filter, 3, 0);
+    expect(page1.total).toBe(5);
+    expect(page1.properties.length).toBe(3);
+
+    // Page 2: limit = 3, offset = 3
+    const page2 = container.matcherService.findMatchingPropertiesForFilter(filter, 3, 3);
+    expect(page2.total).toBe(5);
+    expect(page2.properties.length).toBe(2);
+
+    // Count only: limit = 0, offset = 0
+    const countOnly = container.matcherService.findMatchingPropertiesForFilter(filter, 0, 0);
+    expect(countOnly.total).toBe(5);
+    expect(countOnly.properties.length).toBe(0);
   });
 });

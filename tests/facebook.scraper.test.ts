@@ -112,6 +112,13 @@ describe('Facebook Scraper', () => {
       const listing = await parseFacebookPostText(landPost, defaultTarget, 'https://facebook.com/p/2');
       expect(listing).toBeNull();
     });
+
+    test('categorizes hotel room as apartment', async () => {
+      const hotelPost = 'Boutique Hotel Room for rent in Wat Bo, Siem Reap $300/month with pool and cleaning included.';
+      const listing = await parseFacebookPostText(hotelPost, defaultTarget, 'https://facebook.com/p/3');
+      expect(listing).not.toBeNull();
+      expect(listing!.category).toBe('apartment');
+    });
   });
 
   describe('FB_GROUP_TARGETS configuration', () => {

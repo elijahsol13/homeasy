@@ -2,6 +2,8 @@ import {
   formatListingCard,
   formatListingTimestamp,
   sendListingCard,
+  extractCleaning,
+  extractRestrictions,
   NotifierService,
 } from '../src/services/notifier';
 import type { Property } from '../src/database/repositories/properties.repo';
@@ -36,6 +38,8 @@ describe('Dynamic Telegram Listing Card Formatter', () => {
     is_active: 1,
     created_at: new Date().toISOString(),
     parsed_at: new Date().toISOString(),
+    posted_at: null,
+    updated_at: new Date().toISOString(),
   };
 
   test('omits features row and terms row when bedrooms, bathrooms, pool, deposit, min_lease are null/false', () => {
@@ -83,7 +87,7 @@ describe('Dynamic Telegram Listing Card Formatter', () => {
 
     const card = formatListingCard(studioProperty);
 
-    expect(card).toContain('🛏 Studio · 1 Bath');
+    expect(card).toContain('🛏 1 BR · 1 Bath');
     expect(card).not.toContain('🏊 Pool');
   });
 
@@ -183,5 +187,78 @@ describe('Dynamic Telegram Listing Card Formatter', () => {
     expect(callArgs[0]).toBe(12345);
     expect(callArgs[1]).toHaveLength(3);
     expect(mockApi.sendMessage).toHaveBeenCalledTimes(1);
+  });
+
+  describe('Cleaning Service Extraction', () => {
+    test('extracts weekly cleaning frequencies', () => {
+      expect(extractCleaning('Rent includes cleaning 1 time/week and wifi')).toBe('🧹 Cleaning 1x/week');
+      expect(extractCleaning('Cleaning 2 times per week included')).toBe('🧹 Cleaning 2x/week');
+      expect(extractCleaning('Free 3x/week cleaning service')).toBe('🧹 Cleaning 3x/week');
+    });
+
+    test('extracts monthly and daily cleaning frequencies', () => {
+      expect(extractCleaning('Free cleaning 2 times a month')).toBe('🧹 Cleaning 2x/month');
+      expect(extractCleaning('Hotel room with daily cleaning and pool access')).toBe('🧹 Daily Cleaning');
+    });
+
+    test('extracts general cleaning included and Khmer mentions', () => {
+      expect(extractCleaning('Housekeeping included, garbage collection free')).toBe('🧹 Cleaning Included');
+      expect(extractCleaning('មានសេវាសំអាត 24/7 security')).toBe('🧹 Cleaning Included');
+      expect(extractCleaning('No cleaning service mentioned')).toBe(null);
+    });
+  });
+
+  describe('Listing Restrictions Extraction', () => {
+    test('extracts pet prohibitions accurately', () => {
+      expect(extractRestrictions('Strictly no pets allowed in the building')).toContain('🚫 No Pets');
+      expect(extractRestrictions('Cats and dogs not allowed')).toContain('🚫 No Pets');
+      expect(extractRestrictions('ហាមចិញ្ចឹមសត្វ')).toContain('🚫 No Pets');
+    });
+
+    test('extracts smoking, parties, and subleasing prohibitions', () => {
+      const bans = extractRestrictions('Non-smoking property. Quiet hours after 10 PM, strictly no parties. Cannot sublease.');
+      expect(bans).toContain('🚭 No Smoking');
+      expect(bans).toContain('🤫 No Parties / Quiet Hours');
+      expect(bans).toContain('🔒 No Subleasing');
+    });
+
+    test('returns empty array when no prohibitions are found', () => {
+      expect(extractRestrictions('Lovely pet friendly apartment with pool and balcony.')).toEqual([]);
+    });
+  });
+
+  describe('Card Summary Integration for Category, Cleaning & Restrictions', () => {
+    test('renders Apartment / Condo / Hotel Room category label', () => {
+      const card = formatListingCard({
+        ...baseProperty,
+        category: 'apartment',
+      });
+      expect(card).toContain('🏬 Apartment / Condo / Hotel Room');
+    });
+
+    test('renders cleaning in amenities and prominent restrictions row', () => {
+      const listingWithRestrictions: Property = {
+        ...baseProperty,
+        category: 'apartment',
+        description: 'Serviced studio. Cleaning 2 times/week. Strictly no pets, no smoking, quiet hours.',
+      };
+
+      const card = formatListingCard(listingWithRestrictions);
+      expect(card).toContain('✨ 🧹 Cleaning 2x/week');
+      expect(card).toContain('⛔ <b>Restrictions:</b> 🚫 No Pets · 🚭 No Smoking · 🤫 No Parties / Quiet Hours');
+      // Must not falsely add pet friendly
+      expect(card).not.toContain('🐾 Pet-friendly');
+    });
+
+    test('renders pet friendly when explicitly permitted and no bans present', () => {
+      const petFriendlyListing: Property = {
+        ...baseProperty,
+        description: 'Pet friendly villa with big garden. Cleaning included.',
+      };
+
+      const card = formatListingCard(petFriendlyListing);
+      expect(card).toContain('✨ 🧹 Cleaning Included · 🐾 Pet-friendly');
+      expect(card).not.toContain('⛔ <b>Restrictions:</b>');
+    });
   });
 });

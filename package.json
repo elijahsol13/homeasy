@@ -8,12 +8,17 @@
     "typecheck": "tsc --noEmit",
     "dev": "nodemon",
     "start": "node --max-old-space-size=350 --expose-gc dist/index.js",
+    "start:bot": "node --max-old-space-size=180 dist/bot.js",
+    "start:scraper": "node --max-old-space-size=600 --expose-gc dist/scraper.js",
     "lint": "eslint src --ext .ts --max-warnings 0",
     "format": "prettier --write \"src/**/*.ts\"",
     "scrape:khmer24": "ts-node src/modules/parser/khmer24.scraper.ts",
     "k24:login": "ts-node src/modules/parser/k24-login.ts",
     "fb:login": "ts-node src/modules/parser/fb-login.ts",
     "scrape:fb": "ts-node src/modules/parser/facebook.scraper.ts",
+    "db:enrich": "ts-node src/database/enrich-properties.ts",
+    "db:backup": "ts-node src/database/backup.ts",
+    "pack": "node scripts/pack-codebase.js",
     "test": "jest"
   },
   "dependencies": {
@@ -23,18 +28,16 @@
     "cheerio": "^1.2.0",
     "dotenv": "^16.4.5",
     "grammy": "^1.26.0",
-    "jimp": "^1.6.1",
-    "node-cron": "^4.6.0",
     "openai": "^7.9.0",
     "playwright": "^1.62.1",
     "playwright-extra": "^4.3.6",
     "puppeteer-extra-plugin-stealth": "^2.11.2",
+    "sharp": "^0.35.4",
     "zod": "^3.23.8"
   },
   "devDependencies": {
     "@types/jest": "^30.0.0",
     "@types/node": "^22.0.0",
-    "@types/node-cron": "^3.0.11",
     "@typescript-eslint/eslint-plugin": "^7.3.1",
     "@typescript-eslint/parser": "^7.3.1",
     "eslint": "^8.57.0",
@@ -46,6 +49,6 @@
     "typescript": "^5.4.3"
   },
   "engines": {
-    "node": ">=20.0.0"
+    "node": ">=22.0.0"
   }
 }

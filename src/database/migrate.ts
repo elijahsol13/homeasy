@@ -127,6 +127,15 @@ const MIGRATIONS: string[] = [
   ALTER TABLE properties ADD COLUMN is_active INTEGER NOT NULL DEFAULT 1 CHECK(is_active IN (0, 1));
   CREATE INDEX IF NOT EXISTS idx_properties_is_active ON properties(is_active);
   `,
+
+  // ── v8: posted_at (platform date) & updated_at (activity/bump date) ─────────
+  `
+  ALTER TABLE properties ADD COLUMN posted_at TEXT;
+  ALTER TABLE properties ADD COLUMN updated_at TEXT;
+  UPDATE properties SET updated_at = created_at WHERE updated_at IS NULL;
+  CREATE INDEX IF NOT EXISTS idx_properties_updated_at ON properties(updated_at DESC);
+  CREATE INDEX IF NOT EXISTS idx_properties_posted_at ON properties(posted_at DESC);
+  `,
 ];
 
 export function runMigrations(db: DatabaseSync): void {

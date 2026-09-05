@@ -17,6 +17,7 @@ import type { PropertiesRepository } from '../../database/repositories/propertie
 import { checkDuplicate, computeListingPhashes } from '../matcher/deduplicator';
 import type { MatcherService } from '../matcher/matcher';
 import type { CityKey, PropertyCategory } from '../../config/settings';
+import { isNonRealEstateSpam } from '../../database/enrich-properties';
 
 // ─── Hash (Fallback fingerprint) ──────────────────────────────────────────────
 
@@ -96,6 +97,9 @@ export function normalizeRawToClean(
     bedrooms = isNaN(n) ? extractBedrooms(combinedText) : n;
   } else {
     bedrooms = extractBedrooms(combinedText);
+  }
+  if (bedrooms === null && category === 'room') {
+    bedrooms = 1;
   }
 
   // ── Bathrooms ──────────────────────────────────────────────────────────────
@@ -186,6 +190,7 @@ export function normalizeRawToClean(
     maps_url: mapsUrl,
     source_url: sourceUrl,
     original_url: raw.url ?? sourceUrl,
+    posted_at: raw.posted_at ?? null,
   };
 }
 
@@ -217,6 +222,17 @@ export class IngestionService {
       };
     }
 
+    // Pre-Ingestion Spam & Non-Real-Estate Check
+    const title = parseResult.data.title ?? '';
+    const { isSpam, reason } = isNonRealEstateSpam(title, parseResult.data.description || '');
+    if (isSpam) {
+      console.log(`🚫 [Ingestor] Spam listing rejected ("${title.slice(0, 40)}..."): ${reason}`);
+      return {
+        status: 'error',
+        error: `Spam rejected: ${reason}`,
+      };
+    }
+
     const clean = normalizeRawToClean(parseResult.data);
     if (!clean) {
       return {
@@ -236,6 +252,17 @@ export class IngestionService {
 
     if (dedupResult.isDuplicate) {
       console.log(`🔁 [Dedup] ${dedupResult.reason}`);
+      if (dedupResult.duplicateOfId) {
+        this.propertiesRepo.bumpAndMerge(dedupResult.duplicateOfId, {
+          price: clean.price,
+          phone: clean.direct_contact?.phone,
+          location: clean.location,
+          maps_url: clean.maps_url ?? undefined,
+          posted_at: clean.posted_at,
+          source_url: clean.source_url ?? undefined,
+        });
+        console.log(`  ✨ [Smart Merge] Bumped & enriched canonical listing #${dedupResult.duplicateOfId}`);
+      }
       return {
         status: 'duplicate',
         duplicateOfId: dedupResult.duplicateOfId,
@@ -256,6 +283,15 @@ export class IngestionService {
     const existingByHash = this.propertiesRepo.findByHash(hash);
     if (existingByHash) {
       console.log(`🔁 [Dedup] Exact content hash match with listing #${existingByHash.id}`);
+      this.propertiesRepo.bumpAndMerge(existingByHash.id, {
+        price: clean.price,
+        phone: clean.direct_contact?.phone,
+        location: clean.location,
+        maps_url: clean.maps_url ?? undefined,
+        posted_at: clean.posted_at,
+        source_url: clean.source_url ?? undefined,
+      });
+      console.log(`  ✨ [Smart Merge] Bumped & enriched canonical listing #${existingByHash.id}`);
       return {
         status: 'duplicate',
         duplicateOfId: existingByHash.id,

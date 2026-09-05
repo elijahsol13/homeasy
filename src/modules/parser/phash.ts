@@ -1,7 +1,12 @@
-import { Jimp } from 'jimp';
+import sharp from 'sharp';
+
+// Disable libvips caching and restrict concurrency for low-RAM micro instances
+sharp.cache(false);
+sharp.concurrency(1);
 
 /**
- * Downloads an image from a URL and computes a 64-bit binary Perceptual Hash (pHash).
+ * Downloads an image from a URL and computes a 64-bit binary Difference Hash (dHash).
+ * Uses Sharp to resize to 9x8 grayscale, comparing adjacent pixels across 8 rows.
  * Returns null if the download or image parsing fails.
  */
 export async function generateImagePHash(imageUrl: string, timeoutMs = 6000): Promise<string | null> {
@@ -34,10 +39,28 @@ export async function generateImagePHash(imageUrl: string, timeoutMs = 6000): Pr
       return null;
     }
 
-    const image = await Jimp.read(buffer);
+    // Resize to 9x8 grayscale raw pixel buffer (72 bytes total)
+    const rawBuffer = await sharp(buffer)
+      .resize(9, 8, { fit: 'fill' })
+      .grayscale()
+      .raw()
+      .toBuffer();
 
-    // Generate 64-bit binary pHash (e.g. "10110010...")
-    const hash = image.hash(2);
+    if (rawBuffer.length < 72) {
+      return null;
+    }
+
+    // Compare adjacent horizontal pixels (9 pixels per row -> 8 comparisons * 8 rows = 64 bits)
+    let hash = '';
+    for (let row = 0; row < 8; row++) {
+      const rowOffset = row * 9;
+      for (let col = 0; col < 8; col++) {
+        const left = rawBuffer[rowOffset + col];
+        const right = rawBuffer[rowOffset + col + 1];
+        hash += left > right ? '1' : '0';
+      }
+    }
+
     return hash;
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);

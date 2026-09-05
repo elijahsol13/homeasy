@@ -49,9 +49,9 @@ export const DISTRICTS: Record<CityKey, readonly string[]> = {
 
 export const CATEGORY_OPTIONS = [
   { label: '🏢 Any Category', value: null },
-  { label: '🏬 Apartment / Condo', value: 'apartment' as const },
+  { label: '🏬 Apartment / Condo / Hotel Room', value: 'apartment' as const },
   { label: '🏡 House / Villa', value: 'house' as const },
-  { label: '🛏️ Room / Studio', value: 'room' as const },
+  { label: '🛏️ Room', value: 'room' as const },
 ] as const;
 
 export type PropertyCategory = 'apartment' | 'house' | 'room';
@@ -74,12 +74,11 @@ export const LEASE_OPTIONS = [
 // ─── Budget Ranges (USD) ──────────────────────────────────────────────────────
 
 export const BUDGET_RANGES = [
-  { label: 'Under $200', min: 0, max: 200 },
-  { label: '$200 – $400', min: 200, max: 400 },
-  { label: '$400 – $700', min: 400, max: 700 },
-  { label: '$700 – $1,200', min: 700, max: 1_200 },
-  { label: '$1,200 – $2,000', min: 1_200, max: 2_000 },
-  { label: 'Over $2,000', min: 2_000, max: null },
+  { label: 'Under $150', min: 0, max: 150 },
+  { label: '$150 – $300', min: 150, max: 300 },
+  { label: '$300 – $500', min: 300, max: 500 },
+  { label: '$500 – $800', min: 500, max: 800 },
+  { label: '$800 – $1,200', min: 800, max: 1_200 },
 ] as const;
 
 export type BudgetRange = (typeof BUDGET_RANGES)[number];
@@ -88,7 +87,6 @@ export type BudgetRange = (typeof BUDGET_RANGES)[number];
 
 export const BEDROOM_OPTIONS = [
   { label: 'Any 🛏', value: null },
-  { label: 'Studio', value: 0 },
   { label: '1 BR', value: 1 },
   { label: '2 BR', value: 2 },
   { label: '3 BR', value: 3 },

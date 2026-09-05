@@ -1,22 +1,54 @@
 services:
+  # ─── Telegram Bot Service (grammY) ──────────────────────────────────────────
   bot:
-    build: .
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: homeasy-bot
     restart: unless-stopped
-    init: true
-    shm_size: '512m'
-    mem_limit: 450m
-    memswap_limit: 450m
+    command: npm run start:bot
+    environment:
+      - NODE_ENV=production
+      - DATABASE_PATH=/app/data/homeasy.db
+      - SERVICE_TYPE=bot
+    env_file:
+      - .env
+    volumes:
+      - ./data:/app/data
     deploy:
       resources:
         limits:
-          memory: 450m
-    env_file: .env
+          memory: 200M
+    mem_limit: 200m
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # ─── Playwright Headless Scraper Worker ─────────────────────────────────────
+  scraper:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: homeasy-scraper
+    restart: unless-stopped
+    command: npm run start:scraper
+    environment:
+      - NODE_ENV=production
+      - DATABASE_PATH=/app/data/homeasy.db
+      - SERVICE_TYPE=scraper
+    env_file:
+      - .env
     volumes:
       - ./data:/app/data
+    deploy:
+      resources:
+        limits:
+          memory: 750M
+    mem_limit: 750m
     logging:
-      driver: 'json-file'
+      driver: "json-file"
       options:
-        max-size: '10m'
-        max-file: '3'
-
-
+        max-size: "20m"
+        max-file: "3"
