@@ -1,4 +1,4 @@
-import { CityKey } from './settings';
+import type { CityKey } from './settings';
 
 export interface LocationEntry {
   canonicalName: string;

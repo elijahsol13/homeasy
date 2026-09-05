@@ -1,10 +1,9 @@
-import { Api, InlineKeyboard } from 'grammy';
+import { Api, type InlineKeyboard } from 'grammy';
 import type { Property } from '../database/repositories/properties.repo';
 import { CITIES, KHR_TO_USD_RATE, RATE_LIMIT } from '../config/settings';
 import { listingActionKeyboard } from '../modules/bot/keyboards/listing.keyboard';
 import { formatPhoneNumber } from '../modules/parser/normalizer';
 import {
-  formatGoogleMapsUrl,
   crossValidateLocation,
   extractCoordinatesFromMapsUrl,
 } from '../config/locations';

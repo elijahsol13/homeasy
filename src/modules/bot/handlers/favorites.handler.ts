@@ -3,7 +3,7 @@ import type { MyContext } from '../session';
 import type { AppContainer } from '../../../container';
 import { favoriteDetailKeyboard, favoritesListKeyboard } from '../keyboards/listing.keyboard';
 import { mainMenuKeyboard } from '../keyboards/main.keyboard';
-import { formatListingCard, sendListingCard } from '../../../services/notifier';
+import { sendListingCard } from '../../../services/notifier';
 import { MAX_FAVORITES_PER_USER } from '../../../config/settings';
 
 // ─── Favorites list ───────────────────────────────────────────────────────────

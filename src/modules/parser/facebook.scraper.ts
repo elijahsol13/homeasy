@@ -20,7 +20,7 @@ import type { RawListing } from './schemas';
 import { runMigrations } from '../../database/migrate';
 import type { AppContainer } from '../../container';
 import { createContainer } from '../../container';
-import { FB_GROUPS, type CityKey, type FBGroupConfig, type PropertyCategory } from '../../config/settings';
+import { FB_GROUPS, type CityKey, type PropertyCategory } from '../../config/settings';
 import {
   extractBedrooms,
   extractBathrooms,
