@@ -12,8 +12,6 @@
  *  8. Backfills posted_at from relative post timestamps or created_at/parsed_at fallback.
  */
 
-import { DatabaseSync } from 'node:sqlite';
-import path from 'path';
 import { createDatabase } from './db';
 import { runMigrations } from './migrate';
 import { normalizePhoneNumber } from '../modules/parser/normalizer';

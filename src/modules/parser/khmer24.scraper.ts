@@ -294,11 +294,6 @@ function parseBathrooms(specs?: K24Post['object_highlight_specs']): number | und
   return isNaN(n) ? undefined : n;
 }
 
-function parseSize(specs?: K24Post['object_highlight_specs']): string | undefined {
-  const raw = specs?.size?.display_value;
-  return raw != null ? String(raw) : undefined;
-}
-
 function extractSpecsDetails(specs?: K24Post['object_highlight_specs']): string[] {
   if (!specs) return [];
   const parts: string[] = [];

@@ -14,10 +14,8 @@ import {
 } from '../keyboards/filter.keyboard';
 import { mainMenuKeyboard } from '../keyboards/main.keyboard';
 import type { AppContainer } from '../../../container';
-import { formatListingCard, sendListingCard } from '../../../services/notifier';
-import { listingActionKeyboard } from '../keyboards/listing.keyboard';
+import { sendListingCard } from '../../../services/notifier';
 import {
-  BEDROOM_OPTIONS,
   BUDGET_RANGES,
   CATEGORY_OPTIONS,
   CITIES,

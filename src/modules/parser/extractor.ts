@@ -1,7 +1,6 @@
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import OpenAI from 'openai';
 import { DISTRICTS, type CityKey, type PropertyCategory } from '../../config/settings';
-import { findLandmarksInText } from '../../config/landmarks';
 import { khrToUsdCents, normalizeLocationString, normalizePriceString, usdToUsdCents } from './normalizer';
 import { env } from '../../config/env';
 
@@ -94,7 +93,7 @@ function sanitizeLlmResult(rawJson: string): LLMExtractedListing | null {
     const is_real_estate = parsed.is_real_estate !== false;
     const title = typeof parsed.title === 'string' && parsed.title.trim().length > 0 ? parsed.title.trim() : '';
 
-    let price: number | null = typeof parsed.price === 'number' && parsed.price > 0 ? parsed.price : null;
+    const price: number | null = typeof parsed.price === 'number' && parsed.price > 0 ? parsed.price : null;
     const currency: 'USD' | 'KHR' = parsed.currency === 'KHR' ? 'KHR' : 'USD';
     let category: LLMExtractedListing['category'] = null;
     if (parsed.category && ['apartment', 'house', 'room', 'hotel', 'land'].includes(parsed.category.toLowerCase())) {

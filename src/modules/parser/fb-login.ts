@@ -172,7 +172,9 @@ export async function runFbLogin(): Promise<void> {
           await saveBrowserBtn.click().catch(() => {});
           await page.waitForTimeout(3000);
         }
-      } catch {}
+      } catch {
+        /* ignore */
+      }
     } else {
       console.log('\n⏳ Browser window opened! Please log into Facebook in the browser window.');
       console.log('   (Enter email, password, and 2FA code if requested)');
