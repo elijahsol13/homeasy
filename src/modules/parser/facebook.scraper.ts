@@ -193,7 +193,7 @@ export async function parseFacebookPostText(
       : extractBathrooms(text) ?? undefined;
 
   let category: PropertyCategory = target.defaultCategory ?? 'house';
-  if (llm?.category && ['apartment', 'house', 'room'].includes(llm.category)) {
+  if (llm?.category && ['apartment', 'house', 'room', 'hotel'].includes(llm.category)) {
     category = llm.category as PropertyCategory;
   } else {
     const heuristicCat = extractCategory(text);
@@ -226,7 +226,14 @@ export async function parseFacebookPostText(
   }
   if (!title) {
     const bedsText = bedrooms ? `${bedrooms}BR ` : '';
-    const catText = category === 'apartment' ? 'Apartment' : category === 'room' ? 'Room' : 'House';
+    const catText =
+      category === 'apartment'
+        ? 'Apartment'
+        : category === 'hotel'
+          ? 'Hotel Room'
+          : category === 'room'
+            ? 'Room'
+            : 'House';
     const locPart = location ? ` in ${location}` : '';
     title = `${bedsText}${catText}${locPart}`;
   }

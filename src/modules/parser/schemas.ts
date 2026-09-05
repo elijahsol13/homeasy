@@ -11,7 +11,7 @@ export const RawListingSchema = z.object({
   price: z.union([z.string(), z.number()]).optional(),
   currency: z.string().optional(),
   type: z.string().optional(),
-  category: z.enum(['apartment', 'house', 'room']).or(z.string()).optional(),
+  category: z.enum(['apartment', 'house', 'room', 'hotel']).or(z.string()).optional(),
   bedrooms: z.union([z.string(), z.number()]).optional(),
   bathrooms: z.union([z.string(), z.number()]).optional(),
   deposit: z.union([z.string(), z.number()]).optional(),
@@ -42,7 +42,7 @@ export const CleanPropertySchema = z.object({
   price: z.number().int().min(0),
   currency: z.enum(['USD', 'KHR']).default('USD'),
   type: z.enum(['rent', 'sale']),
-  category: z.enum(['apartment', 'house', 'room']).nullable().default(null),
+  category: z.enum(['apartment', 'house', 'room', 'hotel']).nullable().default(null),
   bedrooms: z.number().int().min(0).nullable().default(null),
   bathrooms: z.number().int().min(0).nullable().default(null),
   deposit: z.number().int().min(0).nullable().default(null), // in USD cents

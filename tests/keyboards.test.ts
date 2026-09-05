@@ -68,10 +68,11 @@ describe('Telegram Bot Keyboard Generators', () => {
       const kb = categoryKeyboard();
       const flat = kb.inline_keyboard.flat() as FlatBtn[];
 
-      expect(flat.length).toBe(6); // 4 category options ('Any', 'Apartment', 'House', 'Room') + back + cancel
+      expect(flat.length).toBe(7); // 5 category options ('Any', 'Apartment', 'House', 'Room', 'Hotel Room') + back + cancel
       expect(flat.some((b) => b.text.includes('Apartment'))).toBe(true);
       expect(flat.some((b) => b.text.includes('House'))).toBe(true);
       expect(flat.some((b) => b.text.includes('Room'))).toBe(true);
+      expect(flat.some((b) => b.text.includes('Hotel Room'))).toBe(true);
       expect(flat.some((b) => b.text.includes('Back'))).toBe(true);
       expect(flat.some((b) => b.text.includes('Cancel'))).toBe(true);
     });

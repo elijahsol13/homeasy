@@ -162,10 +162,12 @@ export function formatListingCard(property: Property): string {
   const typeLabel = property.type === 'rent' ? 'For Rent' : 'For Sale';
   const catLabel = property.category
     ? property.category === 'apartment'
-      ? '🏬 Apartment / Condo / Hotel Room'
+      ? '🏬 Apartment / Condo'
       : property.category === 'house'
         ? '🏡 House / Villa'
-        : '🛏️ Room'
+        : property.category === 'hotel'
+          ? '🏨 Hotel Room'
+          : '🛏️ Room'
     : null;
 
   // 1. Price line
