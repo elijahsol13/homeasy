@@ -31,7 +31,9 @@ Thumbs.db
 # Tool & agent artifacts
 repomix-output.xml
 BACKLOG.md
-implementation_plan*.md
+*plan*.md
+*PLAN*.md
+TMA_*.md
 walkthrough*.md
 task*.md
 scratch/
