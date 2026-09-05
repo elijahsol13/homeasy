@@ -8,22 +8,17 @@ import {
   type CityKey,
 } from '../../../config/settings';
 
-// Helper to format bedrooms label e.g. "1, 2 BR", "Studio", "4+ BR", "Any"
+// Helper to format bedrooms label e.g. "1, 2 BR", "4+ BR", "Any"
 export function formatBedroomsLabel(bedrooms: number[] | number | null | undefined): string {
   if (bedrooms === null || bedrooms === undefined) return 'Any';
   if (typeof bedrooms === 'number') {
-    return bedrooms === 0 ? 'Studio' : bedrooms >= 4 ? '4+ BR' : `${bedrooms} BR`;
+    const val = bedrooms === 0 ? 1 : bedrooms;
+    return val >= 4 ? '4+ BR' : `${val} BR`;
   }
   if (!Array.isArray(bedrooms) || bedrooms.length === 0) return 'Any';
 
-  const sorted = [...bedrooms].sort((a, b) => a - b);
-  const parts = sorted.map((b) => (b === 0 ? 'Studio' : b >= 4 ? '4+' : String(b)));
-
-  if (parts.length === 1 && parts[0] === 'Studio') return 'Studio';
-  if (parts.includes('Studio')) {
-    const nonStudio = parts.filter((p) => p !== 'Studio');
-    return nonStudio.length > 0 ? `Studio, ${nonStudio.join(', ')} BR` : 'Studio';
-  }
+  const normalized = Array.from(new Set(bedrooms.map((b) => (b === 0 ? 1 : b)))).sort((a, b) => a - b);
+  const parts = normalized.map((b) => (b >= 4 ? '4+' : String(b)));
   return `${parts.join(', ')} BR`;
 }
 
@@ -111,15 +106,14 @@ export function bedroomsKeyboard(selected: number[] = []): InlineKeyboard {
   const kb = new InlineKeyboard();
 
   const options = [
-    { label: 'Studio', value: 0 },
     { label: '1 BR', value: 1 },
     { label: '2 BR', value: 2 },
     { label: '3 BR', value: 3 },
     { label: '4+ BR', value: 4 },
   ];
 
-  // Row 1: Studio, 1 BR, 2 BR
-  options.slice(0, 3).forEach((opt) => {
+  // Row 1: 1 BR, 2 BR
+  options.slice(0, 2).forEach((opt) => {
     const isSelected = selected.includes(opt.value);
     const label = isSelected ? `✅ ${opt.label}` : `   ${opt.label}`;
     kb.text(label, `cb:filter:beds:toggle:${opt.value}`);
@@ -127,7 +121,7 @@ export function bedroomsKeyboard(selected: number[] = []): InlineKeyboard {
   kb.row();
 
   // Row 2: 3 BR, 4+ BR, Any
-  options.slice(3, 5).forEach((opt) => {
+  options.slice(2, 4).forEach((opt) => {
     const isSelected = selected.includes(opt.value);
     const label = isSelected ? `✅ ${opt.label}` : `   ${opt.label}`;
     kb.text(label, `cb:filter:beds:toggle:${opt.value}`);
@@ -148,14 +142,15 @@ export function bedroomsKeyboard(selected: number[] = []): InlineKeyboard {
 
 // ─── Step 7: Pool Required? ───────────────────────────────────────────────────
 
-export function poolKeyboard(): InlineKeyboard {
+export function poolKeyboard(backToBudget = false): InlineKeyboard {
   const kb = new InlineKeyboard();
 
   POOL_OPTIONS.forEach((opt, i) => {
     kb.text(opt.label, `cb:filter:pool:${i}`).row();
   });
 
-  kb.text('◀️ Back', 'cb:filter:back:filter:bedrooms').text('❌ Cancel', 'cb:filter:cancel');
+  const backTarget = backToBudget ? 'cb:filter:back:filter:budget' : 'cb:filter:back:filter:bedrooms';
+  kb.text('◀️ Back', backTarget).text('❌ Cancel', 'cb:filter:cancel');
   return kb;
 }
 

@@ -155,6 +155,7 @@ export async function parseFacebookPostText(
   target: FBGroupTarget,
   postUrl: string,
   photos: string[] = [],
+  rawDate?: string,
 ): Promise<RawListing | null> {
   // 1. Try LLM extraction first (Gemini / OpenAI)
   const llm = await extractListingWithLLM(text);
@@ -251,7 +252,38 @@ export async function parseFacebookPostText(
     url: cleanedUrl,
     photos,
     phone,
+    posted_at: parseFacebookRelativeDate(rawDate),
   };
+}
+
+export function parseFacebookRelativeDate(dateStr?: string, nowMs = Date.now()): string | undefined {
+  if (!dateStr) return undefined;
+  const s = dateStr.trim().toLowerCase();
+
+  // "5m", "5 min", "5 mins", "5 minutes ago", "5 мин."
+  const minMatch = /(\d+)\s*(?:m|min|mins|minute|minutes|мин)/.exec(s);
+  if (minMatch) {
+    return new Date(nowMs - parseInt(minMatch[1]!, 10) * 60 * 1000).toISOString();
+  }
+
+  // "3h", "3 hr", "3 hrs", "3 hours ago", "3 ч."
+  const hrMatch = /(\d+)\s*(?:h|hr|hrs|hour|hours|ч)/.exec(s);
+  if (hrMatch) {
+    return new Date(nowMs - parseInt(hrMatch[1]!, 10) * 3600 * 1000).toISOString();
+  }
+
+  // "2d", "2 days ago", "2 дн."
+  const dayMatch = /(\d+)\s*(?:d|day|days|дн)/.exec(s);
+  if (dayMatch) {
+    return new Date(nowMs - parseInt(dayMatch[1]!, 10) * 86400 * 1000).toISOString();
+  }
+
+  const d = new Date(dateStr);
+  if (!isNaN(d.getTime())) {
+    return d.toISOString();
+  }
+
+  return undefined;
 }
 
 // ─── DOM Post Extractor ───────────────────────────────────────────────────────
@@ -260,6 +292,7 @@ interface ExtractedDomPost {
   text: string;
   url: string;
   photos: string[];
+  rawDate?: string;
 }
 
 /**
@@ -275,7 +308,7 @@ async function extractPostsFromPage(page: Page): Promise<ExtractedDomPost[]> {
         };
       }
     ).document;
-    const results: Array<{ text: string; url: string; photos: string[] }> = [];
+    const results: Array<{ text: string; url: string; photos: string[]; rawDate?: string }> = [];
 
     // Find all post feed containers
     const feedUnits = doc.querySelectorAll(
@@ -369,8 +402,20 @@ async function extractPostsFromPage(page: Page): Promise<ExtractedDomPost[]> {
         }
       });
 
+      // 4. Extract Post Creation Timestamp String
+      let rawDate = '';
+      if (permalinkAnchor) {
+        rawDate = permalinkAnchor.getAttribute('aria-label') || permalinkAnchor.textContent || '';
+      }
+      if (!rawDate) {
+        const timeEl = el.querySelector('abbr, a[href*="/posts/"] span, span[id*="jsc_c"]');
+        if (timeEl) {
+          rawDate = timeEl.getAttribute('aria-label') || timeEl.textContent || '';
+        }
+      }
+
       if (text && (postUrl || photos.length > 0)) {
-        results.push({ text, url: postUrl, photos });
+        results.push({ text, url: postUrl, photos, rawDate: rawDate.trim() });
       }
     });
 
@@ -394,12 +439,45 @@ export async function scrapeFacebookGroup(
   const seenUrls = new Set<string>();
 
   try {
-    // Block video media and custom fonts to minimize Chromium memory footprint
+    // Block stylesheets, fonts, media, tracking, and non-listing UI images to minimize Chromium memory footprint
     await page.route('**/*', (route) => {
-      const type = route.request().resourceType();
-      if (['media', 'font'].includes(type)) {
+      const req = route.request();
+      const url = req.url().toLowerCase();
+      const type = req.resourceType();
+
+      // Block tracking, analytics, and telemetry
+      if (
+        url.includes('google-analytics') ||
+        url.includes('googletagmanager') ||
+        url.includes('doubleclick') ||
+        url.includes('connect.facebook.net/signals') ||
+        url.includes('facebook.com/tr/') ||
+        url.includes('facebook.com/ajax/bz') ||
+        url.includes('pixel')
+      ) {
         return route.abort();
       }
+
+      // Block stylesheets, fonts, audio/video media, and non-essential resources
+      if (['stylesheet', 'font', 'media', 'other'].includes(type)) {
+        return route.abort();
+      }
+
+      // Block non-listing images: emojis, UI icons, profile photos, static sprites
+      if (type === 'image') {
+        const isListingPhoto = url.includes('scontent') || url.includes('fbcdn.net/v/');
+        const isNoise =
+          url.includes('emoji') ||
+          url.includes('rsrc.php') ||
+          url.includes('profile') ||
+          url.includes('static.xx.fbcdn.net') ||
+          url.includes('lookaside');
+
+        if (isNoise || !isListingPhoto) {
+          return route.abort();
+        }
+      }
+
       return route.continue();
     });
 
@@ -508,7 +586,7 @@ export async function scrapeFacebookGroup(
         }
 
         try {
-          const rawListing = await parseFacebookPostText(domPost.text, target, cleanedUrl, domPost.photos);
+          const rawListing = await parseFacebookPostText(domPost.text, target, cleanedUrl, domPost.photos, domPost.rawDate);
           if (!rawListing) {
             console.log(`  ⏩ [Skipped] Post identified as non-residential / land sale / irrelevant`);
             continue;

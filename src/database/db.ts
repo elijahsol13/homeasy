@@ -31,6 +31,7 @@ export function createDatabase(customPath?: string): DatabaseSync {
     db.exec('PRAGMA synchronous = NORMAL');
     db.exec('PRAGMA wal_autocheckpoint = 500'); // Checkpoint WAL frequently to avoid disk/RAM ballooning
   }
+  db.exec('PRAGMA busy_timeout = 5000'); // Wait up to 5s on locked DB before SQLITE_BUSY
   db.exec('PRAGMA foreign_keys = ON');
   db.exec('PRAGMA cache_size = -2000'); // 2 MB page cache instead of 32 MB
   db.exec('PRAGMA temp_store = FILE');   // Offload temporary tables to disk rather than RAM

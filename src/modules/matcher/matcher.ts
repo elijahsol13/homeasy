@@ -108,13 +108,21 @@ export class MatcherService {
   }
 
   /**
-   * Finds recent active properties from the database that match a specific filter.
-   * Used for Instant Matches (Cold Start) when a user creates an alert.
+   * Finds recent active properties from the database that match a specific filter with pagination.
+   * Scans the active database pool (ordered by updated_at / created_at DESC).
+   * Returns paginated slice and total matching count.
    */
-  findMatchingPropertiesForFilter(filter: SearchFilter, limit = 5): Property[] {
-    const allProperties = this.propertiesRepo.getRecentProperties(100);
+  findMatchingPropertiesForFilter(
+    filter: SearchFilter,
+    limit = 3,
+    offset = 0,
+  ): { properties: Property[]; total: number } {
+    const allProperties = this.propertiesRepo.getRecentProperties(500);
     const matching = allProperties.filter((p) => p.is_active === 1 && this.propertyMatchesFilter(p, filter));
-    return matching.slice(0, limit);
+    return {
+      properties: matching.slice(offset, offset + limit),
+      total: matching.length,
+    };
   }
 
   /**

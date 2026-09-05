@@ -28,6 +28,7 @@ function mockCleanProperty(overrides: Partial<CleanProperty> = {}): CleanPropert
     image_phashes: [],
     direct_contact: { phone: '85512345678' },
     original_url: 'https://example.com/prop-1',
+    posted_at: null,
     ...overrides,
   };
 }
@@ -60,6 +61,8 @@ function mockDbProperty(overrides: Partial<Property> = {}): Property {
     is_active: 1,
     parsed_at: new Date().toISOString(),
     created_at: new Date().toISOString(),
+    posted_at: null,
+    updated_at: new Date().toISOString(),
     ...overrides,
   };
 }

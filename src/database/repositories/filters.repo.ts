@@ -112,6 +112,13 @@ export class FiltersRepository {
     return rows.map(rowToFilter);
   }
 
+  getFilterById(filterId: number): SearchFilter | null {
+    const row = this.db
+      .prepare('SELECT * FROM search_filters WHERE id = ?')
+      .get(filterId) as unknown as SearchFilterRow | undefined;
+    return row ? rowToFilter(row) : null;
+  }
+
   getUserActiveFilters(userId: number): SearchFilter[] {
     const rows = this.db
       .prepare('SELECT * FROM search_filters WHERE user_id = ? AND is_active = 1 ORDER BY created_at DESC')

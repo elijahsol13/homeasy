@@ -337,6 +337,15 @@ export function postToRawListing(post: K24Post, target: ScrapeTarget, phone?: st
     }
   }
 
+  const rawDate = (post.renew_date || (post as Record<string, unknown>).posted_at || (post as Record<string, unknown>).created_at) as string | undefined;
+  let postedAt: string | undefined;
+  if (rawDate) {
+    const parsedDate = new Date(rawDate);
+    if (!isNaN(parsedDate.getTime())) {
+      postedAt = parsedDate.toISOString();
+    }
+  }
+
   return {
     title: post.title,
     description,
@@ -353,6 +362,7 @@ export function postToRawListing(post: K24Post, target: ScrapeTarget, phone?: st
     phone,
     url: listingUrl,
     source_url: listingUrl,
+    posted_at: postedAt,
   };
 }
 
@@ -370,6 +380,37 @@ async function fetchFeedPage(
   let feedData: K24FeedResponse | null = null;
 
   try {
+    // Intercept and abort heavy assets & tracking to minimize Chromium memory
+    await page.route('**/*', (route) => {
+      const req = route.request();
+      const url = req.url().toLowerCase();
+      const type = req.resourceType();
+
+      // Block tracking & analytics
+      if (
+        url.includes('google-analytics') ||
+        url.includes('googletagmanager') ||
+        url.includes('doubleclick') ||
+        url.includes('connect.facebook') ||
+        url.includes('onesignal') ||
+        url.includes('pixel')
+      ) {
+        return route.abort();
+      }
+
+      // Block CSS, fonts, videos/audio, and other non-essential resources
+      if (['stylesheet', 'font', 'media', 'other'].includes(type)) {
+        return route.abort();
+      }
+
+      // Khmer24 feed API JSON provides photo URLs; images on feed page are purely decorative
+      if (type === 'image' && !url.includes('khmer24.com/photos') && !url.includes('images.khmer24.com')) {
+        return route.abort();
+      }
+
+      return route.continue();
+    });
+
     // Intercept the API response fired by the page's own JS
     page.on('response', async (resp) => {
       const u = resp.url();
@@ -426,10 +467,24 @@ async function fetchPostPhone(ctx: BrowserContext, adId: string): Promise<string
   let phone: string | undefined;
 
   try {
-    // Block heavy media/fonts/images/css — we only need HTML text and API responses
+    // Block heavy media/fonts/images/css & tracking — we only need HTML text and API responses
     await page.route('**/*', (route) => {
-      const type = route.request().resourceType();
-      if (['image', 'media', 'font', 'stylesheet'].includes(type)) {
+      const req = route.request();
+      const url = req.url().toLowerCase();
+      const type = req.resourceType();
+
+      if (
+        url.includes('google-analytics') ||
+        url.includes('googletagmanager') ||
+        url.includes('doubleclick') ||
+        url.includes('connect.facebook') ||
+        url.includes('onesignal') ||
+        url.includes('pixel')
+      ) {
+        return route.abort();
+      }
+
+      if (['image', 'media', 'font', 'stylesheet', 'other'].includes(type)) {
         return route.abort();
       }
       return route.continue();
