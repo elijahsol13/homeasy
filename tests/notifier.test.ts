@@ -228,18 +228,74 @@ describe('Dynamic Telegram Listing Card Formatter', () => {
   });
 
   describe('Card Summary Integration for Category, Cleaning & Restrictions', () => {
-    test('renders Apartment / Condo and Hotel Room category labels', () => {
+    test('renders Apartment and Hotel Room category labels', () => {
       const aptCard = formatListingCard({
         ...baseProperty,
         category: 'apartment',
       });
-      expect(aptCard).toContain('🏬 Apartment / Condo');
+      expect(aptCard).toContain('🏬 Apartment');
 
       const hotelCard = formatListingCard({
         ...baseProperty,
         category: 'hotel',
       });
       expect(hotelCard).toContain('🏨 Hotel Room');
+    });
+
+    test('renders specific property types (Flat House, Private Villa, Condo)', () => {
+      const flatHouseCard = formatListingCard({
+        ...baseProperty,
+        description: 'New shophouse / flat house for rent in Krong Siem Reap. 4 bedrooms.',
+      });
+      expect(flatHouseCard).toContain('🏘️ Flat House');
+
+      const villaCard = formatListingCard({
+        ...baseProperty,
+        description: 'Private villa with swimming pool and private garden.',
+      });
+      expect(villaCard).toContain('🏡 Private Villa');
+
+      const condoCard = formatListingCard({
+        ...baseProperty,
+        description: 'Modern luxury condo on the 12th floor with gym and pool.',
+      });
+      expect(condoCard).toContain('🏢 Condo');
+    });
+
+    test('renders Cambodian utilities (Electricity & Water)', () => {
+      const cardWithUtilities = formatListingCard({
+        ...baseProperty,
+        description: 'Apartment for rent. Electricity: EDC state rate $0.20/kwh. Free water included.',
+      });
+      expect(cardWithUtilities).toContain('⚡ Electricity: EDC (State Rate) ~$0.20/kWh · 💧 Water: Included');
+
+      const cardWithFixedRates = formatListingCard({
+        ...baseProperty,
+        description: 'Modern room. Electricity $0.25/kwh, water $5/person.',
+      });
+      expect(cardWithFixedRates).toContain('⚡ Electricity: Fixed Rate ($0.25/kWh) · 💧 Water: Fixed ($5/person)');
+    });
+
+    test('renders landmarks with Google Maps links', () => {
+      const cardWithLandmark = formatListingCard({
+        ...baseProperty,
+        description: 'Cozy apartment located along Apsara Road near Angkor Wat.',
+      });
+      expect(cardWithLandmark).toContain('🚩 Landmark: <b>Apsara Road (Charles de Gaulle)</b> ↗');
+      expect(cardWithLandmark).toContain('href="https://www.google.com/maps/place/Charles+De+Gaulle,+Krong+Siem+Reap"');
+    });
+
+    test('discards bogus coordinates inside Lake Tonle Sap and falls back to district polygon', () => {
+      const cardWithLakeCoords = formatListingCard({
+        ...baseProperty,
+        location: 'Sala Kamreuk',
+        // Coordinate 13.10, 103.80 is directly in Lake Tonle Sap
+        maps_url: 'https://www.google.com/maps/@13.100000,103.800000,15z',
+      });
+      // Should NOT contain the lake coordinates
+      expect(cardWithLakeCoords).not.toContain('13.100000');
+      // Should fall back to the canonical Sala Kamreuk query
+      expect(cardWithLakeCoords).toContain('Sangkat%20Sala%20Kamreuk');
     });
 
     test('renders cleaning in amenities and prominent restrictions row', () => {

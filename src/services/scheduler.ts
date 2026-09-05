@@ -51,7 +51,6 @@ export class ScraperWorker {
         this.sleepTimeout = null;
         resolve();
       }, ms);
-      this.sleepTimeout.unref();
     });
   }
 
