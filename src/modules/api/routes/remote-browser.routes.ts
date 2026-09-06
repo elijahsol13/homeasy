@@ -11,8 +11,20 @@ export const remoteBrowserRoutes: FastifyPluginAsync<RemoteBrowserRoutesOptions>
 ) => {
   const { container } = options;
 
-  // 1. WebSocket Endpoint for bidirectional CDP screencast and user input
-  app.get('/admin/remote-browser/ws', { websocket: true }, (socket, req) => {
+  const adminRateLimitConfig = {
+    rateLimit: {
+      max: 5,
+      timeWindow: '1 minute',
+      errorResponseBuilder: (_request: unknown, context: { ttl: number }) => ({
+        statusCode: 429,
+        error: 'Too Many Requests',
+        message: `Too many remote browser connection attempts (limit: 5/min). Try again in ${Math.ceil(context.ttl / 1000)} seconds.`,
+      }),
+    },
+  };
+
+  // 1. WebSocket Endpoint for bidirectional CDP screencast and user input (5 req/min)
+  app.get('/admin/remote-browser/ws', { websocket: true, config: adminRateLimitConfig }, (socket, req) => {
     const query = req.query as { token?: string };
     const token = query?.token;
 
@@ -25,8 +37,8 @@ export const remoteBrowserRoutes: FastifyPluginAsync<RemoteBrowserRoutesOptions>
     void container.remoteBrowserService.handleWebSocketConnection(token, socket);
   });
 
-  // 2. HTML5 Web App Viewer for Mobile & Desktop
-  app.get('/admin/remote-browser', async (req, reply) => {
+  // 2. HTML5 Web App Viewer for Mobile & Desktop (5 req/min)
+  app.get('/admin/remote-browser', { config: adminRateLimitConfig }, async (req, reply) => {
     const query = req.query as { token?: string };
     const token = query?.token;
 

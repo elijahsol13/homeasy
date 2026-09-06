@@ -1,6 +1,7 @@
 import fastify, { type FastifyInstance, type FastifyError } from 'fastify';
 import cors from '@fastify/cors';
 import fastifyWebsocket from '@fastify/websocket';
+import rateLimit from '@fastify/rate-limit';
 import type { AppContainer } from '../../container';
 import { env } from '../../config/env';
 import { healthRoutes } from './routes/health.routes';
@@ -31,6 +32,18 @@ export async function buildApiServer(options: BuildServerOptions): Promise<Fasti
     origin: true, // Reflect request origin
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization', 'X-Telegram-Init-Data', 'X-Dev-Telegram-Id'],
+  });
+
+  // Tiered Rate Limiting: Global catalog reads default to 100 req/min
+  await app.register(rateLimit, {
+    global: true,
+    max: 100,
+    timeWindow: '1 minute',
+    errorResponseBuilder: (_request, context) => ({
+      statusCode: 429,
+      error: 'Too Many Requests',
+      message: `Rate limit exceeded (100 req/min). Try again in ${Math.ceil(context.ttl / 1000)} seconds.`,
+    }),
   });
 
   // Enable WebSocket support for interactive browser streaming
