@@ -81,15 +81,33 @@ export async function fetchPropertyById(id: number): Promise<PropertyDTO> {
   return res.json();
 }
 
+export interface MapBounds {
+  minLat: number;
+  maxLat: number;
+  minLng: number;
+  maxLng: number;
+  paddingRatio?: number;
+}
+
 export async function fetchMapMarkers(
   city: string,
   category?: string,
   type?: 'rent' | 'sale',
+  bounds?: MapBounds,
 ): Promise<MapMarkerDTO[]> {
   const params = new URLSearchParams();
   params.set('city', city);
   if (category) params.set('category', category);
   if (type) params.set('type', type);
+  if (bounds) {
+    params.set('minLat', bounds.minLat.toString());
+    params.set('maxLat', bounds.maxLat.toString());
+    params.set('minLng', bounds.minLng.toString());
+    params.set('maxLng', bounds.maxLng.toString());
+    if (bounds.paddingRatio !== undefined) {
+      params.set('paddingRatio', bounds.paddingRatio.toString());
+    }
+  }
 
   const res = await fetch(`${API_BASE}/properties/map?${params.toString()}`, {
     headers: getAuthHeaders(),

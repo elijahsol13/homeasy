@@ -59,12 +59,26 @@ export type CreateFilterInput = Omit<SearchFilter, 'id' | 'created_at' | 'is_act
   bedrooms: number[] | number | null;
 };
 
+export const MAX_USER_FILTERS = 5;
+
 // ─── Repository ───────────────────────────────────────────────────────────────
 
 export class FiltersRepository {
   constructor(private readonly db: DatabaseSync) {}
 
+  countUserActiveFilters(userId: number): number {
+    const row = this.db
+      .prepare('SELECT COUNT(*) as count FROM search_filters WHERE user_id = ? AND is_active = 1')
+      .get(userId) as unknown as { count: number } | undefined;
+    return row?.count ?? 0;
+  }
+
   createFilter(input: CreateFilterInput): SearchFilter {
+    const activeCount = this.countUserActiveFilters(input.user_id);
+    if (activeCount >= MAX_USER_FILTERS) {
+      throw new Error(`Filter limit reached: maximum ${MAX_USER_FILTERS} active filters allowed per user`);
+    }
+
     const bedroomsValue = Array.isArray(input.bedrooms)
       ? JSON.stringify(input.bedrooms)
       : typeof input.bedrooms === 'number'

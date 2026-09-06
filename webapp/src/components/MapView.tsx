@@ -23,6 +23,29 @@ export const MapView: React.FC<MapViewProps> = ({ city, onSelectProperty }) => {
   const [markers, setMarkers] = useState<MapMarkerDTO[]>([]);
   const [selectedMarker, setSelectedMarker] = useState<MapMarkerDTO | null>(null);
   const [loading, setLoading] = useState(true);
+  const debounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const fetchMarkersForCurrentBounds = () => {
+    if (!mapInstanceRef.current) return;
+    const b = mapInstanceRef.current.getBounds();
+    const bounds = {
+      minLat: b.getSouth(),
+      maxLat: b.getNorth(),
+      minLng: b.getWest(),
+      maxLng: b.getEast(),
+      paddingRatio: 0.2, // ~20% buffer overscan (~5-10 mm beyond screen on mobile)
+    };
+
+    fetchMapMarkers(city, undefined, undefined, bounds)
+      .then((data) => {
+        setMarkers(data);
+        setLoading(false);
+      })
+      .catch((err) => {
+        console.error('Failed to load map markers:', err);
+        setLoading(false);
+      });
+  };
 
   // Initialize Leaflet map
   useEffect(() => {
@@ -45,31 +68,33 @@ export const MapView: React.FC<MapViewProps> = ({ city, onSelectProperty }) => {
       const markersLayer = L.layerGroup().addTo(map);
       markersLayerRef.current = markersLayer;
       mapInstanceRef.current = map;
+
+      const onMoveEnd = () => {
+        if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current);
+        debounceTimerRef.current = setTimeout(() => {
+          fetchMarkersForCurrentBounds();
+        }, 300);
+      };
+
+      map.on('moveend', onMoveEnd);
+
+      map.whenReady(() => {
+        fetchMarkersForCurrentBounds();
+      });
     } else {
       mapInstanceRef.current.setView(CITY_COORDS[city], 13);
     }
   }, [city]);
 
-  // Fetch markers from API
+  // Initial fetch / city change fetch
   useEffect(() => {
-    let active = true;
-    setLoading(true);
     setSelectedMarker(null);
-
-    fetchMapMarkers(city)
-      .then((data) => {
-        if (active) {
-          setMarkers(data);
-          setLoading(false);
-        }
-      })
-      .catch((err) => {
-        console.error('Failed to load map markers:', err);
-        if (active) setLoading(false);
-      });
-
+    setLoading(true);
+    if (mapInstanceRef.current) {
+      fetchMarkersForCurrentBounds();
+    }
     return () => {
-      active = false;
+      if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current);
     };
   }, [city]);
 

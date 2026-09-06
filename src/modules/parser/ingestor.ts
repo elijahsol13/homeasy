@@ -17,6 +17,7 @@ import {
 } from './extractor';
 import { extractCleaning, extractRestrictions } from '../../services/notifier';
 import { findLandmarksInText } from '../../config/landmarks';
+import { extractCoordinatesFromMapsUrl } from '../../config/locations';
 import type { PropertiesRepository } from '../../database/repositories/properties.repo';
 import { checkDuplicate, computeListingPhashes } from '../matcher/deduplicator';
 import type { MatcherService } from '../matcher/matcher';
@@ -188,6 +189,12 @@ export function normalizeRawToClean(
   const primaryLandmark = landmarkEntries[0]?.canonicalName ?? null;
   const landmarks = landmarkEntries.map((l) => l.canonicalName);
 
+  const coords = mapsUrl ? extractCoordinatesFromMapsUrl(mapsUrl) : null;
+  const rawLat = raw.latitude !== undefined && raw.latitude !== null ? parseFloat(String(raw.latitude)) : NaN;
+  const rawLng = raw.longitude !== undefined && raw.longitude !== null ? parseFloat(String(raw.longitude)) : NaN;
+  const latitude = coords ? coords.latitude : (!isNaN(rawLat) ? rawLat : null);
+  const longitude = coords ? coords.longitude : (!isNaN(rawLng) ? rawLng : null);
+
   return {
     title,
     description,
@@ -217,6 +224,8 @@ export function normalizeRawToClean(
     pet_friendly: petFriendly,
     primary_landmark: primaryLandmark,
     landmarks,
+    latitude,
+    longitude,
   };
 }
 

@@ -225,6 +225,8 @@ export function formatListingCard(property: Property): string {
   }
   if (property.min_lease !== null && property.min_lease > 0) {
     terms.push(`Min Lease: ${property.min_lease} mos`);
+  } else if (property.type === 'rent') {
+    terms.push(`Lease: unspecified (ask owner)`);
   }
   const termsLine = terms.length > 0 ? ` · ${terms.join(' · ')}` : '';
 

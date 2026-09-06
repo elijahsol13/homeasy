@@ -7,6 +7,7 @@ import { createFiltersHandler } from './handlers/filters.handler';
 import { createFavoritesHandler } from './handlers/favorites.handler';
 import { createAdminHandler } from './handlers/admin.handler';
 import { createCallbacksHandler } from './handlers/callbacks.handler';
+import { createNLSearchHandler } from './handlers/nl-search.handler';
 import { env } from '../../config/env';
 
 export function createBot(container: AppContainer): Bot<MyContext> {
@@ -68,6 +69,7 @@ export function createBot(container: AppContainer): Bot<MyContext> {
   bot.use(createFiltersHandler(container));
   bot.use(createFavoritesHandler(container));
   bot.use(createCallbacksHandler(container));
+  bot.use(createNLSearchHandler(container));
 
   return bot;
 }
