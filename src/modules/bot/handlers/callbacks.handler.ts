@@ -121,6 +121,12 @@ async function route(ctx: MyContext, data: string): Promise<void> {
       if (!is_active) {
         console.log(`🚩 Property #${id} has been deactivated (reached ${reports_count} reports)`);
       }
+      ctx.container.analyticsRepo.trackEvent({
+        userId: ctx.from ? ctx.container.usersRepo.findByTelegramId(ctx.from.id)?.id : null,
+        telegramId: ctx.from?.id,
+        eventType: 'listing_reported',
+        metadata: { propertyId: id },
+      });
       await safeAnswer(ctx, '🚩 Thanks for helping the community! This listing has been reported.');
     } else {
       await safeAnswer(ctx, '⚠️ Invalid property');

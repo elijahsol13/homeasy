@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { Heart, MapPin, Send, Phone, Waves, Zap, Droplets, Ban, Sparkles } from 'lucide-react';
 import type { PropertyDTO } from '../types';
 import { triggerHaptic, openExternalUrl } from '../services/telegram';
+import posthog from 'posthog-js';
 
 interface PropertyCardProps {
   property: PropertyDTO;
@@ -26,6 +27,11 @@ export const PropertyCard: React.FC<PropertyCardProps> = ({
   const handleTelegramClick = (e: React.MouseEvent) => {
     e.stopPropagation();
     if (property.contact.telegramLink) {
+      try {
+        posthog.capture('contact_lead_clicked', { propertyId: property.id, channel: 'telegram' });
+      } catch {
+        // ignore
+      }
       openExternalUrl(property.contact.telegramLink);
     }
   };
@@ -34,6 +40,11 @@ export const PropertyCard: React.FC<PropertyCardProps> = ({
     e.stopPropagation();
     if (property.contact.phoneLink) {
       triggerHaptic('light');
+      try {
+        posthog.capture('contact_lead_clicked', { propertyId: property.id, channel: 'phone' });
+      } catch {
+        // ignore
+      }
       window.location.href = property.contact.phoneLink;
     }
   };

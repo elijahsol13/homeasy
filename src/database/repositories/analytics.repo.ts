@@ -1,4 +1,6 @@
 import type { DatabaseSync } from 'node:sqlite';
+import { PostHog } from 'posthog-node';
+import { env } from '../../config/env';
 
 export interface UsageEventRecord {
   id?: number;
@@ -16,10 +18,25 @@ export interface AnalyticsSummary {
 }
 
 export class AnalyticsRepository {
-  constructor(private readonly db: DatabaseSync) {}
+  private posthog: PostHog | null = null;
+
+  constructor(private readonly db: DatabaseSync) {
+    const apiKey = env.POSTHOG_API_KEY || process.env.POSTHOG_API_KEY;
+    if (apiKey) {
+      try {
+        this.posthog = new PostHog(apiKey, {
+          host: env.POSTHOG_HOST || process.env.POSTHOG_HOST || 'https://eu.i.posthog.com',
+          flushAt: 10,
+          flushInterval: 5000,
+        });
+      } catch (err) {
+        console.warn('[Analytics] Failed to initialize PostHog client:', err);
+      }
+    }
+  }
 
   /**
-   * Tracks an analytical event from Telegram Bot or Mini App.
+   * Tracks an analytical event synchronously to SQLite and asynchronously to PostHog.
    */
   trackEvent(event: {
     userId?: number | null;
@@ -29,15 +46,47 @@ export class AnalyticsRepository {
   }): void {
     const metaStr = event.metadata ? JSON.stringify(event.metadata) : '{}';
 
-    this.db.prepare(`
-      INSERT INTO usage_events (user_id, telegram_id, event_type, metadata)
-      VALUES (?, ?, ?, ?)
-    `).run(
-      event.userId ?? null,
-      event.telegramId ?? null,
-      event.eventType,
-      metaStr,
-    );
+    try {
+      this.db.prepare(`
+        INSERT INTO usage_events (user_id, telegram_id, event_type, metadata)
+        VALUES (?, ?, ?, ?)
+      `).run(
+        event.userId ?? null,
+        event.telegramId ?? null,
+        event.eventType,
+        metaStr,
+      );
+    } catch (err) {
+      console.warn('[Analytics] SQLite trackEvent error:', err);
+    }
+
+    if (this.posthog && event.telegramId) {
+      try {
+        this.posthog.capture({
+          distinctId: String(event.telegramId),
+          event: event.eventType,
+          properties: {
+            ...event.metadata,
+            userId: event.userId,
+          },
+        });
+      } catch (err) {
+        console.warn('[Analytics] PostHog capture error:', err);
+      }
+    }
+  }
+
+  /**
+   * Flushes pending events and gracefully shuts down the PostHog client.
+   */
+  async shutdown(): Promise<void> {
+    if (this.posthog) {
+      try {
+        await this.posthog.shutdown();
+      } catch (err) {
+        console.warn('[Analytics] Error shutting down PostHog client:', err);
+      }
+    }
   }
 
   /**

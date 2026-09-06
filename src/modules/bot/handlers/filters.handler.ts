@@ -753,6 +753,20 @@ export async function handleFilterCallback(ctx: MyContext, data: string): Promis
       locations: draft.locations,
     });
 
+    ctx.container.analyticsRepo.trackEvent({
+      userId: user.id,
+      telegramId: from.id,
+      eventType: 'filter_created',
+      metadata: {
+        city: savedFilter.city,
+        category: savedFilter.category,
+        type: savedFilter.type,
+        min_price: savedFilter.min_price,
+        max_price: savedFilter.max_price,
+        bedrooms: savedFilter.bedrooms,
+      },
+    });
+
     ctx.session.wizardStep = 'idle';
     ctx.session.filterDraft = { locations: [] };
 

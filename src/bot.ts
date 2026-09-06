@@ -34,16 +34,17 @@ export async function runBot(): Promise<void> {
   ]);
 
   // 5. Graceful shutdown on SIGINT / SIGTERM
-  const shutdown = (signal: string) => {
+  const shutdown = async (signal: string) => {
     console.log(`\n⚡ Received ${signal} — shutting down bot gracefully...`);
     bot.stop();
+    await container.analyticsRepo.shutdown();
     closeDatabase(container.db);
     console.log('✅ Bot shut down.');
     process.exit(0);
   };
 
-  process.once('SIGINT', () => shutdown('SIGINT'));
-  process.once('SIGTERM', () => shutdown('SIGTERM'));
+  process.once('SIGINT', () => void shutdown('SIGINT'));
+  process.once('SIGTERM', () => void shutdown('SIGTERM'));
 
   // 6. Start long-polling
   console.log('🤖 Bot listening for Telegram updates in polling mode...');
