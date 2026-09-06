@@ -49,3 +49,4 @@ describe('RemoteBrowserService', () => {
     expect(service.verifySessionToken(token)).toBeNull();
   });
 });
+
