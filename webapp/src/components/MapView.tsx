@@ -197,3 +197,4 @@ export const MapView: React.FC<MapViewProps> = ({ city, onSelectProperty }) => {
     </div>
   );
 };
+
