@@ -97,7 +97,7 @@ export class ScraperWorker {
       if (stat.blocks > 0) {
         const freePercent = (stat.bfree / stat.blocks) * 100;
         if (freePercent < 15) {
-          await this.container.alertService.critical('<b>Заканчивается место на диске!</b> Осталось менее 15%.');
+          await this.container.alertService.critical('<b>Low Disk Space Alert!</b> Less than 15% disk space remaining.');
         }
       }
     } catch (err) {
@@ -231,7 +231,7 @@ export class ScraperWorker {
             // Zero Yield Anomaly: warn admins if Facebook returned 0 listings
             if (fbStats.inserted === 0 && fbStats.totalScraped === 0) {
               await this.container.alertService.warn(
-                '<b>Zero Yield:</b> Скрапер FB отработал, но не нашел ни одного поста. Проверьте верстку GraphQL.',
+                '<b>Zero Yield:</b> Facebook scraper finished with 0 posts found. Verify GraphQL response or cookies.',
               );
             }
 

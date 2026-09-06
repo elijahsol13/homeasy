@@ -86,15 +86,15 @@ export async function startFilterWizard(ctx: MyContext): Promise<void> {
       if (activeCount >= MAX_USER_FILTERS) {
         await sendOrEdit(
           ctx,
-          `⚠️ <b>Достигнут лимит сохранённых алертов (${activeCount} из ${MAX_USER_FILTERS})</b>\n\n` +
-            `На этапе открытого тестирования разрешено до ${MAX_USER_FILTERS} активных фильтров на одного пользователя.\n\n` +
-            `Чтобы создать новый фильтр, пожалуйста, удалите или отключите ненужный в меню <b>🛠 Мои фильтры</b>.`,
+          `⚠️ <b>Alert Limit Reached (${activeCount} of ${MAX_USER_FILTERS})</b>\n\n` +
+            `During open testing, a maximum of ${MAX_USER_FILTERS} active alerts is allowed per user.\n\n` +
+            `To create a new alert, please manage or delete an existing one in <b>🔔 My Alerts</b>.`,
           {
             parse_mode: 'HTML' as const,
             reply_markup: new InlineKeyboard()
-              .text('🛠 Мои фильтры', 'cb:menu:filters')
+              .text('🔔 My Alerts', 'cb:menu:filters')
               .row()
-              .text('🔙 Главное меню', 'cb:menu:main'),
+              .text('🔙 Main Menu', 'cb:menu:main'),
           },
         );
         return;
@@ -199,7 +199,7 @@ export async function showUserFilters(ctx: MyContext): Promise<void> {
     const row: Array<{ text: string; callback_data: string }> = [];
     if (matchCount > 0) {
       row.push({
-        text: `🔎 Смотреть объекты (${matchCount})`,
+        text: `🔎 View Listings (${matchCount})`,
         callback_data: `cb:filter:more:${f.id}:0`,
       });
     }
@@ -394,7 +394,7 @@ export async function handleFilterCallback(ctx: MyContext, data: string): Promis
     const { properties, total } = ctx.container.matcherService.findMatchingPropertiesForFilter(filter, 3, offset);
 
     if (properties.length === 0) {
-      await ctx.api.sendMessage(from.id, '🏁 Больше подходящих объектов не найдено.');
+      await ctx.api.sendMessage(from.id, '🏁 No more matching listings found.');
       return;
     }
 
@@ -412,20 +412,20 @@ export async function handleFilterCallback(ctx: MyContext, data: string): Promis
     if (remaining > 0) {
       await ctx.api.sendMessage(
         from.id,
-        `📥 <b>Ещё ${remaining} подходящих объектов</b> в базе:`,
+        `📥 <b>${remaining} more matching listing(s)</b> in database:`,
         {
           parse_mode: 'HTML',
           reply_markup: {
             inline_keyboard: [
               [
                 {
-                  text: `📥 Показать ещё 3 объекта (осталось ${remaining})`,
+                  text: `📥 Show 3 more (${remaining} left)`,
                   callback_data: `cb:filter:more:${filter.id}:${nextOffset}`,
                 },
               ],
               [
                 {
-                  text: '🛠 Мои фильтры',
+                  text: '🔔 My Alerts',
                   callback_data: 'cb:menu:filters',
                 },
               ],
@@ -436,18 +436,18 @@ export async function handleFilterCallback(ctx: MyContext, data: string): Promis
     } else {
       await ctx.api.sendMessage(
         from.id,
-        `🏁 <b>Вы посмотрели все ${total} подходящих объектов.</b>\n\nНовые варианты будут приходить автоматически при появлении!`,
+        `🏁 <b>You have viewed all ${total} matching listings.</b>\n\nNew matching listings will be delivered automatically as soon as they are posted!`,
         {
           parse_mode: 'HTML',
           reply_markup: {
             inline_keyboard: [
               [
                 {
-                  text: '🛠 Мои фильтры',
+                  text: '🔔 My Alerts',
                   callback_data: 'cb:menu:filters',
                 },
                 {
-                  text: '🔙 Главное меню',
+                  text: '🔙 Main Menu',
                   callback_data: 'cb:menu:main',
                 },
               ],
@@ -767,7 +767,7 @@ export async function handleFilterCallback(ctx: MyContext, data: string): Promis
     const activeCount = ctx.container.filtersRepo.countUserActiveFilters(user.id);
     if (activeCount >= MAX_USER_FILTERS) {
       await ctx.answerCallbackQuery({
-        text: `⚠️ Лимит ${MAX_USER_FILTERS} фильтров исчерпан. Удалите старый фильтр!`,
+        text: `⚠️ Limit of ${MAX_USER_FILTERS} alerts reached. Please remove an older alert!`,
         show_alert: true,
       });
       ctx.session.wizardStep = 'idle';
@@ -823,14 +823,14 @@ export async function handleFilterCallback(ctx: MyContext, data: string): Promis
         const remaining = total - 3;
         await ctx.api.sendMessage(
           from.id,
-          `📥 <b>Ещё ${remaining} подходящих объектов</b> доступно в базе!`,
+          `📥 <b>${remaining} more matching listing(s)</b> available in the database!`,
           {
             parse_mode: 'HTML',
             reply_markup: {
               inline_keyboard: [
                 [
                   {
-                    text: `📥 Показать ещё 3 объекта (осталось ${remaining})`,
+                    text: `📥 Show 3 more (${remaining} left)`,
                     callback_data: `cb:filter:more:${savedFilter.id}:3`,
                   },
                 ],

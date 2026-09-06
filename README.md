@@ -2,11 +2,13 @@
 
 > Enterprise-grade real estate aggregator, notification bot, and interactive Telegram Mini App (TMA) for **Siem Reap** and **Phnom Penh**, Cambodia.
 >
-> Built with **TypeScript · Node.js 22+ (Native SQLite WAL) · grammY · Fastify · React / Vite · Playwright Stealth · Google Gemini 3.1 / 3.5 Flash Lite · Sharp (pHash) · Cloudflare Zero Trust · Docker Compose**.
+> Built with **TypeScript · Node.js 22+ (Native SQLite WAL) · grammY · Fastify · React / Vite · Playwright Stealth · Google Gemini · Sharp (pHash) · Cloudflare Zero Trust · Docker Compose**.
+>
+> 🇷🇺 *Русская версия документации доступна в [README.ru.md](README.ru.md).*
 
 ---
 
-## 🏛️ Архитектура системы (High-Level Architecture)
+## 🏛️ High-Level Architecture
 
 ```
                        ┌──────────────────────────────────────────────┐
@@ -43,116 +45,120 @@
 
 ---
 
-## 🛡️ Ключевые архитектурные решения
+## 🛡️ Core Engineering Highlights
 
-### 1. Архитектура трех контейнеров (Trio-Container Architecture)
-- **`homeasy-bot`**: Поллинг и UI Telegram-бота (grammY), 8-шаговый интерактивный визард поиска, подписки, мгновенные пуш-уведомления с медиа-альбомами (до 3 фото).
-- **`homeasy-scraper`**: Автономный циклический воркер (12-минутный такт), Playwright Stealth с перехватом GraphQL, контроль сессий, circuit breakers, автоматическая сборка мусора (`--expose-gc`).
-- **`homeasy-api`**: Высокопроизводительный HTTP/WebSocket сервер (Fastify), обслуживающий Telegram Mini App (TMA) и WebSocket-сессии удаленного стриминга браузера.
-- **SQLite WAL**: Единая база данных `data/homeasy.db` в режиме Write-Ahead Logging с поддержкой параллельного неблокирующего чтения и безопасных транзакций.
+### 1. Trio-Container Architecture
+- **`homeasy-bot`**: Telegram Bot UI powered by `grammY`, natural language search (voice note / text query parsing with Gemini), interactive 8-step manual filter wizard, subscriptions, instant push alerts with multi-photo albums (up to 3 photos), and button-driven Admin Dashboard (`/admin`).
+- **`homeasy-scraper`**: Autonomous cyclic worker (12-minute heartbeat), Playwright Stealth with GraphQL network interception, session monitoring, circuit breakers, and automatic garbage collection (`--expose-gc`).
+- **`homeasy-api`**: High-throughput Fastify HTTP/WebSocket server serving the Telegram Mini App (TMA), map markers, search endpoints, and remote browser streaming.
+- **SQLite WAL**: Single unified database `data/homeasy.db` running in Write-Ahead Logging mode, enabling non-blocking concurrent reads and atomic transactional writes.
 
-### 2. Скрапинг Facebook через перехват GraphQL (Relay Comet Interception)
-- **Защита от смены верстки**: Скрапер не опирается на нестабильные CSS-селекторы HTML, которые Facebook обфусцирует еженедельно.
-- **GraphQL-перехват**: Воркер перехватывает внутренние пакеты `/api/graphql/` на уровне сетевого стека Playwright и извлекает:
-  - Необрезанный полный текст постов (`node.comet_sections.content.story.message.text`), исключая обрезку `... Ещё`.
-  - 100% оригинальных URL фотографий высокого разрешения из вложений и подальбомов (`all_subattachments`).
-  - Точные Unix-таймштампы и ID авторов.
+### 2. Facebook Scraping via GraphQL Relay Interception
+- **Immunity to CSS obfuscation**: Does not rely on fragile HTML selectors that Facebook rotates weekly.
+- **Network-level capture**: Intercepts internal `/api/graphql/` responses at the Playwright network stack to obtain:
+  - Full untruncated post content (`node.comet_sections.content.story.message.text`), preventing `... See more` truncations.
+  - 100% original full-resolution photo URLs from sub-attachments and albums (`all_subattachments`).
+  - Exact author metadata and Unix timestamps.
 
-### 3. Удаленная визуальная авторизация со смартфона (Remote Browser Streaming)
-- **Критический закон**: Автоматизированный headless-ввод паролей в Facebook категорически запрещен (триггерит моментальный бан).
-- **Решение**: Команда `/auth_fb` генерирует криптографически подписанный HMAC-SHA256 токен и ссылку на веб-интерфейс.
-- **Оптимизированный мобильный стриминг**:
-  - Viewport переключен на компактный `414x750` (iPhone Mobile Viewport).
-  - Сжатие JPEG 45% с прореживанием кадров (`everyNthFrame: 2`) — трафик снижен со 180 КБ до ~15 КБ/кадр.
-  - Механизм Backpressure: сервер сбрасывает устаревшие кадры при перегрузке буфера клиента, исключая лаг ввода.
-  - Кнопки быстрого фокуса (`👤 Логин`, `🔑 Пароль`, `🚀 Войти`) для мгновенного ввода с экранной клавиатуры смартфона.
-  - Сохранение сессии в `data/fb_session.json` без перезапуска сервисов.
+### 3. Remote Visual Browser Authentication from Mobile
+- **Anti-ban protection**: Headless automated credential submission on Facebook triggers immediate checkpoint blocks.
+- **Interactive browser stream**: Admin generates a signed 15-minute HMAC-SHA256 session link (`/auth_fb` or via `/admin`).
+- **Low-latency mobile streaming**:
+  - Viewport optimized for mobile screens (`414x750`, iPhone Mobile Viewport).
+  - 45% JPEG compression with frame downsampling (`everyNthFrame: 2`), reducing network overhead from 180 KB to ~15 KB per frame.
+  - Client backpressure protection: automatically drops queued frames when the client connection lags.
+  - Quick-focus buttons (`👤 Username`, `🔑 Password`, `🚀 Sign In`) for hassle-free entry from mobile virtual keyboards.
+  - Session cookies persisted automatically to `data/fb_session.json` without container restarts.
 
-### 4. Двухуровневый экстрактор (Heuristic Regex + Gemini AI Cascade)
-- **Tier 1 (Instant Heuristics)**: Бесплатный мгновенный разбор регулярными выражениями:
-  - Камбоджийские тарифы: электричество (EDC ~$0.20/kWh, фикс `$0.25/kWh`, `1000៛/kWh`), вода (гос. тариф ~1000៛/m³, `$5/чел`, включено), уборка, депозиты.
-  - Ограничения: No Pets, No Smoking, Quiet Hours, No Subleasing.
-  - 3-Way Location Consensus: Кросс-валидация между текстом, GPS-меткой и категориями с привязкой к Sangkat и золотым ориентирам (Pub Street, Old Market, BKK1, Russian Market).
+### 4. Two-Tier Property Extractor (Regex Heuristics + Gemini AI Cascade)
+- **Tier 1 (Instant Heuristics)**: Zero-cost instant regex extraction:
+  - Cambodian utility rates: Electricity (EDC ~$0.20/kWh, fixed `$0.25/kWh`, `1000៛/kWh`), Water (state rate ~1000៛/m³, `$5/person`, included), cleaning services, deposits.
+  - Property restrictions: No Pets, No Smoking, Quiet Hours, No Subleasing.
+  - 3-Way Location Consensus: Cross-validates post text, GPS coordinates, and Sangkat landmarks (Pub Street, Old Market, BKK1, Russian Market / Toul Tom Poung).
 - **Tier 2 (AI Batching Cascade)**:
-  - Пакетная обработка по 5–8 объектов в один запрос (сокращает расход квот на 85%).
-  - Каскад моделей по официальным лимитам Google AI Studio:
-    1. `gemini-3.1-flash-lite` (500 RPD, 15 RPM, 250K TPM) — рабочая лошадка с высокой стабильностью.
-    2. `gemini-3.5-flash-lite` (500 RPD, 15 RPM) — резервный поток.
-    3. `gemini-flash-lite-latest` / `gemini-3.8-flash` / `gemini-3.6-flash`.
-  - Извлечение расширенных удобств (генераторы, стиральные машины, западные кухни, лифты, охрана).
-  - Генерация бенчмарка `data/ai_extraction_eval.json` (Regex vs AI) для дообучения эвристик.
+  - Micro-batching (5–8 properties per request) slashing token consumption by 85%.
+  - Cascade across Google AI Studio models:
+    1. `gemini-2.5-flash` / `gemini-2.5-flash-lite` (500 RPD, 15 RPM, 250K TPM) — primary workhorse.
+    2. `gemini-3.5-flash-lite` (500 RPD, 15 RPM) — backup tier.
+  - Extraction of extended amenities (backup generators, bathtubs, washing machines, western kitchens, elevators, security).
 
-### 5. Полноценная Telegram Mini App (TMA)
-- SPA-приложение с нативной адаптацией под тему Telegram (Dark/Light).
-- Полноразмерная карусель со **всеми фотографиями объекта** (без обрезки).
-- Фильтрация по городам (Сиемреап / Пномпень), районам, категориям (апартаменты, виллы, дома, комнаты, отели), ценам, наличию бассейна, pet-friendly.
-- Просмотр контактов агента (телефон, Telegram) в один клик.
+### 5. Telegram Mini App (TMA) & Interactive Map
+- Single Page Application with seamless Telegram Dark/Light theme adaptation.
+- Interactive Leaflet map with clustering and coordinate Bounding Box filtering (+20% overscan buffer for smooth panning).
+- Full-screen photo gallery displaying all captured listing photos.
+- Granular search filters: city (Siem Reap / Phnom Penh), district, category (apartment, house, villa, room, hotel), budget range, swimming pool, and pet-friendly.
+- One-click agent contact actions (direct phone call, Telegram handle).
 
 ---
 
-## 🗂 Структура репозитория
+## 🗂 Repository Structure
 
 ```
 homeasy/
 ├── src/
-│   ├── config/              # Переменные окружения (Zod), гео-зоны, каталог ориентиров
-│   │   ├── env.ts           # Строгая валидация конфигурации
-│   │   ├── locations.ts     # Координаты городов, районов и 3-way consensus
-│   │   └── landmarks.ts     # База золотых ориентиров (Siem Reap / Phnom Penh)
-│   ├── database/            # SQLite и накатываемые миграции (v1 - v11)
-│   │   ├── db.ts            # Singleton SQLite WAL подключения (node:sqlite)
-│   │   ├── migrate.ts       # Миграции схемы (поля тарифов, ориентиров, метрик)
-│   │   ├── backup.ts        # Автоматическое резервное копирование SQLite базы
-│   │   ├── enrich-properties.ts # Скрипт быстрого бэкфилла и очистки спама
-│   │   └── repositories/    # Слой доступа к данным (Properties, Users, Metrics, Analytics)
+│   ├── config/              # Environment variables (Zod schema), geo-zones, landmarks
+│   │   ├── env.ts           # Strict configuration validation
+│   │   ├── locations.ts     # City & district coordinates and 3-way consensus
+│   │   └── landmarks.ts     # Curated landmark database (Siem Reap & Phnom Penh)
+│   ├── database/            # SQLite setup and migrations (v1 - v12)
+│   │   ├── db.ts            # SQLite WAL connection singleton (node:sqlite)
+│   │   ├── migrate.ts       # Database migrations (utility specs, landmarks, metrics)
+│   │   ├── backup.ts        # Automated SQLite snapshot creation & retention pruning
+│   │   ├── enrich-properties.ts # Heuristic backfill and spam cleanup script
+│   │   └── repositories/    # Data access layer (Properties, Users, Metrics, Analytics)
 │   ├── modules/
-│   │   ├── api/             # Fastify REST API для Mini App и WebSocket Screencast
-│   │   ├── bot/             # Telegram бот (grammY): визард, фильтры, уведомления
-│   │   ├── matcher/         # Движок скоринга и сопоставления с подписками пользователей
-│   │   └── parser/          # Скраперы (GraphQL FB, Khmer24 Stealth), экстракторы, прокси
+│   │   ├── api/             # Fastify REST API for Mini App & WebSocket Screencast
+│   │   ├── bot/             # Telegram bot (grammY): NL search, wizard, alerts, admin panel
+│   │   ├── matcher/         # Subscription scoring and matching engine
+│   │   └── parser/          # Scrapers (GraphQL FB, Khmer24 Stealth), extractors, proxy
 │   └── services/
-│       ├── remote-browser.service.ts # Playwright CDP screencast движок
-│       ├── scheduler.ts     # Последовательный планировщик (Khmer24 -> FB -> GC -> Maintenance)
-│       └── notifier.ts      # Формирование карточек и рассылка пушей в Telegram
+│       ├── alert.service.ts # In-App Admin Alerting Service (Telegram delivery)
+│       ├── nl-search.service.ts # Natural language query parsing via Gemini
+│       ├── remote-browser.service.ts # Playwright CDP screencast streaming engine
+│       ├── scheduler.ts     # Cyclic scheduler (Khmer24 -> FB -> GC -> Maintenance)
+│       └── notifier.ts      # Push notification formatter and album dispatcher
 ├── scripts/
-│   ├── reparse-listings.ts  # Плавный безопасный повторный парсинг и ИИ-обогащение
-│   └── pack-codebase.js     # Сборщик кодовой базы в единый Repomix XML
-├── webapp/                  # Исходный код Telegram Mini App (React + Vite + Tailwind CSS)
-├── tests/                   # Набор тестов (18 тест-сьютов, 209 юнит- и интеграционных тестов)
-├── docker-compose.yml       # Конфигурация трех микросервисов с ограничениями RAM
+│   ├── reparse-listings.ts  # Background reparser with AI enrichment
+│   └── pack-codebase.js     # Codebase repomix packager
+├── webapp/                  # Telegram Mini App source (React + Vite + Tailwind CSS)
+├── tests/                   # Test suites (20 suites, 224 unit and integration tests)
+├── docker-compose.yml       # 3-container microservices definition with memory limits
 ├── package.json
 └── README.md
 ```
 
 ---
 
-## 🚀 Команды управления проектом
+## 🚀 Development & Operational Commands
 
 ```bash
-# Сборка TypeScript
+# Compile TypeScript
 npm run build
 
-# Запуск тестов (Jest)
+# Run unit and integration tests (Jest)
 npm test
 
-# Сборка единого XML-слепка кодовой базы для ревью архитектора
-npm run pack
+# Verify TypeScript types
+npm run typecheck
 
-# Запуск безопасного повторного парсинга и ИИ-обогащения
-npm run reparse:listings -- --ai         # Обогащение через Gemini с отчетом
-npm run reparse:listings -- --fb         # Плавный обход постов Facebook (30-60с задержки)
-npm run reparse:listings -- --khmer24    # Обновление карточек Khmer24 со всеми фото
+# Build Telegram Mini App (Vite)
+npm --prefix webapp run build
 
-# Ручная локальная авторизация Facebook через резидентный прокси
+# Safe background re-parsing and enrichment
+npm run reparse:listings -- --ai         # LLM enrichment with evaluation report
+npm run reparse:listings -- --fb         # Smooth Facebook crawl with anti-throttling delay
+npm run reparse:listings -- --khmer24    # Update Khmer24 listings with all full-res photos
+
+# Local manual Facebook login through residential proxy
 npm run fb:login
 
-# Запуск в Docker
+# Start all services with Docker Compose
 docker compose up -d --build
 ```
 
 ---
 
-## 🔒 Безопасность и отказоустойчивость
-1. **Защита токенов**: Сессионные токены удаленного браузера подписываются через HMAC-SHA256 ключом `BOT_TOKEN` и имеют ограниченный TTL (15 минут).
-2. **Лимиты памяти**: В `docker-compose.yml` заданы жесткие лимиты памяти (API: 150M, Bot: 200M, Scraper: 750M), предотвращающие OOM на недорогих серверах (AWS t3.micro / 1GB RAM).
-3. **Безопасность учетных записей**: При обнаружении любых признаков капчи или чекпоинта скрапер немедленно останавливает обход и отправляет тревожное уведомление администратору.
+## 🔒 Security & Reliability
+1. **Token Authentication**: Remote browser session tokens are cryptographically signed using HMAC-SHA256 with the bot token secret and have a strict 15-minute validity window.
+2. **RAM Guardrails**: `docker-compose.yml` enforces strict memory constraints (API: 150M, Bot: 200M, Scraper: 750M) to guarantee stability on 1 GB RAM servers (such as AWS t3.micro).
+3. **Scraper Safety**: Upon detecting checkpoints, CAPTCHA challenges, or session invalidation, the scraper halts execution immediately and delivers an actionable alert to administrators.

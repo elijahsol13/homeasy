@@ -33,18 +33,21 @@ export function createStartHandler(container: AppContainer): Composer<MyContext>
       console.log(`👑 Auto-promoted user ${from.id} (@${from.username}) to admin`);
     }
 
+    const isAdmin = env.ADMIN_IDS.includes(from.id) || user.role === 'admin';
+
     await ctx.reply(WELCOME_TEXT, {
       parse_mode: 'HTML',
-      reply_markup: mainMenuKeyboard(user.alerts_paused === 1),
+      reply_markup: mainMenuKeyboard({ alertsPaused: user.alerts_paused === 1, isAdmin }),
     });
   });
 
   handler.command('menu', async (ctx) => {
     const from = ctx.from;
     const user = from ? container.usersRepo.upsertUser(from.id, from.username ?? null) : null;
+    const isAdmin = from ? (env.ADMIN_IDS.includes(from.id) || user?.role === 'admin') : false;
     await ctx.reply('📋 <b>Main Menu</b>', {
       parse_mode: 'HTML',
-      reply_markup: mainMenuKeyboard(user?.alerts_paused === 1),
+      reply_markup: mainMenuKeyboard({ alertsPaused: user?.alerts_paused === 1, isAdmin }),
     });
   });
 

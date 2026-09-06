@@ -273,9 +273,9 @@ export class RemoteBrowserService {
               }
               break;
             case 'reload':
-              socket.send(JSON.stringify({ type: 'status', text: 'Перезагрузка страницы...' }));
+              socket.send(JSON.stringify({ type: 'status', text: 'Reloading page...' }));
               await page.reload({ waitUntil: 'domcontentloaded' }).catch(() => {});
-              socket.send(JSON.stringify({ type: 'status', text: 'Готово к вводу' }));
+              socket.send(JSON.stringify({ type: 'status', text: 'Ready for input' }));
               break;
             case 'save_manual':
               await checkAndSaveSession(true);
@@ -326,8 +326,8 @@ export class RemoteBrowserService {
 
           await this.container.notifierService.notifyAdmins(
             `🎉 <b>${service.toUpperCase()} Session Updated!</b>\n\n` +
-              `Администратор успешно вошел через удаленный браузер. Сессия сохранена в <code>${path.basename(targetPath)}</code>.\n` +
-              `Скрапер продолжит сбор данных со следующего цикла.`,
+              `Admin successfully logged in via remote browser. Session saved to <code>${path.basename(targetPath)}</code>.\n` +
+              `Scraper will continue collecting listings from the next cycle.`,
           );
 
           setTimeout(() => {
@@ -339,7 +339,7 @@ export class RemoteBrowserService {
           socket.send(
             JSON.stringify({
               type: 'status',
-              text: '⚠️ Сессия пока не обнаружена. Завершите вход в окне.',
+              text: '⚠️ Session not detected yet. Complete login in the browser window.',
             }),
           );
         }
