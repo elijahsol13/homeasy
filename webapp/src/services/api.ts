@@ -1,7 +1,7 @@
 import type { FilterMetadata, FilterState, MapMarkerDTO, PropertyDTO } from '../types';
 import { getTelegramInitData } from './telegram';
 
-const API_BASE = '/api/v1';
+const API_BASE = ((import.meta.env.VITE_API_URL as string | undefined)?.replace(/\/$/, '') || '/api/v1');
 
 function getAuthHeaders(): HeadersInit {
   const headers: Record<string, string> = {
