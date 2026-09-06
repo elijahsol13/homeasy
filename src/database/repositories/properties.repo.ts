@@ -277,6 +277,13 @@ export class PropertiesRepository {
     return row ? rowToProperty(row) : undefined;
   }
 
+  deactivateProperty(id: number): boolean {
+    const result = this.db
+      .prepare("UPDATE properties SET is_active = 0, updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE id = ?")
+      .run(id);
+    return result.changes > 0;
+  }
+
   reportProperty(id: number): { reports_count: number; is_active: boolean } {
     this.db.prepare('UPDATE properties SET reports_count = reports_count + 1 WHERE id = ?').run(id);
     const row = this.db
@@ -285,7 +292,7 @@ export class PropertiesRepository {
 
     const count = row?.reports_count ?? 1;
     let isActive = true;
-    if (count >= 3) {
+    if (count >= 2) {
       this.db.prepare('UPDATE properties SET is_active = 0 WHERE id = ?').run(id);
       isActive = false;
     }

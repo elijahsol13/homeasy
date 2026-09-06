@@ -149,6 +149,10 @@ export function cleanFacebookUrl(rawUrl: string): string {
   if (!rawUrl) return '';
   try {
     const parsed = new URL(rawUrl);
+    // Standardize desktop web.facebook.com to www.facebook.com so mobile browsers open it natively
+    if (parsed.hostname === 'web.facebook.com' || parsed.hostname === 'm.facebook.com') {
+      parsed.hostname = 'www.facebook.com';
+    }
     const trackingParams = ['__cft__', '__tn__', 'ref', 'extid', 'mibextid', 'rdid'];
     trackingParams.forEach((param) => {
       Array.from(parsed.searchParams.keys()).forEach((key) => {
@@ -160,7 +164,7 @@ export function cleanFacebookUrl(rawUrl: string): string {
     const query = parsed.searchParams.toString();
     return query ? `${parsed.origin}${parsed.pathname}?${query}` : `${parsed.origin}${parsed.pathname}`;
   } catch {
-    return rawUrl.split('?')[0] || rawUrl;
+    return (rawUrl.split('?')[0] || rawUrl).replace('web.facebook.com', 'www.facebook.com');
   }
 }
 

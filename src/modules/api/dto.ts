@@ -100,6 +100,11 @@ export function toPropertyDTO(property: Property, isFavorite?: boolean): Propert
     const handle = property.direct_contact.telegram.replace(/^@/, '');
     contact.telegram = `@${handle}`;
     contact.telegramLink = `https://t.me/${handle}`;
+  } else if (property.direct_contact.phone) {
+    const digits = property.direct_contact.phone.replace(/\D/g, '');
+    if (digits.length >= 8) {
+      contact.telegramLink = `https://t.me/+${digits}`;
+    }
   }
 
   return {
@@ -124,7 +129,7 @@ export function toPropertyDTO(property: Property, isFavorite?: boolean): Propert
     photos: property.photos ?? [],
     thumbnail: property.photos && property.photos.length > 0 ? property.photos[0] : null,
     sourceUrl: property.source_url,
-    originalUrl: property.original_url,
+    originalUrl: (property.original_url || '').replace('web.facebook.com', 'www.facebook.com'),
     postedAt: property.posted_at,
     createdAt: property.created_at,
     specs: {

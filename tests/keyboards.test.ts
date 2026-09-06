@@ -176,7 +176,7 @@ describe('Telegram Bot Keyboard Generators', () => {
       const flat = kb.inline_keyboard.flat() as FlatBtn[];
 
       // Telegram username button
-      const tgBtn = flat.find((b) => b.text.includes('Contact on Telegram'));
+      const tgBtn = flat.find((b) => b.text.includes('DM on Telegram'));
       expect(tgBtn).toBeDefined();
       expect(tgBtn?.url).toBe('https://t.me/agent_sophea');
 

@@ -1,17 +1,40 @@
 import { InlineKeyboard } from 'grammy';
 import type { Property } from '../../../database/repositories/properties.repo';
+import { normalizePhoneNumber } from '../../parser/normalizer';
+
+/**
+ * Returns a direct Telegram link (username or international phone protocol) if available.
+ */
+export function getTelegramContactLink(directContact?: { phone?: string; telegram?: string }): string | null {
+  if (!directContact) return null;
+
+  if (directContact.telegram) {
+    const username = directContact.telegram.replace(/^@/, '').trim();
+    if (username.length > 0) {
+      return `https://t.me/${username}`;
+    }
+  }
+
+  if (directContact.phone) {
+    const firstPhone = directContact.phone.split(/[/,|\n]+/)[0]?.trim();
+    const digits = normalizePhoneNumber(firstPhone);
+    if (digits && digits.length >= 8) {
+      return `https://t.me/+${digits}`;
+    }
+  }
+
+  return null;
+}
 
 // ─── Listing notification card actions ────────────────────────────────────────
 
 export function listingActionKeyboard(property: Property): InlineKeyboard {
   const kb = new InlineKeyboard();
 
-  // Telegram username link (valid HTTPS URL) if present; phone numbers are displayed in message text
-  if (property.direct_contact.telegram) {
-    const username = property.direct_contact.telegram.replace(/^@/, '');
-    if (username.length > 0) {
-      kb.url('💬 Contact on Telegram', `https://t.me/${username}`).row();
-    }
+  // 1. Direct Message on Telegram (via username or verified phone protocol)
+  const tgLink = getTelegramContactLink(property.direct_contact);
+  if (tgLink) {
+    kb.url('💬 DM on Telegram', tgLink).row();
   }
 
   kb.text('⭐ Save', `cb:prop:save:${property.id}`).text(
@@ -19,8 +42,13 @@ export function listingActionKeyboard(property: Property): InlineKeyboard {
     `cb:prop:hide:${property.id}`,
   );
 
-  if (property.original_url && (property.original_url.startsWith('http://') || property.original_url.startsWith('https://'))) {
-    kb.row().url('🔗 View Original Listing', property.original_url);
+  let origUrl = property.original_url;
+  if (origUrl && origUrl.includes('web.facebook.com')) {
+    origUrl = origUrl.replace('web.facebook.com', 'www.facebook.com');
+  }
+
+  if (origUrl && (origUrl.startsWith('http://') || origUrl.startsWith('https://'))) {
+    kb.row().url('🔗 View Original Listing', origUrl);
   }
 
   kb.row().text('🚩 Report (Rented/Fake)', `cb:prop:report:${property.id}`);

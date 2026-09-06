@@ -297,7 +297,7 @@ export const PropertyDetailModal: React.FC<PropertyDetailModalProps> = ({
 
         {/* Sticky Contact Bottom Bar */}
         <div className="p-4 bg-white dark:bg-zinc-900 border-t border-zinc-200 dark:border-zinc-800 flex items-center gap-3 shrink-0">
-          {property.contact.telegramLink && (
+          {property.contact.telegramLink ? (
             <button
               type="button"
               onClick={() => {
@@ -313,7 +313,15 @@ export const PropertyDetailModal: React.FC<PropertyDetailModalProps> = ({
               <Send className="w-4 h-4" />
               <span>Chat in Telegram</span>
             </button>
-          )}
+          ) : property.originalUrl ? (
+            <button
+              type="button"
+              onClick={() => openExternalUrl(property.originalUrl)}
+              className="flex-1 bg-zinc-100 dark:bg-zinc-800 hover:bg-zinc-200 dark:hover:bg-zinc-700 text-zinc-800 dark:text-zinc-200 font-bold py-3 px-4 rounded-xl flex items-center justify-center gap-2 active:scale-98 transition-all"
+            >
+              <span>View Original Listing ↗</span>
+            </button>
+          ) : null}
 
           {property.contact.phone && (
             <button

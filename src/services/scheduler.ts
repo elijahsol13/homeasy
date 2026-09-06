@@ -130,7 +130,12 @@ export class ScraperWorker {
       const enrichStats = runEnrichment();
       console.log(`✅ [Worker] Enrichment complete. Enriched: ${enrichStats.totalUpdated}, Spam culled: ${enrichStats.deactivatedSpam}`);
 
-      // Step 3: SQLite Query Planner Optimization
+      // Step 3: Link Health Verification (auto-cull 404s & expired posts)
+      console.log('🔗 [Worker] Running link health verification on active listings...');
+      const verifyStats = await this.container.linkVerifierService.verifyBatch(50);
+      console.log(`✅ [Worker] Link verification complete: ${verifyStats.checked} checked, ${verifyStats.deactivated} dead listings deactivated.`);
+
+      // Step 4: SQLite Query Planner Optimization
       try {
         this.container.db.exec('PRAGMA optimize;');
       } catch (e) {
