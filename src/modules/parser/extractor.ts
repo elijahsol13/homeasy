@@ -349,13 +349,92 @@ export function extractPropertyType(text: string, category?: PropertyCategory | 
   return null;
 }
 
+// ─── Gemini Model Cascade with Circuit Breaker (30-min cooldown) ──────────────
+
+export const GEMINI_MODEL_CASCADE = [
+  'gemini-3.8-flash',
+  'gemini-3.6-flash',
+  'gemini-3.5-flash',
+  'gemini-3.1-flash-lite',
+  'gemini-3.5-flash-lite',
+  'gemini-flash-lite-latest',
+] as const;
+
+interface CircuitBreakerState {
+  consecutiveErrors: number;
+  cooldownUntil: number; // ms timestamp
+}
+
+export const CIRCUIT_BREAKER_COOLDOWN_MS = 30 * 60 * 1000; // 30 minutes
+export const MAX_CONSECUTIVE_ERRORS = 5;
+
+const modelBreakers: Map<string, CircuitBreakerState> = new Map();
+
+export function getModelBreaker(modelName: string): CircuitBreakerState {
+  let state = modelBreakers.get(modelName);
+  if (!state) {
+    state = { consecutiveErrors: 0, cooldownUntil: 0 };
+    modelBreakers.set(modelName, state);
+  }
+  return state;
+}
+
+export function isModelAvailable(modelName: string): boolean {
+  const breaker = getModelBreaker(modelName);
+  if (breaker.cooldownUntil > 0) {
+    if (Date.now() < breaker.cooldownUntil) {
+      return false; // Still cooling down
+    }
+    // Cooldown expired! Re-enable model
+    breaker.cooldownUntil = 0;
+    breaker.consecutiveErrors = 0;
+    console.log(`[Extractor] Circuit breaker RESET for ${modelName}: 30-min cooldown expired, retrying top model.`);
+  }
+  return true;
+}
+
+export function recordModelSuccess(modelName: string): void {
+  const breaker = getModelBreaker(modelName);
+  breaker.consecutiveErrors = 0;
+  breaker.cooldownUntil = 0;
+}
+
+export function recordModelFailure(modelName: string, err: unknown): void {
+  const breaker = getModelBreaker(modelName);
+  breaker.consecutiveErrors++;
+
+  const errMsg = err instanceof Error ? err.message : String(err);
+  const is503OrOverloaded =
+    errMsg.includes('503') ||
+    errMsg.includes('high demand') ||
+    errMsg.includes('overloaded') ||
+    errMsg.includes('Service Unavailable');
+
+  if (is503OrOverloaded || breaker.consecutiveErrors >= MAX_CONSECUTIVE_ERRORS) {
+    breaker.cooldownUntil = Date.now() + CIRCUIT_BREAKER_COOLDOWN_MS;
+    const untilStr = new Date(breaker.cooldownUntil).toISOString();
+    console.warn(
+      `[Extractor] ⚠️ Circuit breaker TRIPPED for ${modelName} (${breaker.consecutiveErrors} consecutive errors${is503OrOverloaded ? ' / 503 high demand' : ''}). Cooling down for 30m until ${untilStr}. Cascading to next model.`,
+    );
+  } else {
+    console.warn(`[Extractor] Gemini ${modelName} error (${breaker.consecutiveErrors}/${MAX_CONSECUTIVE_ERRORS}): ${errMsg}`);
+  }
+}
+
+export function resetCircuitBreakers(): void {
+  modelBreakers.clear();
+}
+
 // ─── Single Item LLM Extraction with Model Cascade ────────────────────────────
 
 export async function extractListingWithLLM(text: string): Promise<LLMExtractedListing | null> {
   const geminiKey = getGeminiKey();
   if (geminiKey) {
-    // High-throughput, stable models (500 RPD, no 503 demand spikes): gemini-3.1-flash-lite -> gemini-3.5-flash-lite
-    for (const modelName of ['gemini-3.1-flash-lite', 'gemini-3.5-flash-lite', 'gemini-flash-lite-latest', 'gemini-3.8-flash', 'gemini-3.6-flash']) {
+    // Smartest models first (3.8-flash -> 3.6-flash -> 3.5-flash -> 3.1-flash-lite) with 30-min circuit breaker
+    for (const modelName of GEMINI_MODEL_CASCADE) {
+      if (!isModelAvailable(modelName)) {
+        continue;
+      }
       try {
         if (!genAIInstance) {
           genAIInstance = new GoogleGenerativeAI(geminiKey);
@@ -373,6 +452,7 @@ export async function extractListingWithLLM(text: string): Promise<LLMExtractedL
         if (raw) {
           const sanitized = sanitizeLlmResult(raw);
           if (sanitized) {
+            recordModelSuccess(modelName);
             // Heuristic fill-ins if model omitted them
             if (!sanitized.electricity) sanitized.electricity = extractElectricity(text);
             if (!sanitized.water) sanitized.water = extractWater(text);
@@ -381,7 +461,7 @@ export async function extractListingWithLLM(text: string): Promise<LLMExtractedL
           }
         }
       } catch (err: unknown) {
-        console.warn(`[Extractor] Gemini ${modelName} extraction error: ${err instanceof Error ? err.message : String(err)}`);
+        recordModelFailure(modelName, err);
       }
     }
   }
@@ -442,8 +522,11 @@ export async function extractListingsBatchWithLLM(
       'Return a JSON array of objects: `[{"id": ..., "result": {<schema>}}]` where result matches the extraction schema.\n' +
       'Do not skip any items.';
 
-    // High-throughput, stable models (500 RPD, no 503 demand spikes)
-    for (const modelName of ['gemini-3.1-flash-lite', 'gemini-3.5-flash-lite', 'gemini-flash-lite-latest', 'gemini-3.8-flash', 'gemini-3.6-flash']) {
+    // Smartest models first with circuit breaker
+    for (const modelName of GEMINI_MODEL_CASCADE) {
+      if (!isModelAvailable(modelName)) {
+        continue;
+      }
       try {
         if (!genAIInstance) {
           genAIInstance = new GoogleGenerativeAI(geminiKey);
@@ -477,12 +560,15 @@ export async function extractListingsBatchWithLLM(
                 }
               }
             }
-            // If batch was successful, stop attempting other models
-            if (results.size > 0) break;
+            // If batch was successful, record success and stop attempting other models
+            if (results.size > 0) {
+              recordModelSuccess(modelName);
+              break;
+            }
           }
         }
       } catch (batchErr) {
-        console.warn(`[Extractor] Batch ${modelName} error:`, batchErr instanceof Error ? batchErr.message : String(batchErr));
+        recordModelFailure(modelName, batchErr);
       }
     }
   }

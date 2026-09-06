@@ -5,6 +5,11 @@ import {
   extractBathrooms,
   extractLocation,
   extractType,
+  isModelAvailable,
+  recordModelFailure,
+  recordModelSuccess,
+  resetCircuitBreakers,
+  getModelBreaker,
 } from '../src/modules/parser/extractor';
 
 describe('Extractor: Cambodian Utilities & Property Types', () => {
@@ -128,6 +133,44 @@ describe('Extractor: Cambodian Utilities & Property Types', () => {
     test('extracts type rent vs sale', () => {
       expect(extractType('Beautiful villa for rent')).toBe('rent');
       expect(extractType('House for sale in Siem Reap')).toBe('sale');
+    });
+  });
+
+  describe('Gemini Model Cascade Circuit Breaker', () => {
+    beforeEach(() => {
+      resetCircuitBreakers();
+    });
+
+    test('models are initially available', () => {
+      expect(isModelAvailable('gemini-3.8-flash')).toBe(true);
+      expect(isModelAvailable('gemini-3.6-flash')).toBe(true);
+    });
+
+    test('trips circuit breaker immediately on 503 Service Unavailable / high demand', () => {
+      expect(isModelAvailable('gemini-3.8-flash')).toBe(true);
+      recordModelFailure('gemini-3.8-flash', new Error('503 Service Unavailable: The model is overloaded. Please try again later.'));
+      expect(isModelAvailable('gemini-3.8-flash')).toBe(false);
+      // Other fallback models remain unaffected and ready
+      expect(isModelAvailable('gemini-3.6-flash')).toBe(true);
+      expect(isModelAvailable('gemini-3.1-flash-lite')).toBe(true);
+    });
+
+    test('trips circuit breaker after 5 consecutive errors', () => {
+      for (let i = 0; i < 4; i++) {
+        recordModelFailure('gemini-3.8-flash', new Error('Network timeout'));
+        expect(isModelAvailable('gemini-3.8-flash')).toBe(true);
+      }
+      recordModelFailure('gemini-3.8-flash', new Error('5th error'));
+      expect(isModelAvailable('gemini-3.8-flash')).toBe(false);
+    });
+
+    test('resets consecutive error count on successful completion', () => {
+      recordModelFailure('gemini-3.8-flash', new Error('Network timeout'));
+      recordModelFailure('gemini-3.8-flash', new Error('Network timeout'));
+      recordModelSuccess('gemini-3.8-flash');
+      expect(isModelAvailable('gemini-3.8-flash')).toBe(true);
+      const breaker = getModelBreaker('gemini-3.8-flash');
+      expect(breaker.consecutiveErrors).toBe(0);
     });
   });
 });
