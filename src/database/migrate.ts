@@ -228,6 +228,38 @@ const MIGRATIONS: string[] = [
 
   PRAGMA foreign_keys=ON;
   `,
+
+  // ── v9: scraper_metrics & usage_events ──────────────────────────────────────
+  `
+  CREATE TABLE IF NOT EXISTS scraper_metrics (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    service       TEXT NOT NULL CHECK(service IN ('khmer24', 'facebook')),
+    total_scraped INTEGER NOT NULL DEFAULT 0,
+    inserted      INTEGER NOT NULL DEFAULT 0,
+    duplicates    INTEGER NOT NULL DEFAULT 0,
+    errors        INTEGER NOT NULL DEFAULT 0,
+    proxy_used    TEXT,
+    duration_ms   INTEGER NOT NULL DEFAULT 0,
+    created_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+  );
+  CREATE INDEX IF NOT EXISTS idx_scraper_metrics_service_created
+    ON scraper_metrics(service, created_at DESC);
+
+  CREATE TABLE IF NOT EXISTS usage_events (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id     INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    telegram_id INTEGER,
+    event_type  TEXT NOT NULL,
+    metadata    TEXT NOT NULL DEFAULT '{}',
+    created_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+  );
+  CREATE INDEX IF NOT EXISTS idx_usage_events_type_created
+    ON usage_events(event_type, created_at DESC);
+  CREATE INDEX IF NOT EXISTS idx_usage_events_user_created
+    ON usage_events(user_id, created_at DESC);
+  CREATE INDEX IF NOT EXISTS idx_usage_events_telegram_created
+    ON usage_events(telegram_id, created_at DESC);
+  `,
 ];
 
 export function runMigrations(db: DatabaseSync): void {

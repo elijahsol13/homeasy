@@ -1,7 +1,13 @@
 /**
  * Facebook Manual Login & Session Saver
  *
- * Launches a non-headless Chromium browser with stealth plugins enabled,
+ * CRITICAL ARCHITECTURAL LAW:
+ * Automated headless password entry or console credential passing to Facebook is
+ * prohibited (triggers instant checkpoints/blocks). Authentication must be performed
+ * visually by a human (either locally via fb:login or remotely via /auth_fb browser stream),
+ * and must always route through resident proxy (FB_PROXY).
+ *
+ * Launches Chromium with stealth plugins enabled,
  * allowing the user to log in manually (handling 2FA, Captcha, etc.).
  * Once logged in, saves the session cookies and localStorage to `./data/fb_session.json`
  * for the automated headless scraper to reuse.

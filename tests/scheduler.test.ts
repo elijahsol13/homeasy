@@ -19,6 +19,18 @@ describe('ScraperWorker Heartbeat and Statistics', () => {
         notifyAdmins: notifyAdminsMock,
         flushNotificationQueue: jest.fn().mockResolvedValue(undefined),
       } as any,
+      metricsRepo: {
+        recordScraperRun: jest.fn(),
+        getAllTimeSummary: jest.fn().mockReturnValue({ runsCount: 10, totalScraped: 500, inserted: 120 }),
+      } as any,
+      analyticsRepo: {
+        getSummary: jest.fn().mockReturnValue({
+          activeUsers: 3,
+          totalEvents: 12,
+          eventBreakdown: { bot_command: 5, tma_request: 7 },
+        }),
+        get24hActiveUsersCount: jest.fn().mockReturnValue(15),
+      } as any,
     };
   });
 
@@ -54,6 +66,9 @@ describe('ScraperWorker Heartbeat and Statistics', () => {
     expect(sentMessage).toContain('Facebook Groups:');
     expect(sentMessage).toContain('Scraped: <b>18</b>');
     expect(sentMessage).toContain('New inserted: <b>+3</b>');
+    expect(sentMessage).toContain('Usage Analytics:');
+    expect(sentMessage).toContain('Active users (1h / 24h): <b>3</b> / <b>15</b>');
+    expect(sentMessage).toContain('All-Time Scraped:</b> 500');
 
     // Verify stats were reset
     const afterStats = worker.getHourlyStats();
@@ -62,3 +77,4 @@ describe('ScraperWorker Heartbeat and Statistics', () => {
     expect(afterStats.facebook.scraped).toBe(0);
   });
 });
+

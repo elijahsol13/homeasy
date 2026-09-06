@@ -28,6 +28,8 @@ const EnvSchema = z.object({
   LOG_LEVEL: z.enum(['debug', 'info', 'warn', 'error']).default('info'),
   API_PORT: z.coerce.number().default(3000),
   API_HOST: z.string().default('0.0.0.0'),
+  API_PUBLIC_URL: z.string().optional(),
+  WEBAPP_URL: z.string().optional(),
   FB_PROXY: z.string().optional(),
 });
 

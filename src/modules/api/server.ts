@@ -1,11 +1,13 @@
 import fastify, { type FastifyInstance, type FastifyError } from 'fastify';
 import cors from '@fastify/cors';
+import fastifyWebsocket from '@fastify/websocket';
 import type { AppContainer } from '../../container';
 import { env } from '../../config/env';
 import { healthRoutes } from './routes/health.routes';
 import { propertiesRoutes } from './routes/properties.routes';
 import { filtersRoutes } from './routes/filters.routes';
 import { favoritesRoutes } from './routes/favorites.routes';
+import { remoteBrowserRoutes } from './routes/remote-browser.routes';
 
 export interface BuildServerOptions {
   container: AppContainer;
@@ -31,11 +33,32 @@ export async function buildApiServer(options: BuildServerOptions): Promise<Fasti
     allowedHeaders: ['Content-Type', 'Authorization', 'X-Telegram-Init-Data', 'X-Dev-Telegram-Id'],
   });
 
+  // Enable WebSocket support for interactive browser streaming
+  await app.register(fastifyWebsocket);
+
+  // Track TMA API requests for usage analytics
+  app.addHook('onRequest', async (request) => {
+    if (request.url.startsWith('/api/v1/')) {
+      try {
+        const tgIdHeader = request.headers['x-dev-telegram-id'];
+        const telegramId = typeof tgIdHeader === 'string' ? parseInt(tgIdHeader, 10) : undefined;
+        container.analyticsRepo.trackEvent({
+          telegramId: !isNaN(telegramId ?? NaN) ? telegramId : null,
+          eventType: 'tma_request',
+          metadata: { path: request.url.split('?')[0], method: request.method },
+        });
+      } catch {
+        // Ignore tracking errors
+      }
+    }
+  });
+
   // Register all TMA routes
   await app.register(healthRoutes, { container });
   await app.register(propertiesRoutes, { container });
   await app.register(filtersRoutes, { container });
   await app.register(favoritesRoutes, { container });
+  await app.register(remoteBrowserRoutes, { container });
 
   // Custom 404 handler
   app.setNotFoundHandler((request, reply) => {

@@ -479,7 +479,7 @@ export class NotifierService {
     return this.api;
   }
 
-  async notifyAdmins(messageText: string): Promise<void> {
+  async notifyAdmins(messageText: string, keyboard?: InlineKeyboard): Promise<void> {
     let api: Api;
     try {
       api = this.getApi();
@@ -490,7 +490,10 @@ export class NotifierService {
 
     for (const adminId of this.adminIds) {
       try {
-        await api.sendMessage(adminId, messageText, { parse_mode: 'HTML' });
+        await api.sendMessage(adminId, messageText, {
+          parse_mode: 'HTML',
+          reply_markup: keyboard,
+        });
       } catch (err: unknown) {
         console.error(`[Notifier] Failed to send alert to admin ${adminId}:`, err);
       }

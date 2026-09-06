@@ -146,13 +146,30 @@ export class ScraperWorker {
 
         // ── 2. Khmer24 Scraper ──────────────────────────────────────────────
         console.log(`\n⏰ [Worker] Starting Khmer24 scrape at ${new Date().toISOString()}...`);
+        const k24Start = Date.now();
         try {
           const k24Stats = await runKhmer24Scraper(this.container);
+          const durationMs = Date.now() - k24Start;
           if (k24Stats) {
             this.hourlyStats.khmer24.scraped += k24Stats.totalScraped;
             this.hourlyStats.khmer24.inserted += k24Stats.inserted;
             this.hourlyStats.khmer24.duplicates += k24Stats.duplicates;
             this.hourlyStats.khmer24.errors += k24Stats.errors;
+
+            // Persist to historical metrics table
+            try {
+              this.container.metricsRepo.recordScraperRun({
+                service: 'khmer24',
+                total_scraped: k24Stats.totalScraped,
+                inserted: k24Stats.inserted,
+                duplicates: k24Stats.duplicates,
+                errors: k24Stats.errors,
+                proxy_used: null,
+                duration_ms: durationMs,
+              });
+            } catch (err) {
+              console.warn('[Worker] Failed to persist Khmer24 metrics:', err);
+            }
           }
         } catch (err: unknown) {
           this.hourlyStats.khmer24.errors++;
@@ -173,6 +190,7 @@ export class ScraperWorker {
 
         // ── 3. Facebook Scraper ─────────────────────────────────────────────
         console.log(`\n⏰ [Worker] Starting Facebook scrape at ${new Date().toISOString()}...`);
+        const fbStart = Date.now();
         try {
           // Humanized jitter (5s - 15s)
           const jitterMs = Math.floor(Math.random() * 10000) + 5000;
@@ -182,11 +200,29 @@ export class ScraperWorker {
           if (!this.isRunning) break;
 
           const fbStats = await runFacebookScraper(this.container);
+          const durationMs = Date.now() - fbStart;
+          const proxyInfo = parseProxyConfig(env.FB_PROXY)?.masked ?? null;
+
           if (fbStats) {
             this.hourlyStats.facebook.scraped += fbStats.totalScraped;
             this.hourlyStats.facebook.inserted += fbStats.inserted;
             this.hourlyStats.facebook.duplicates += fbStats.duplicates;
             this.hourlyStats.facebook.errors += fbStats.errors;
+
+            // Persist to historical metrics table
+            try {
+              this.container.metricsRepo.recordScraperRun({
+                service: 'facebook',
+                total_scraped: fbStats.totalScraped,
+                inserted: fbStats.inserted,
+                duplicates: fbStats.duplicates,
+                errors: fbStats.errors,
+                proxy_used: proxyInfo,
+                duration_ms: durationMs,
+              });
+            } catch (err) {
+              console.warn('[Worker] Failed to persist Facebook metrics:', err);
+            }
           }
         } catch (err: unknown) {
           this.hourlyStats.facebook.errors++;
@@ -237,6 +273,42 @@ export class ScraperWorker {
       const proxy = parseProxyConfig(env.FB_PROXY);
       const proxyStatus = proxy ? `✅ Connected (${proxy.masked})` : '⚠️ Not configured';
 
+      // Usage analytics query
+      let analyticsText = '';
+      try {
+        const analytics1h = this.container.analyticsRepo.getSummary(1);
+        const active24h = this.container.analyticsRepo.get24hActiveUsersCount();
+        const breakdownParts: string[] = [];
+        if (analytics1h.eventBreakdown['bot_command']) {
+          breakdownParts.push(`Cmds: ${analytics1h.eventBreakdown['bot_command']}`);
+        }
+        if (analytics1h.eventBreakdown['tma_request']) {
+          breakdownParts.push(`TMA: ${analytics1h.eventBreakdown['tma_request']}`);
+        }
+        if (analytics1h.eventBreakdown['bot_callback']) {
+          breakdownParts.push(`Clicks: ${analytics1h.eventBreakdown['bot_callback']}`);
+        }
+        const breakdownStr = breakdownParts.length > 0 ? ` (${breakdownParts.join(', ')})` : '';
+
+        analyticsText =
+          `👥 <b>Usage Analytics:</b>\n` +
+          `  • Active users (1h / 24h): <b>${analytics1h.activeUsers}</b> / <b>${active24h}</b>\n` +
+          `  • Interactions (1h): <b>${analytics1h.totalEvents}</b>${breakdownStr}\n\n`;
+      } catch {
+        // ignore analytics query error in heartbeat
+      }
+
+      // Historical all-time metrics
+      let allTimeText = '';
+      try {
+        const allTime = this.container.metricsRepo.getAllTimeSummary();
+        if (allTime.runsCount > 0) {
+          allTimeText = `📚 <b>All-Time Scraped:</b> ${allTime.totalScraped.toLocaleString()} (Inserted: +${allTime.inserted.toLocaleString()})\n\n`;
+        }
+      } catch {
+        // ignore
+      }
+
       const message =
         `💓 <b>HomEasy Scraper Heartbeat</b> (Hourly Report)\n\n` +
         `⏱ <b>Cycles in last hour:</b> ${this.hourlyStats.cyclesCompleted}\n` +
@@ -252,6 +324,8 @@ export class ScraperWorker {
         `  • Duplicates: <b>${this.hourlyStats.facebook.duplicates}</b>\n` +
         `  • Errors: <b>${this.hourlyStats.facebook.errors}</b>\n` +
         `  • Proxy: <code>${proxyStatus}</code>\n\n` +
+        analyticsText +
+        allTimeText +
         `📊 <b>RAM:</b> RSS ${rssMb}MB | Heap ${heapUsedMb}MB\n` +
         `🕒 <i>Next report in ~1 hour</i>`;
 

@@ -15,6 +15,19 @@ Built with **TypeScript · Node.js 22+ · grammY · native SQLite (WAL) · Playw
 - **Multi-Image Deduplication:** Computes 64-bit dHash perceptual image hashes with Sharp across multiple photos alongside weighted attribute scoring (price ±5%, rooms, phone, category).
 - **Resilient AI Extraction Cascade:** Cascades through `gemini-2.5-flash` ➔ `gemini-2.5-flash-lite` ➔ `gpt-4o-mini` ➔ regex heuristics, featuring batching (5–10 items) to conserve API quotas.
 - **Scraper Circuit Breaker:** Isolated scraping loops with automatic error handling, exponential backoff, and Telegram admin alerts for expired cookies (Facebook and Khmer24).
+- **Persistent Scraper Metrics & Analytics:** Long-term historical database tracking (`scraper_metrics`, `usage_events`) with hourly Telegram Heartbeat reports.
+- **Remote Visual Browser Streaming:** Mobile-friendly interactive CDP browser screencast for 100% human-driven Facebook (proxied) and Khmer24 authentication.
+
+---
+
+## 🛡️ Critical Architectural Principle: Facebook Scraping & Authentication
+
+> ⚠️ **Критический архитектурный закон HomEasy**:  
+> **Вход в Facebook через консольные скрипты или headless-автоматизацию ввода паролей — это верный путь к мгновенному чекпоинту или блокировке аккаунта.**  
+> В связи с этим в проекте HomEasy строго зафиксировано:
+> 1. **Обязательный резидентный прокси:** Любые сетевые обращения к Facebook (парсинг и авторизация) маршрутизируются исключительно через резидентный камбоджийский прокси (`FB_PROXY`). Запуск без прокси заблокирован на уровне кода с алертом админу.
+> 2. **Исключительно визуальный вход человеком:** Авторизация Facebook ДОЛЖНА осуществляться человеком через реальный графический интерфейс (с живыми интервалами ввода, решением 2FA и чекпоинтов безопасности). Любой программный headless-ввод учетных данных запрещен.
+> 3. **Удаленная авторизация с телефона (Remote Browser Streaming):** Для удобного входа с мобильного телефона в Telegram реализован веб-интерфейс (`/auth_fb`): сервер запускает Chromium через прокси и транслирует живой экран (CDP Screencast) на телефон. Вы пальцем вводите пароль и 2FA в реальном окне Facebook, а сессия автоматически сохраняется в `data/fb_session.json`.
 
 ---
 
