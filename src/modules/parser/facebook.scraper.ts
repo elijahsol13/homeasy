@@ -21,7 +21,13 @@ import { runMigrations } from '../../database/migrate';
 import type { AppContainer } from '../../container';
 import { createContainer } from '../../container';
 import { env } from '../../config/env';
-import { parseProxyConfig, type PlaywrightProxyConfig, type ParsedProxyResult } from './proxy';
+import {
+  parseProxyConfig,
+  isProxyError,
+  ProxyConnectionError,
+  type PlaywrightProxyConfig,
+  type ParsedProxyResult,
+} from './proxy';
 import { FB_GROUPS, type CityKey, type PropertyCategory } from '../../config/settings';
 import {
   extractBedrooms,
@@ -49,7 +55,13 @@ export class FacebookSessionExpiredError extends Error {
   }
 }
 
-export { parseProxyConfig, type PlaywrightProxyConfig, type ParsedProxyResult };
+export {
+  parseProxyConfig,
+  isProxyError,
+  ProxyConnectionError,
+  type PlaywrightProxyConfig,
+  type ParsedProxyResult,
+};
 
 // ─── Target Group Definitions ─────────────────────────────────────────────────
 
@@ -763,7 +775,16 @@ export async function scrapeFacebookGroup(
       }
     });
 
-    await page.goto(target.url, { waitUntil: 'domcontentloaded', timeout: 45000 });
+    try {
+      await page.goto(target.url, { waitUntil: 'domcontentloaded', timeout: 45000 });
+    } catch (err: unknown) {
+      if (isProxyError(err)) {
+        throw new ProxyConnectionError(
+          `Proxy tunnel failure navigating to [${target.name}]: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+      throw err;
+    }
     await sleepRandom(3000, 5000);
 
     // 1. Detect if redirected to login page or checkpoint
@@ -949,6 +970,16 @@ export async function runFacebookScraper(containerInstance?: AppContainer): Prom
     return { totalScraped: 0, inserted: 0, duplicates: 0, errors: 1 };
   }
 
+  // Check proxy requirement (mandatory to prevent IP bans)
+  const proxyResult = parseProxyConfig(env.FB_PROXY);
+  if (!proxyResult) {
+    const errorMsg =
+      '🚨 <b>Facebook Scraper Aborted</b>: Proxy is NOT configured! Scraping Facebook without a residential proxy is strictly disabled to prevent AWS IP and account bans. Please configure <code>FB_PROXY</code> in your .env file.';
+    console.error(`\n❌ FATAL: ${errorMsg}\n`);
+    await container.notifierService.notifyAdmins(errorMsg);
+    return { totalScraped: 0, inserted: 0, duplicates: 0, errors: 1 };
+  }
+
   let totalScraped = 0;
   let totalInserted = 0;
   let totalDuplicates = 0;
@@ -957,15 +988,12 @@ export async function runFacebookScraper(containerInstance?: AppContainer): Prom
   let context: BrowserContext | null = null;
 
   try {
-    const proxyResult = parseProxyConfig(env.FB_PROXY);
-    if (proxyResult) {
-      console.log(`🌐 Proxy enabled: ${proxyResult.masked}`);
-    }
+    console.log(`🌐 Proxy enabled: ${proxyResult.masked}`);
 
     console.log('🌐 Launching headless browser with saved session...');
     browser = await chromium.launch({
       headless: true,
-      proxy: proxyResult?.config,
+      proxy: proxyResult.config,
       args: [
         '--no-sandbox',
         '--disable-setuid-sandbox',
@@ -1025,7 +1053,19 @@ export async function runFacebookScraper(containerInstance?: AppContainer): Prom
           }
         }
       } catch (err: unknown) {
-        if (err instanceof FacebookSessionExpiredError) {
+        if (err instanceof ProxyConnectionError || isProxyError(err)) {
+          const errMsg = err instanceof Error ? err.message : String(err);
+          console.error(`💥 Facebook proxy failure: ${errMsg}`);
+          console.error('📢 Sending high-priority alert to administrators...');
+          await container.notifierService.notifyAdmins(
+            `🚨 <b>Facebook Scraper Aborted: Proxy Failure</b>\n\n` +
+              `Proxy tunnel failed to connect or disconnected:\n<code>${errMsg}</code>\n\n` +
+              `Scraper halted immediately to prevent unproxied requests and IP blocks. Please check your proxy service.`,
+          );
+          totalErrors++;
+          // Abort all remaining groups immediately to prevent further failures or unproxied leaks
+          break;
+        } else if (err instanceof FacebookSessionExpiredError) {
           console.error(`💥 Facebook session expired or blocked: ${err.message}`);
           console.error('📢 Sending high-priority alert to administrators...');
           await container.notifierService.notifyAdmins(
@@ -1048,7 +1088,17 @@ export async function runFacebookScraper(containerInstance?: AppContainer): Prom
       }
     }
   } catch (err: unknown) {
-    console.error('💥 Fatal Facebook scraper error:', err instanceof Error ? err.message : String(err));
+    if (err instanceof ProxyConnectionError || isProxyError(err)) {
+      const errMsg = err instanceof Error ? err.message : String(err);
+      console.error(`💥 Fatal Facebook proxy failure: ${errMsg}`);
+      await container.notifierService.notifyAdmins(
+        `🚨 <b>Facebook Scraper Aborted: Proxy Failure</b>\n\n` +
+          `Failed to initialize browser or establish proxy tunnel:\n<code>${errMsg}</code>`,
+      );
+    } else {
+      console.error('💥 Fatal Facebook scraper error:', err instanceof Error ? err.message : String(err));
+    }
+    totalErrors++;
   } finally {
     if (context) await context.close().catch(() => {});
     if (browser) await browser.close().catch(() => {});

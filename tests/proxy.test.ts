@@ -55,4 +55,14 @@ describe('Proxy Configuration & Masking (parseProxyConfig)', () => {
   test('handles malformed proxy input gracefully without crashing', () => {
     expect(parseProxyConfig('http://')).toBeUndefined();
   });
+
+  test('sanitizes common protocol typos such as hhttp://', () => {
+    const raw = 'hhttp://user:pass@1.2.3.4:5678';
+    const result = parseProxyConfig(raw);
+    expect(result).toBeDefined();
+    expect(result!.config.server).toBe('http://1.2.3.4:5678');
+    expect(result!.config.username).toBe('user');
+    expect(result!.config.password).toBe('pass');
+  });
 });
+
