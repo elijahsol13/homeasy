@@ -15,6 +15,7 @@ import {
 } from 'lucide-react';
 import type { PropertyDTO } from '../types';
 import { triggerHaptic, openExternalUrl } from '../services/telegram';
+import posthog from 'posthog-js';
 
 interface PropertyDetailModalProps {
   property: PropertyDTO | null;
@@ -299,7 +300,14 @@ export const PropertyDetailModal: React.FC<PropertyDetailModalProps> = ({
           {property.contact.telegramLink && (
             <button
               type="button"
-              onClick={() => openExternalUrl(property.contact.telegramLink!)}
+              onClick={() => {
+                try {
+                  posthog.capture('contact_lead_clicked', { propertyId: property.id, channel: 'telegram' });
+                } catch {
+                  // ignore
+                }
+                openExternalUrl(property.contact.telegramLink!);
+              }}
               className="flex-1 bg-sky-500 hover:bg-sky-600 text-white font-bold py-3 px-4 rounded-xl flex items-center justify-center gap-2 shadow-md active:scale-98 transition-all"
             >
               <Send className="w-4 h-4" />
@@ -312,6 +320,11 @@ export const PropertyDetailModal: React.FC<PropertyDetailModalProps> = ({
               type="button"
               onClick={() => {
                 triggerHaptic('light');
+                try {
+                  posthog.capture('contact_lead_clicked', { propertyId: property.id, channel: 'phone' });
+                } catch {
+                  // ignore
+                }
                 window.location.href = property.contact.phoneLink!;
               }}
               className="p-3 bg-emerald-500 hover:bg-emerald-600 text-white rounded-xl shadow-md active:scale-95 transition-all flex items-center justify-center"

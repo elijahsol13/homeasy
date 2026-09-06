@@ -62,6 +62,14 @@ export async function handleSaveProperty(ctx: MyContext, propertyId: number): Pr
   }
 
   const added = ctx.container.favoritesRepo.addFavorite(user.id, propertyId);
+  if (added) {
+    ctx.container.analyticsRepo.trackEvent({
+      userId: user.id,
+      telegramId: from.id,
+      eventType: 'listing_saved',
+      metadata: { propertyId },
+    });
+  }
   await ctx.answerCallbackQuery(added ? '⭐ Saved to favorites!' : '❌ Could not save');
 }
 

@@ -31,6 +31,8 @@ const EnvSchema = z.object({
   API_PUBLIC_URL: z.string().optional(),
   WEBAPP_URL: z.string().optional(),
   FB_PROXY: z.string().optional(),
+  POSTHOG_API_KEY: z.string().optional(),
+  POSTHOG_HOST: z.string().default('https://eu.i.posthog.com'),
 });
 
 const result = EnvSchema.safeParse(process.env);

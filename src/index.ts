@@ -47,17 +47,18 @@ async function main(): Promise<void> {
     { command: 'stats', description: '[Admin] View bot statistics' },
   ]);
 
-  const shutdown = (signal: string) => {
+  const shutdown = async (signal: string) => {
     console.log(`\n⚡ Received ${signal} — shutting down gracefully...`);
     stopWorker();
     bot.stop();
+    await container.analyticsRepo.shutdown();
     closeDatabase(container.db);
     console.log('✅ Bye!');
     process.exit(0);
   };
 
-  process.once('SIGINT', () => shutdown('SIGINT'));
-  process.once('SIGTERM', () => shutdown('SIGTERM'));
+  process.once('SIGINT', () => void shutdown('SIGINT'));
+  process.once('SIGTERM', () => void shutdown('SIGTERM'));
 
   console.log('🤖 Starting bot in polling mode...');
   await bot.start({
