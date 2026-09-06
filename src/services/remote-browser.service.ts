@@ -32,50 +32,80 @@ export interface StreamingSocket {
 }
 
 export class RemoteBrowserService {
-  private activeTokens = new Map<string, RemoteSessionInfo>();
   private activeStreams = new Map<string, { browser: Browser; page: Page }>();
+  private consumedTokens = new Set<string>();
 
   constructor(private readonly container: AppContainer) {}
 
   /**
-   * Generates a single-use authentication token valid for 15 minutes.
+   * Generates a tamper-proof signed session token valid across container/process boundaries for 15 minutes.
    */
-  createSessionToken(adminTelegramId: number, service: 'facebook' | 'khmer24'): string {
-    const token = crypto.randomUUID();
+  createSessionToken(adminTelegramId: number, service: 'facebook' | 'khmer24', ttlMs = 15 * 60 * 1000): string {
+    const nonce = crypto.randomUUID();
     const now = Date.now();
-    const expiresAt = now + 15 * 60 * 1000; // 15 mins
+    const expiresAt = now + ttlMs;
 
-    this.activeTokens.set(token, {
-      token,
-      adminTelegramId,
-      service,
-      createdAt: now,
-      expiresAt,
-    });
+    const payload = Buffer.from(
+      JSON.stringify({ adminTelegramId, service, createdAt: now, expiresAt, nonce }),
+    ).toString('base64url');
 
-    return token;
+    const sig = crypto
+      .createHmac('sha256', env.BOT_TOKEN || 'homeasy-secret')
+      .update(payload)
+      .digest('base64url');
+
+    return `${payload}.${sig}`;
   }
 
   /**
-   * Validates if a token is active and unexpired.
+   * Validates if a signed token is authentic, unconsumed, and unexpired across any container.
    */
   verifySessionToken(token: string): RemoteSessionInfo | null {
-    const session = this.activeTokens.get(token);
-    if (!session) return null;
+    if (!token || typeof token !== 'string') return null;
+    if (this.consumedTokens.has(token)) return null;
 
-    if (Date.now() > session.expiresAt) {
-      this.activeTokens.delete(token);
+    const parts = token.split('.');
+    if (parts.length !== 2) return null;
+    const [payload, sig] = parts;
+
+    const expectedSig = crypto
+      .createHmac('sha256', env.BOT_TOKEN || 'homeasy-secret')
+      .update(payload)
+      .digest('base64url');
+
+    if (sig !== expectedSig) return null;
+
+    try {
+      const data = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8')) as {
+        adminTelegramId: number;
+        service: 'facebook' | 'khmer24';
+        createdAt: number;
+        expiresAt: number;
+        nonce: string;
+      };
+
+      if (typeof data.expiresAt !== 'number' || Date.now() > data.expiresAt) {
+        return null;
+      }
+
+      return {
+        token,
+        adminTelegramId: data.adminTelegramId,
+        service: data.service,
+        createdAt: data.createdAt,
+        expiresAt: data.expiresAt,
+      };
+    } catch {
       return null;
     }
-
-    return session;
   }
 
   /**
    * Invalidates a session token.
    */
   consumeSessionToken(token: string): void {
-    this.activeTokens.delete(token);
+    this.consumedTokens.add(token);
+    setTimeout(() => this.consumedTokens.delete(token), 15 * 60 * 1000).unref();
   }
 
   /**
