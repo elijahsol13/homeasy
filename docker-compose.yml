@@ -52,3 +52,33 @@ services:
       options:
         max-size: "20m"
         max-file: "3"
+
+  # ─── Telegram Mini App Fastify API ──────────────────────────────────────────
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: homeasy-api
+    restart: unless-stopped
+    command: npm run start:api
+    ports:
+      - "127.0.0.1:3000:3000"
+    environment:
+      - NODE_ENV=production
+      - DATABASE_PATH=/app/data/homeasy.db
+      - API_PORT=3000
+      - API_HOST=0.0.0.0
+    env_file:
+      - .env
+    volumes:
+      - ./data:/app/data
+    deploy:
+      resources:
+        limits:
+          memory: 150M
+    mem_limit: 150m
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
