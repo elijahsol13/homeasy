@@ -10,6 +10,7 @@ import {
   handleFavoritesPage,
 } from './favorites.handler';
 import { mainMenuKeyboard } from '../keyboards/main.keyboard';
+import { env } from '../../../config/env';
 
 export function createCallbacksHandler(_container: AppContainer): Composer<MyContext> {
   const handler = new Composer<MyContext>();
@@ -43,9 +44,10 @@ async function route(ctx: MyContext, data: string): Promise<void> {
   if (data === 'cb:menu:main') {
     const from = ctx.from;
     const user = from ? ctx.container.usersRepo.upsertUser(from.id, from.username ?? null) : null;
+    const isAdmin = from ? (env.ADMIN_IDS.includes(from.id) || user?.role === 'admin') : false;
     await ctx.editMessageText('📋 <b>Main Menu</b>', {
       parse_mode: 'HTML',
-      reply_markup: mainMenuKeyboard(user?.alerts_paused === 1),
+      reply_markup: mainMenuKeyboard({ alertsPaused: user?.alerts_paused === 1, isAdmin }),
     });
     await safeAnswer(ctx);
     return;
@@ -53,10 +55,12 @@ async function route(ctx: MyContext, data: string): Promise<void> {
 
   if (data === 'cb:alerts:pause') {
     const from = ctx.from;
+    const user = from ? ctx.container.usersRepo.findByTelegramId(from.id) : null;
+    const isAdmin = from ? (env.ADMIN_IDS.includes(from.id) || user?.role === 'admin') : false;
     if (from) ctx.container.usersRepo.setAlertsPaused(from.id, true);
     await ctx.editMessageText('📋 <b>Main Menu</b>\n\n⏸ <i>Alerts are paused. You will not receive notifications.</i>', {
       parse_mode: 'HTML',
-      reply_markup: mainMenuKeyboard(true),
+      reply_markup: mainMenuKeyboard({ alertsPaused: true, isAdmin }),
     });
     await safeAnswer(ctx, '⏸ Alerts paused');
     return;
@@ -64,10 +68,12 @@ async function route(ctx: MyContext, data: string): Promise<void> {
 
   if (data === 'cb:alerts:resume') {
     const from = ctx.from;
+    const user = from ? ctx.container.usersRepo.findByTelegramId(from.id) : null;
+    const isAdmin = from ? (env.ADMIN_IDS.includes(from.id) || user?.role === 'admin') : false;
     if (from) ctx.container.usersRepo.setAlertsPaused(from.id, false);
     await ctx.editMessageText('📋 <b>Main Menu</b>\n\n▶️ <i>Alerts are active! You will receive notifications for new matches.</i>', {
       parse_mode: 'HTML',
-      reply_markup: mainMenuKeyboard(false),
+      reply_markup: mainMenuKeyboard({ alertsPaused: false, isAdmin }),
     });
     await safeAnswer(ctx, '▶️ Alerts resumed');
     return;
@@ -119,7 +125,7 @@ async function route(ctx: MyContext, data: string): Promise<void> {
     if (!isNaN(id)) {
       const { reports_count, is_active } = ctx.container.propertiesRepo.reportProperty(id);
       if (!is_active) {
-        await ctx.container.alertService.warn('Объект #' + id + ' скрыт из-за превышения лимита жалоб.');
+        await ctx.container.alertService.warn('Listing #' + id + ' hidden due to complaint threshold reached.');
       }
       ctx.container.analyticsRepo.trackEvent({
         userId: ctx.from ? ctx.container.usersRepo.findByTelegramId(ctx.from.id)?.id : null,

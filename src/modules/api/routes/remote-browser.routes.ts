@@ -44,11 +44,11 @@ export const remoteBrowserRoutes: FastifyPluginAsync<RemoteBrowserRoutesOptions>
 
     if (!token) {
       return reply.status(400).type('text/html; charset=utf-8').send(`<!DOCTYPE html>
-        <html lang="ru">
-          <head><meta charset="utf-8"><title>Ошибка токена</title></head>
+        <html lang="en">
+          <head><meta charset="utf-8"><title>Token Error</title></head>
           <body style="font-family:sans-serif; background:#121212; color:#fff; text-align:center; padding:50px;">
-            <h2>❌ Ошибка: Отсутствует токен сессии</h2>
-            <p>Запустите авторизацию заново из Telegram-бота через команду /auth_fb или /auth_k24.</p>
+            <h2>❌ Error: Missing Session Token</h2>
+            <p>Please launch authorization again from the Telegram bot using /auth_fb or /auth_k24.</p>
           </body>
         </html>
       `);
@@ -57,11 +57,11 @@ export const remoteBrowserRoutes: FastifyPluginAsync<RemoteBrowserRoutesOptions>
     const sessionInfo = container.remoteBrowserService.verifySessionToken(token);
     if (!sessionInfo) {
       return reply.status(401).type('text/html; charset=utf-8').send(`<!DOCTYPE html>
-        <html lang="ru">
-          <head><meta charset="utf-8"><title>Токен недействителен</title></head>
+        <html lang="en">
+          <head><meta charset="utf-8"><title>Token Expired</title></head>
           <body style="font-family:sans-serif; background:#121212; color:#fff; text-align:center; padding:50px;">
-            <h2>⚠️ Токен устарел или недействителен</h2>
-            <p>Срок действия ссылки (15 минут) истек. Запросите новую сессию в Telegram-боте.</p>
+            <h2>⚠️ Token Expired or Invalid</h2>
+            <p>The 15-minute link has expired. Please request a new session in the Telegram bot.</p>
           </body>
         </html>
       `);
@@ -70,16 +70,16 @@ export const remoteBrowserRoutes: FastifyPluginAsync<RemoteBrowserRoutesOptions>
     const serviceName = sessionInfo.service === 'facebook' ? 'Facebook (Residential Proxy)' : 'Khmer24 (Direct)';
 
     const html = `<!DOCTYPE html>
-<html lang="ru">
+<html lang="en">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>HomEasy Remote Browser — ${serviceName}</title>
+  <title>${serviceName} — Remote Session</title>
   <style>
-    * { box-sizing: border-box; margin: 0; padding: 0; user-select: none; }
+    * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
     body {
-      background: #0f141c;
-      color: #e6edf3;
+      background-color: #0d1117;
+      color: #c9d1d9;
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
       display: flex;
       flex-direction: column;
@@ -89,26 +89,16 @@ export const remoteBrowserRoutes: FastifyPluginAsync<RemoteBrowserRoutesOptions>
     header {
       background: #161b22;
       border-bottom: 1px solid #30363d;
-      padding: 10px 14px;
+      padding: 10px 16px;
       display: flex;
       align-items: center;
       justify-content: space-between;
-      gap: 8px;
+      flex-shrink: 0;
     }
     .title {
       font-size: 14px;
       font-weight: 600;
-      white-space: nowrap;
-      overflow: hidden;
-      text-overflow: ellipsis;
-    }
-    .badge {
-      font-size: 11px;
-      padding: 3px 8px;
-      border-radius: 12px;
-      background: #238636;
-      color: #fff;
-      font-weight: 500;
+      color: #58a6ff;
     }
     .status {
       font-size: 12px;
@@ -123,99 +113,117 @@ export const remoteBrowserRoutes: FastifyPluginAsync<RemoteBrowserRoutesOptions>
       border-radius: 50%;
       background: #f85149;
     }
-    .status-dot.connected { background: #2ea043; }
-
+    .status-dot.connected {
+      background: #2ea043;
+    }
     .actions {
       display: flex;
-      gap: 6px;
+      gap: 8px;
     }
-    button.btn {
+    .btn {
       background: #21262d;
-      color: #c9d1d9;
       border: 1px solid #30363d;
+      color: #c9d1d9;
+      padding: 6px 12px;
       border-radius: 6px;
-      padding: 6px 10px;
-      font-size: 12px;
-      font-weight: 600;
+      font-size: 13px;
       cursor: pointer;
       display: flex;
       align-items: center;
       gap: 4px;
     }
-    button.btn:active { background: #30363d; }
-    button.btn-primary { background: #238636; color: #fff; border-color: #2ea043; }
-
+    .btn-primary {
+      background: #238636;
+      border-color: #2ea043;
+      color: #fff;
+    }
+    .btn:active {
+      opacity: 0.8;
+    }
     #viewport-container {
       flex: 1;
       display: flex;
-      align-items: center;
       justify-content: center;
-      background: #0d1117;
+      align-items: center;
+      background: #010409;
       position: relative;
       overflow: hidden;
     }
-    #screencast {
-      max-width: 100%;
+    canvas {
+      width: 100%;
+      max-width: 414px;
+      height: auto;
       max-height: 100%;
-      aspect-ratio: 414 / 750;
       object-fit: contain;
-      box-shadow: 0 4px 20px rgba(0,0,0,0.5);
-      border-radius: 6px;
-      cursor: crosshair;
+      box-shadow: 0 0 20px rgba(0,0,0,0.8);
+      touch-action: none;
     }
-
-    .quick-bar {
-      background: #161b22;
-      border-bottom: 1px solid #30363d;
-      padding: 6px 10px;
-      display: flex;
-      gap: 6px;
-      align-items: center;
-      overflow-x: auto;
-      white-space: nowrap;
-    }
-    .quick-bar::-webkit-scrollbar { display: none; }
-
-    /* Mobile Text Toolbar */
     #toolbar {
       background: #161b22;
       border-top: 1px solid #30363d;
-      padding: 8px 10px;
+      padding: 8px 12px;
       display: flex;
-      gap: 6px;
+      gap: 8px;
       align-items: center;
+      flex-shrink: 0;
     }
     #input-text {
       flex: 1;
       background: #0d1117;
       border: 1px solid #30363d;
-      color: #fff;
-      padding: 8px 12px;
       border-radius: 6px;
+      padding: 8px 12px;
+      color: #c9d1d9;
       font-size: 14px;
       outline: none;
-      user-select: text;
     }
-    #input-text:focus { border-color: #58a6ff; }
-
-    /* Success Overlay */
+    #input-text:focus {
+      border-color: #58a6ff;
+    }
+    .quick-bar {
+      background: #161b22;
+      border-bottom: 1px solid #21262d;
+      padding: 6px 12px;
+      display: flex;
+      gap: 6px;
+      overflow-x: auto;
+      flex-shrink: 0;
+    }
+    .quick-bar .btn {
+      font-size: 11px;
+      padding: 4px 8px;
+      white-space: nowrap;
+    }
     #overlay-success {
-      display: none;
       position: absolute;
       top: 0; left: 0; right: 0; bottom: 0;
-      background: rgba(15, 20, 28, 0.92);
-      backdrop-filter: blur(6px);
+      background: rgba(13, 17, 23, 0.92);
+      display: flex;
       flex-direction: column;
       align-items: center;
       justify-content: center;
-      padding: 20px;
-      text-align: center;
-      z-index: 100;
+      z-index: 10;
+      display: none;
     }
-    #overlay-success.active { display: flex; }
-    .success-icon { font-size: 48px; margin-bottom: 12px; }
-    .success-text { font-size: 18px; font-weight: 600; color: #3fb950; margin-bottom: 8px; }
-    .success-sub { font-size: 13px; color: #8b949e; max-width: 320px; }
+    #overlay-success.active {
+      display: flex;
+    }
+    .success-icon {
+      font-size: 48px;
+      margin-bottom: 12px;
+    }
+    .success-text {
+      font-size: 18px;
+      font-weight: 600;
+      color: #3fb950;
+      margin-bottom: 8px;
+    }
+    .success-sub {
+      font-size: 13px;
+      color: #8b949e;
+      text-align: center;
+      max-width: 280px;
+    }
   </style>
 </head>
 <body>
@@ -224,20 +232,20 @@ export const remoteBrowserRoutes: FastifyPluginAsync<RemoteBrowserRoutesOptions>
       <div class="title">🌐 ${serviceName}</div>
       <div class="status">
         <div id="dot" class="status-dot"></div>
-        <span id="status-label">Подключение...</span>
+        <span id="status-label">Connecting...</span>
       </div>
     </div>
     <div class="actions">
       <button class="btn" onclick="reloadPage()">🔄</button>
-      <button class="btn btn-primary" onclick="sendAction({ type: 'save_manual' })">💾 Сохранить</button>
+      <button class="btn btn-primary" onclick="sendAction({ type: 'save_manual' })">💾 Save Session</button>
     </div>
   </header>
 
   <div class="quick-bar">
-    <span style="font-size: 11px; color: #8b949e; margin-right: 2px;">Быстрый фокус:</span>
-    <button class="btn" onclick="focusField('email')">👤 Логин</button>
-    <button class="btn" onclick="focusField('password')">🔑 Пароль</button>
-    <button class="btn btn-primary" onclick="focusField('submit')">🚀 Войти</button>
+    <span style="font-size: 11px; color: #8b949e; margin-right: 2px;">Quick focus:</span>
+    <button class="btn" onclick="focusField('email')">👤 Username</button>
+    <button class="btn" onclick="focusField('password')">🔑 Password</button>
+    <button class="btn btn-primary" onclick="focusField('submit')">🚀 Sign In</button>
   </div>
 
   <div id="viewport-container">
@@ -245,14 +253,14 @@ export const remoteBrowserRoutes: FastifyPluginAsync<RemoteBrowserRoutesOptions>
 
     <div id="overlay-success">
       <div class="success-icon">🎉</div>
-      <div class="success-text" id="success-msg">Сессия успешно сохранена!</div>
-      <div class="success-sub">Вы можете закрыть эту вкладку. Скрапер продолжит сбор данных через резидентный прокси.</div>
+      <div class="success-text" id="success-msg">Session saved successfully!</div>
+      <div class="success-sub">You can close this tab. The scraper will continue collecting listings automatically.</div>
     </div>
   </div>
 
   <div id="toolbar">
-    <input type="text" id="input-text" placeholder="Логин, пароль или 2FA..." autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" />
-    <button class="btn btn-primary" onclick="submitTextInput()">Ввести</button>
+    <input type="text" id="input-text" placeholder="Username, password, or 2FA code..." autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" />
+    <button class="btn btn-primary" onclick="submitTextInput()">Send</button>
     <button class="btn" onclick="sendAction({ type: 'press', key: 'Backspace' })">⌫</button>
     <button class="btn" onclick="sendAction({ type: 'press', key: 'Tab' })">⇥</button>
     <button class="btn" onclick="sendAction({ type: 'press', key: 'Enter' })">⏎</button>
@@ -281,7 +289,7 @@ export const remoteBrowserRoutes: FastifyPluginAsync<RemoteBrowserRoutesOptions>
 
       ws.onopen = () => {
         dot.className = 'status-dot connected';
-        statusLabel.textContent = 'Браузер подключен';
+        statusLabel.textContent = 'Browser connected';
       };
 
       ws.onmessage = (event) => {
@@ -298,10 +306,10 @@ export const remoteBrowserRoutes: FastifyPluginAsync<RemoteBrowserRoutesOptions>
           } else if (msg.type === 'success') {
             successMsg.textContent = msg.message;
             overlaySuccess.className = 'active';
-            statusLabel.textContent = 'Авторизовано!';
+            statusLabel.textContent = 'Authorized!';
           } else if (msg.type === 'error') {
-            alert('Ошибка: ' + msg.message);
-            statusLabel.textContent = 'Ошибка';
+            alert('Error: ' + msg.message);
+            statusLabel.textContent = 'Error';
           }
         } catch (e) {
           console.error(e);
@@ -310,12 +318,12 @@ export const remoteBrowserRoutes: FastifyPluginAsync<RemoteBrowserRoutesOptions>
 
       ws.onclose = () => {
         dot.className = 'status-dot';
-        statusLabel.textContent = 'Сессия завершена';
+        statusLabel.textContent = 'Session ended';
       };
 
       ws.onerror = () => {
         dot.className = 'status-dot';
-        statusLabel.textContent = 'Ошибка соединения';
+        statusLabel.textContent = 'Connection error';
       };
     }
 
@@ -326,12 +334,12 @@ export const remoteBrowserRoutes: FastifyPluginAsync<RemoteBrowserRoutesOptions>
     }
 
     function reloadPage() {
-      statusLabel.textContent = 'Обновление...';
+      statusLabel.textContent = 'Reloading...';
       sendAction({ type: 'reload' });
     }
 
     function focusField(field) {
-      statusLabel.textContent = 'Фокус: ' + (field === 'email' ? 'логин' : field === 'password' ? 'пароль' : 'вход');
+      statusLabel.textContent = 'Focus: ' + (field === 'email' ? 'username' : field === 'password' ? 'password' : 'submit');
       sendAction({ type: 'focus_field', field });
       if (field !== 'submit') {
         inputText.focus();
