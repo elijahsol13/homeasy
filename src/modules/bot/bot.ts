@@ -27,6 +27,33 @@ export function createBot(container: AppContainer): Bot<MyContext> {
     }),
   );
 
+  // Analytics tracking middleware
+  bot.use(async (ctx, next) => {
+    try {
+      const fromId = ctx.from?.id;
+      if (fromId) {
+        if (ctx.message?.text?.startsWith('/')) {
+          const command = ctx.message.text.split(' ')[0]!.toLowerCase();
+          container.analyticsRepo.trackEvent({
+            telegramId: fromId,
+            eventType: 'bot_command',
+            metadata: { command },
+          });
+        } else if (ctx.callbackQuery?.data) {
+          const action = ctx.callbackQuery.data.split(':')[0] || 'action';
+          container.analyticsRepo.trackEvent({
+            telegramId: fromId,
+            eventType: 'bot_callback',
+            metadata: { action, data: ctx.callbackQuery.data },
+          });
+        }
+      }
+    } catch {
+      // Never let analytics disruption affect user flow
+    }
+    await next();
+  });
+
   // ── Global error handler ─────────────────────────────────────────────────────
   bot.catch((err) => {
     console.error('⚠️  Unhandled bot error:', err.message);

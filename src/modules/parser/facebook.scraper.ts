@@ -2,6 +2,10 @@
  * Facebook Groups Real Estate Scraper — GraphQL API Interception Architecture
  *
  * Architecture:
+ *  - STRICT LAW: Automated headless password entry or console credential passing to Facebook
+ *    is prohibited (triggers instant checkpoints/blocks). Authentication must be performed
+ *    visually by a human (via /auth_fb remote browser stream or visual fb:login).
+ *  - Must always route through resident proxy (FB_PROXY) to safeguard datacenter IP reputation.
  *  - Uses Playwright with Stealth plugin and saved session cookies (`./data/fb_session.json`).
  *  - Navigates to targeted Facebook Groups (e.g., Siem Reap real estate & rental groups).
  *  - Intercepts internal GraphQL API responses (`/api/graphql/`) via `page.on('response')`.
@@ -20,6 +24,7 @@ import type { RawListing } from './schemas';
 import { runMigrations } from '../../database/migrate';
 import type { AppContainer } from '../../container';
 import { createContainer } from '../../container';
+import { InlineKeyboard } from 'grammy';
 import { env } from '../../config/env';
 import {
   parseProxyConfig,
@@ -965,8 +970,12 @@ export async function runFacebookScraper(containerInstance?: AppContainer): Prom
   // Check if session file exists
   if (!fs.existsSync(FB_SESSION_PATH)) {
     console.warn(`\n⚠️  Facebook session not found at: ${FB_SESSION_PATH}`);
-    console.warn('👉 Please run "npm run fb:login" first to log in manually and save your session.\n');
-    await container.notifierService.notifyAdmins('⚠️ Facebook session expired or blocked. Please run <code>npm run fb:login</code> on the server.');
+    console.warn('👉 Use /auth_fb in Telegram or run "npm run fb:login".\n');
+    const authKb = new InlineKeyboard().text('🔑 Авторизоваться в Facebook', 'admin:auth:fb');
+    await container.notifierService.notifyAdmins(
+      '⚠️ <b>Facebook session not found.</b>\nНажмите кнопку ниже, чтобы открыть интерактивное окно авторизации через резидентный прокси.',
+      authKb,
+    );
     return { totalScraped: 0, inserted: 0, duplicates: 0, errors: 1 };
   }
 
@@ -1068,8 +1077,10 @@ export async function runFacebookScraper(containerInstance?: AppContainer): Prom
         } else if (err instanceof FacebookSessionExpiredError) {
           console.error(`💥 Facebook session expired or blocked: ${err.message}`);
           console.error('📢 Sending high-priority alert to administrators...');
+          const authKb = new InlineKeyboard().text('🔑 Авторизоваться в Facebook', 'admin:auth:fb');
           await container.notifierService.notifyAdmins(
-            '⚠️ Facebook session expired or blocked. Please run <code>npm run fb:login</code> on the server.',
+            '⚠️ <b>Facebook session expired or blocked.</b>\nНажмите кнопку ниже, чтобы открыть интерактивное окно авторизации через резидентный прокси.',
+            authKb,
           );
           totalErrors++;
           // Halt further group scraping to avoid triggering security flags

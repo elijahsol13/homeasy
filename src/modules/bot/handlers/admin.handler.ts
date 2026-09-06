@@ -1,8 +1,9 @@
-import { Composer } from 'grammy';
+import { Composer, InlineKeyboard } from 'grammy';
 import type { MyContext } from '../session';
 import type { AppContainer } from '../../../container';
 import { createDatabaseBackup } from '../../../database/backup';
 import { runEnrichment } from '../../../database/enrich-properties';
+import { env } from '../../../config/env';
 
 export function createAdminHandler(container: AppContainer): Composer<MyContext> {
   const handler = new Composer<MyContext>();
@@ -115,11 +116,29 @@ export function createAdminHandler(container: AppContainer): Composer<MyContext>
       container.filtersRepo.getFilterCount(),
     ];
 
+    const analytics24h = container.analyticsRepo.getSummary(24);
+    const metrics24h = container.metricsRepo.getSummaryByHours('all', 24);
+    const metricsAllTime = container.metricsRepo.getAllTimeSummary();
+
     await ctx.reply(
-      `📊 <b>HomEasy Statistics</b>\n\n` +
-        `👥 Active Users:     <b>${users}</b>\n` +
-        `🏠 Total Listings:   <b>${properties}</b>\n` +
-        `🔔 Active Alerts:    <b>${filters}</b>`,
+      `📊 <b>HomEasy Comprehensive Statistics</b>\n\n` +
+        `👥 <b>Users & Database:</b>\n` +
+        `  • Total Registered: <b>${users}</b>\n` +
+        `  • Active Users (24h): <b>${analytics24h.activeUsers}</b>\n` +
+        `  • Total Events (24h): <b>${analytics24h.totalEvents}</b>\n` +
+        `  • Total Listings: <b>${properties}</b>\n` +
+        `  • Active Alerts: <b>${filters}</b>\n\n` +
+        `🔄 <b>Scraper Activity (24h):</b>\n` +
+        `  • Runs completed: <b>${metrics24h.runsCount}</b>\n` +
+        `  • Total Scraped: <b>${metrics24h.totalScraped}</b>\n` +
+        `  • New Inserted: <b>+${metrics24h.inserted}</b>\n` +
+        `  • Duplicates: <b>${metrics24h.duplicates}</b>\n` +
+        `  • Errors: <b>${metrics24h.errors}</b>\n\n` +
+        `📚 <b>All-Time Scraper Totals:</b>\n` +
+        `  • Runs: <b>${metricsAllTime.runsCount}</b>\n` +
+        `  • Total Scraped: <b>${metricsAllTime.totalScraped.toLocaleString()}</b>\n` +
+        `  • New Inserted: <b>+${metricsAllTime.inserted.toLocaleString()}</b>\n` +
+        `  • Duplicates: <b>${metricsAllTime.duplicates.toLocaleString()}</b>`,
       { parse_mode: 'HTML' },
     );
   });
@@ -229,6 +248,94 @@ export function createAdminHandler(container: AppContainer): Composer<MyContext>
     await ctx.reply(
       `📢 <b>Broadcast</b> is not yet implemented.\n\nMessage preview:\n<i>${text}</i>`,
       { parse_mode: 'HTML' },
+    );
+  });
+
+  // ─── Remote Visual Browser Authentication ───────────────────────────────────
+
+  function getBrowserAuthUrl(adminId: number, service: 'facebook' | 'khmer24'): string {
+    const token = container.remoteBrowserService.createSessionToken(adminId, service);
+    const baseUrl = env.API_PUBLIC_URL || env.WEBAPP_URL || `http://localhost:${env.API_PORT}`;
+    return `${baseUrl}/admin/remote-browser?token=${token}`;
+  }
+
+  handler.command('auth_fb', async (ctx) => {
+    if (!isAdmin(ctx)) {
+      await ctx.reply('⛔ This command is for admins only.');
+      return;
+    }
+
+    const fromId = ctx.from!.id;
+    const url = getBrowserAuthUrl(fromId, 'facebook');
+    const kb = new InlineKeyboard().url('🌐 Открыть браузер Facebook', url);
+
+    await ctx.reply(
+      '🔐 <b>Удаленная авторизация в Facebook (через резидентный прокси)</b>\n\n' +
+        'Нажмите кнопку ниже, чтобы открыть интерактивное окно браузера прямо на телефоне:\n' +
+        '• Сессия запускается на сервере строго через прокси `FB_PROXY`.\n' +
+        '• Введите свои учетные данные и пройдите 2FA.\n' +
+        '• После успешного входа сессия автоматически сохранится на сервере.\n\n' +
+        '<i>Ссылка активна 15 минут.</i>',
+      { parse_mode: 'HTML', reply_markup: kb },
+    );
+  });
+
+  handler.command('auth_k24', async (ctx) => {
+    if (!isAdmin(ctx)) {
+      await ctx.reply('⛔ This command is for admins only.');
+      return;
+    }
+
+    const fromId = ctx.from!.id;
+    const url = getBrowserAuthUrl(fromId, 'khmer24');
+    const kb = new InlineKeyboard().url('🌐 Открыть браузер Khmer24', url);
+
+    await ctx.reply(
+      '🔐 <b>Удаленная авторизация в Khmer24</b>\n\n' +
+        'Нажмите кнопку ниже, чтобы открыть интерактивное окно браузера:\n' +
+        '• Сессия запускается на сервере напрямую (без прокси).\n' +
+        '• Выполните вход по номеру телефона / паролю.\n' +
+        '• Сессия автоматически сохранится на сервере.\n\n' +
+        '<i>Ссылка активна 15 минут.</i>',
+      { parse_mode: 'HTML', reply_markup: kb },
+    );
+  });
+
+  handler.callbackQuery('admin:auth:fb', async (ctx) => {
+    if (!isAdmin(ctx)) {
+      await ctx.answerCallbackQuery({ text: '⛔ Только для администраторов', show_alert: true });
+      return;
+    }
+
+    await ctx.answerCallbackQuery();
+    const fromId = ctx.from.id;
+    const url = getBrowserAuthUrl(fromId, 'facebook');
+    const kb = new InlineKeyboard().url('🌐 Открыть браузер Facebook', url);
+
+    await ctx.reply(
+      '🔐 <b>Сессия авторизации Facebook готова</b>\n\n' +
+        'Перейдите по кнопке ниже для входа через резидентный прокси:\n' +
+        `<code>${url}</code>`,
+      { parse_mode: 'HTML', reply_markup: kb },
+    );
+  });
+
+  handler.callbackQuery('admin:auth:k24', async (ctx) => {
+    if (!isAdmin(ctx)) {
+      await ctx.answerCallbackQuery({ text: '⛔ Только для администраторов', show_alert: true });
+      return;
+    }
+
+    await ctx.answerCallbackQuery();
+    const fromId = ctx.from.id;
+    const url = getBrowserAuthUrl(fromId, 'khmer24');
+    const kb = new InlineKeyboard().url('🌐 Открыть браузер Khmer24', url);
+
+    await ctx.reply(
+      '🔐 <b>Сессия авторизации Khmer24 готова</b>\n\n' +
+        'Перейдите по кнопке ниже для входа в аккаунт Khmer24:\n' +
+        `<code>${url}</code>`,
+      { parse_mode: 'HTML', reply_markup: kb },
     );
   });
 
