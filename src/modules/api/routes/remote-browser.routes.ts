@@ -344,3 +344,4 @@ export const remoteBrowserRoutes: FastifyPluginAsync<RemoteBrowserRoutesOptions>
     return reply.type('text/html').send(html);
   });
 };
+

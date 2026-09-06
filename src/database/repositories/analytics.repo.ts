@@ -88,3 +88,4 @@ export class AnalyticsRepository {
     return Number(row?.count ?? 0);
   }
 }
+
