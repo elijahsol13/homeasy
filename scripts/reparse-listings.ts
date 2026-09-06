@@ -350,20 +350,92 @@ async function reparseFacebook(db: any, limit?: number): Promise<void> {
   console.log('✅ Facebook gentle re-parsing step finished.\n');
 }
 
+const DISCOVERED_REPORT_PATH = path.join(process.cwd(), 'data', 'discovered_features_report.json');
+
+const COMPREHENSIVE_AGGREGATOR_INSTRUCTION = `You are a world-class real estate and hotel intelligence extraction engine (operating at the level of Airbnb Plus, Booking.com, and Zillow).
+Translate all Khmer and foreign text to English.
+Analyze the listing text with extreme attention to detail. Extract standard property data AND actively discover all amenities, repeating features, and lease conditions.
+
+Return a JSON object matching this schema:
+{
+  "is_real_estate": boolean,
+  "title": string,
+  "price": number | null,
+  "currency": "USD" | "KHR",
+  "category": "apartment" | "house" | "room" | "hotel" | "land",
+  "property_type": "Flat House" | "Private Villa" | "Private House" | "Condo" | "Apartment" | "Hotel Room" | "Room" | null,
+  "bedrooms": number | null,
+  "bathrooms": number | null,
+  "deposit_months": number | null,
+  "min_lease_months": number | null,
+  "has_pool": boolean,
+  "electricity": "Included" | "EDC (State Rate) ~$0.20/kWh" | string | null,
+  "water": "Included" | "State Rate (~1000៛/m³)" | string | null,
+  "cleaning": "1x/week Free" | "2x/week Included" | string | null,
+  "pet_friendly": boolean | null,
+  "restrictions": string[],
+  "landmarks": string[],
+  "location": string | null,
+  "description_en": string,
+  "discovered_amenities": string[]
+}
+
+GUIDELINES FOR discovered_amenities:
+Inspect for and extract ALL features mentioned in the text. Normalize them to clean English names, such as:
+- Utilities & Building: "Backup Generator", "Elevator", "24/7 Security Guard", "CCTV", "Gated Community (Borey)", "Free WiFi", "Free Garbage Collection", "Keycard Access"
+- Comfort & Appliances: "Washing Machine", "Clothes Dryer", "Hot Water Heater", "Bathtub", "Western Kitchen", "Gas Stove", "Oven", "Microwave", "Refrigerator", "Smart TV", "Air Conditioning", "Ceiling Fan", "Work Desk"
+- Outdoor & Views: "Balcony", "Private Terrace", "Rooftop Access", "Garden", "River View", "Pool View", "City View", "BBQ Area"
+- Parking: "Car Parking", "Motorbike Parking", "Bicycle Parking"
+- Services & Terms: "Cleaning Service", "Bed Linen Change", "Drinking Water Provided", "Foreigner Friendly", "Digital Nomad Friendly"
+Do NOT invent features not mentioned in the text.`;
+
+function updateDiscoveredReport(featuresTally: Record<string, number>, totalAnalyzed: number): void {
+  const ranking = Object.entries(featuresTally)
+    .sort((a, b) => b[1] - a[1])
+    .map(([feature, count]) => ({
+      feature,
+      count,
+      percentage: `${((count / Math.max(1, totalAnalyzed)) * 100).toFixed(1)}%`,
+    }));
+
+  const report = {
+    totalListingsAnalyzed: totalAnalyzed,
+    generatedAt: new Date().toISOString(),
+    uniqueFeaturesCount: ranking.length,
+    ranking,
+  };
+  fs.writeFileSync(DISCOVERED_REPORT_PATH, JSON.stringify(report, null, 2), 'utf8');
+}
+
 // ─── Step 3: Full Gemini AI Batch Enrichment & Comparison Log ────────────────
 
 async function runGeminiEnrichment(db: any, limit?: number): Promise<void> {
   console.log('═══════════════════════════════════════════════════════════════');
-  console.log('🧠 Gemini 2.5 Flash Batch Extraction & Benchmark Generation');
+  console.log('🧠 Gemini Aggregator-Grade Intelligence & Feature Discovery');
   console.log('═══════════════════════════════════════════════════════════════');
 
   const checkpoint = loadCheckpoint();
   console.log(`📋 Checkpoint: ${checkpoint.processedIds.length} listings already processed in previous runs.`);
 
+  // Load existing features tally if exists
+  const featuresTally: Record<string, number> = {};
+  if (fs.existsSync(DISCOVERED_REPORT_PATH)) {
+    try {
+      const existingReport = JSON.parse(fs.readFileSync(DISCOVERED_REPORT_PATH, 'utf8'));
+      if (Array.isArray(existingReport.ranking)) {
+        for (const item of existingReport.ranking) {
+          featuresTally[item.feature] = item.count;
+        }
+      }
+    } catch {
+      // ignore
+    }
+  }
+
   const query = `
     SELECT id, title, description, price, currency, type, category, bedrooms, bathrooms,
            location, city, has_pool, electricity, water, cleaning, restrictions, pet_friendly,
-           landmarks, primary_landmark
+           landmarks, primary_landmark, deposit, min_lease
     FROM properties
     WHERE is_active = 1
     ORDER BY id DESC
@@ -388,13 +460,23 @@ async function runGeminiEnrichment(db: any, limit?: number): Promise<void> {
     console.log(`🚀 [Batch ${Math.floor(i / BATCH_SIZE) + 1}/${Math.ceil(targets.length / BATCH_SIZE)}] Processing listings: ${chunk.map((c) => `#${c.id}`).join(', ')}...`);
 
     const startTime = Date.now();
-    const batchResults = await extractListingsBatchWithLLM(batchInput);
+    const batchResults = await extractListingsBatchWithLLM(batchInput, COMPREHENSIVE_AGGREGATOR_INSTRUCTION);
     const duration = Date.now() - startTime;
     console.log(`   ⏱️ Gemini response received in ${(duration / 1000).toFixed(1)}s (extracted ${batchResults.size}/${chunk.length} items)`);
 
     for (const row of chunk) {
       const fullText = `${row.title}\n\n${row.description || ''}`.trim();
       const aiResult = batchResults.get(row.id);
+
+      // Tabulate discovered amenities
+      if (aiResult?.discovered_amenities) {
+        for (const amen of aiResult.discovered_amenities) {
+          const cleanAmen = amen.trim();
+          if (cleanAmen.length > 2) {
+            featuresTally[cleanAmen] = (featuresTally[cleanAmen] || 0) + 1;
+          }
+        }
+      }
 
       // Run Heuristic Regex Extractor for Side-by-Side Comparison
       const regexElec = extractElectricity(fullText);
@@ -428,8 +510,11 @@ async function runGeminiEnrichment(db: any, limit?: number): Promise<void> {
               landmarks: aiResult.landmarks,
               bedrooms: aiResult.bedrooms,
               bathrooms: aiResult.bathrooms,
+              deposit: aiResult.deposit,
+              min_lease: aiResult.min_lease,
               category: aiResult.category,
               location: aiResult.location,
+              discovered_amenities: aiResult.discovered_amenities,
             }
           : null,
         timestamp: new Date().toISOString(),
@@ -473,6 +558,12 @@ async function runGeminiEnrichment(db: any, limit?: number): Promise<void> {
       if (aiResult?.category && !row.category) {
         patch.category = aiResult.category;
       }
+      if (aiResult?.deposit !== null && aiResult?.deposit !== undefined && row.deposit === null) {
+        patch.deposit = aiResult.deposit;
+      }
+      if (aiResult?.min_lease !== null && aiResult?.min_lease !== undefined && row.min_lease === null) {
+        patch.min_lease = aiResult.min_lease;
+      }
 
       // Update Database
       const fields = Object.keys(patch);
@@ -489,9 +580,10 @@ async function runGeminiEnrichment(db: any, limit?: number): Promise<void> {
       checkpoint.totalEnriched++;
     }
 
-    // Save checkpoint after every batch
+    // Save checkpoint and update discovered features report after every batch
     checkpoint.lastRunAt = new Date().toISOString();
     saveCheckpoint(checkpoint);
+    updateDiscoveredReport(featuresTally, checkpoint.totalEnriched);
 
     // Rate limit cooldown (4 seconds between Gemini batches)
     await sleep(4000);

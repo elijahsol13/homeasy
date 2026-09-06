@@ -16,14 +16,19 @@ export interface LLMExtractedListing {
   bedrooms: number | null;
   bathrooms: number | null;
   min_lease: number | null; // in months
+  deposit?: number | null;
   has_pool: boolean;
   electricity?: string | null;
   water?: string | null;
+  cleaning?: string | null;
+  restrictions?: string[];
+  pet_friendly?: boolean;
   landmarks?: string[];
   location: string | null;
   phone_numbers: string[]; // Extract all phone numbers found
   maps_url: string | null;
   description_en: string;
+  discovered_amenities?: string[];
 }
 
 export const VALID_SANGKATS: readonly string[] = [
@@ -145,6 +150,19 @@ function sanitizeLlmResult(rawJson: string): LLMExtractedListing | null {
     const landmarks = Array.isArray(parsed.landmarks)
       ? parsed.landmarks.filter((l): l is string => typeof l === 'string')
       : [];
+    const cleaning = typeof parsed.cleaning === 'string' && parsed.cleaning.trim().length > 0
+      ? parsed.cleaning.trim()
+      : null;
+    const restrictions = Array.isArray(parsed.restrictions)
+      ? parsed.restrictions.filter((r): r is string => typeof r === 'string')
+      : [];
+    const pet_friendly = typeof parsed.pet_friendly === 'boolean' ? parsed.pet_friendly : undefined;
+    const deposit = typeof (parsed as any).deposit_months === 'number'
+      ? (parsed as any).deposit_months
+      : (typeof parsed.deposit === 'number' ? parsed.deposit : null);
+    const discovered_amenities = Array.isArray(parsed.discovered_amenities)
+      ? parsed.discovered_amenities.filter((a): a is string => typeof a === 'string')
+      : [];
 
     return {
       is_real_estate,
@@ -156,14 +174,19 @@ function sanitizeLlmResult(rawJson: string): LLMExtractedListing | null {
       bedrooms,
       bathrooms,
       min_lease,
+      deposit,
       has_pool,
       electricity,
       water,
+      cleaning,
+      restrictions,
+      pet_friendly,
       landmarks,
       location,
       phone_numbers,
       maps_url,
       description_en,
+      discovered_amenities,
     };
   } catch {
     return null;
@@ -331,8 +354,8 @@ export function extractPropertyType(text: string, category?: PropertyCategory | 
 export async function extractListingWithLLM(text: string): Promise<LLMExtractedListing | null> {
   const geminiKey = getGeminiKey();
   if (geminiKey) {
-    // Model hierarchy: from smartest to lightest (uses smartest first, cascades down when quotas exhausted)
-    for (const modelName of ['gemini-3.8-flash', 'gemini-3.6-flash', 'gemini-3.5-flash', 'gemini-3.1-flash-lite', 'gemini-3.5-flash-lite', 'gemini-flash-lite-latest']) {
+    // High-throughput, stable models (500 RPD, no 503 demand spikes): gemini-3.1-flash-lite -> gemini-3.5-flash-lite
+    for (const modelName of ['gemini-3.1-flash-lite', 'gemini-3.5-flash-lite', 'gemini-flash-lite-latest', 'gemini-3.8-flash', 'gemini-3.6-flash']) {
       try {
         if (!genAIInstance) {
           genAIInstance = new GoogleGenerativeAI(geminiKey);
@@ -401,6 +424,7 @@ export async function extractListingWithLLM(text: string): Promise<LLMExtractedL
 
 export async function extractListingsBatchWithLLM(
   items: Array<{ id: string | number; text: string }>,
+  customSystemInstruction?: string,
 ): Promise<Map<string | number, LLMExtractedListing>> {
   const results = new Map<string | number, LLMExtractedListing>();
   if (items.length === 0) return results;
@@ -411,14 +435,15 @@ export async function extractListingsBatchWithLLM(
       items.map((it) => ({ id: it.id, text: it.text })),
     );
 
+    const baseInstruction = customSystemInstruction ?? SYSTEM_INSTRUCTIONS;
     const batchSystemInstruction =
-      SYSTEM_INSTRUCTIONS +
+      baseInstruction +
       '\n\nYou will receive a JSON array of items: `[{"id": ..., "text": "..."}]`.\n' +
       'Return a JSON array of objects: `[{"id": ..., "result": {<schema>}}]` where result matches the extraction schema.\n' +
       'Do not skip any items.';
 
-    // Model hierarchy: from smartest to lightest
-    for (const modelName of ['gemini-3.8-flash', 'gemini-3.6-flash', 'gemini-3.5-flash', 'gemini-3.1-flash-lite', 'gemini-3.5-flash-lite', 'gemini-flash-lite-latest']) {
+    // High-throughput, stable models (500 RPD, no 503 demand spikes)
+    for (const modelName of ['gemini-3.1-flash-lite', 'gemini-3.5-flash-lite', 'gemini-flash-lite-latest', 'gemini-3.8-flash', 'gemini-3.6-flash']) {
       try {
         if (!genAIInstance) {
           genAIInstance = new GoogleGenerativeAI(geminiKey);

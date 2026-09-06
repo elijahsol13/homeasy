@@ -13,6 +13,7 @@ const IGNORED_PATHS = [
   '.env',
   'coverage',
   '.DS_Store',
+  '.vscode',
   'repomix-output.xml',
   'package-lock.json',
 ];
