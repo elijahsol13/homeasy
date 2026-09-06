@@ -47,6 +47,17 @@
 
 ## 🛡️ Core Engineering Highlights
 
+### 0. ⚡ IRONCLAD RULE: RESIDENTIAL PROXY BANDWIDTH PRESERVATION
+> ⚠️ **CRITICAL INVARIANT**: Residential proxy bandwidth is metered and costly ($2–$10+/GB).  
+> **ALWAYS ACTIVELY SEEK, PROPOSE, AND IMPLEMENT BANDWIDTH-SAVING STRATEGIES ACROSS ALL PROXY CODE.**  
+> Wasting proxy bandwidth on media downloads or unfiltered page contexts is treated as a critical regression.
+>
+> 1. **No Unfiltered Contexts**: Never initialize Chromium and navigate (`page.goto`) without active route interception (`page.route` / `attachTrafficGuard`).
+> 2. **100% Binary Media Blocking**: Photo URLs are parsed as strings from GraphQL/REST JSON or DOM attributes. The browser **must NEVER download binary images or videos** over the proxy (saving 85%–95% of bandwidth).
+> 3. **Block Fonts, Styles & Telemetry**: Stylesheets, web fonts, and tracking beacons (`facebook.com/ajax/bz`, `pixel`, analytics) must be aborted unconditionally.
+> 4. **Prefer Lightweight Endpoints**: Prioritize direct JSON API and mobile views (`m.facebook.com`, `mbasic`) over full desktop Chromium page loads.
+> 5. **Selective Proxying**: Only proxy domains that are geo-restricted. Internal services, AI models, and Telegram API never pass through paid proxies.
+
 ### 1. Trio-Container Architecture
 - **`homeasy-bot`**: Telegram Bot UI powered by `grammY`, natural language search (voice note / text query parsing with Gemini), interactive 8-step manual filter wizard, subscriptions, instant push alerts with multi-photo albums (up to 3 photos), and button-driven Admin Dashboard (`/admin`).
 - **`homeasy-scraper`**: Autonomous cyclic worker (12-minute heartbeat), Playwright Stealth with GraphQL network interception, session monitoring, circuit breakers, and automatic garbage collection (`--expose-gc`).

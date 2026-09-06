@@ -405,8 +405,8 @@ async function fetchFeedPage(
         return route.abort();
       }
 
-      // Khmer24 feed API JSON provides photo URLs; images on feed page are purely decorative
-      if (type === 'image' && !url.includes('khmer24.com/photos') && !url.includes('images.khmer24.com')) {
+      // 🛡️ IRONCLAD RULE: Block all images over residential proxy! We only need photo URL strings from feed JSON/HTML.
+      if (type === 'image') {
         return route.abort();
       }
 

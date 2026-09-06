@@ -737,19 +737,11 @@ export async function scrapeFacebookGroup(
         return route.abort();
       }
 
-      // Block non-listing images: emojis, UI icons, profile photos, static sprites
+      // 🛡️ IRONCLAD RULE: Block ALL images over residential proxy!
+      // Photo URLs are extracted as strings directly from GraphQL JSON payload.
+      // Downloading binary image blobs wastes 85%+ of residential proxy traffic with zero benefit.
       if (type === 'image') {
-        const isListingPhoto = url.includes('scontent') || url.includes('fbcdn.net/v/');
-        const isNoise =
-          url.includes('emoji') ||
-          url.includes('rsrc.php') ||
-          url.includes('profile') ||
-          url.includes('static.xx.fbcdn.net') ||
-          url.includes('lookaside');
-
-        if (isNoise || !isListingPhoto) {
-          return route.abort();
-        }
+        return route.abort();
       }
 
       return route.continue();

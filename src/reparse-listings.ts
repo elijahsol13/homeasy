@@ -107,11 +107,11 @@ async function reparseKhmer24(db: any, limit?: number): Promise<void> {
 
   const page = await context.newPage();
 
-  // Abort heavy unnecessary trackers and video
+  // Abort heavy unnecessary assets: images, styles, fonts, trackers, and video
   await page.route('**/*', (route) => {
     const type = route.request().resourceType();
     const u = route.request().url().toLowerCase();
-    if (['font', 'media'].includes(type) || u.includes('google-analytics') || u.includes('doubleclick')) {
+    if (['image', 'font', 'media', 'stylesheet', 'other'].includes(type) || u.includes('google-analytics') || u.includes('doubleclick')) {
       return route.abort();
     }
     return route.continue();
@@ -240,6 +240,33 @@ async function reparseFacebook(db: any, limit?: number): Promise<void> {
   });
 
   const page = await context.newPage();
+
+  // 🛡️ IRONCLAD RULE: Block all images, videos, audio, fonts, stylesheets, and telemetry over residential proxy!
+  await page.route('**/*', (route) => {
+    const req = route.request();
+    const type = req.resourceType();
+    const u = req.url().toLowerCase();
+
+    if (['image', 'media', 'font', 'stylesheet', 'other'].includes(type)) {
+      return route.abort();
+    }
+
+    if (
+      u.includes('google-analytics') ||
+      u.includes('googletagmanager') ||
+      u.includes('doubleclick') ||
+      u.includes('connect.facebook.net') ||
+      u.includes('facebook.com/tr/') ||
+      u.includes('facebook.com/ajax/bz') ||
+      u.includes('logging_client_events') ||
+      u.includes('video') ||
+      u.includes('audio')
+    ) {
+      return route.abort();
+    }
+
+    return route.continue();
+  });
 
   let count = 0;
   for (const row of targets) {
