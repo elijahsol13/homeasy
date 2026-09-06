@@ -182,11 +182,13 @@ export class RemoteBrowserService {
         ],
       });
 
-      const viewport = { width: 1280, height: 800 };
+      const viewport = { width: 414, height: 750 };
       context = await browser.newContext({
         viewport,
+        isMobile: true,
+        hasTouch: true,
         userAgent:
-          'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+          'Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1',
         locale: 'en-US',
       });
 
@@ -195,17 +197,23 @@ export class RemoteBrowserService {
 
       cdp = await context.newCDPSession(page);
 
-      // Start screencast
+      // Start lightweight screencast (414x750 mobile, quality 45, 10x smaller payload)
       await cdp.send('Page.startScreencast', {
         format: 'jpeg',
-        quality: 70,
-        maxWidth: 1280,
-        maxHeight: 800,
-        everyNthFrame: 1,
+        quality: 45,
+        maxWidth: 414,
+        maxHeight: 750,
+        everyNthFrame: 2,
       });
 
+      const wsRaw = socket as any;
       cdp.on('Page.screencastFrame', async ({ data, sessionId }) => {
         if (socket.readyState === 1 /* OPEN */) {
+          // If WebSocket has backlog buffer, drop frame to eliminate lag
+          if (wsRaw.bufferedAmount && wsRaw.bufferedAmount > 48 * 1024) {
+            try { await cdp?.send('Page.screencastFrameAck', { sessionId }); } catch {}
+            return;
+          }
           socket.send(JSON.stringify({ type: 'frame', data }));
           try {
             await cdp?.send('Page.screencastFrameAck', { sessionId });
@@ -217,7 +225,7 @@ export class RemoteBrowserService {
 
       const initialUrl =
         service === 'facebook'
-          ? 'https://www.facebook.com/login'
+          ? 'https://m.facebook.com/login'
           : 'https://www.khmer24.com/en/login';
 
       socket.send(JSON.stringify({ type: 'status', text: `Navigating to ${service}...` }));
@@ -245,13 +253,24 @@ export class RemoteBrowserService {
                 await page.keyboard.press(msg.key);
               }
               break;
+            case 'focus_field':
+              if (msg.field === 'email') {
+                await page.locator('input[type="text"], input[type="email"], input[name="email"], #m_login_email').first().focus().catch(() => {});
+              } else if (msg.field === 'password') {
+                await page.locator('input[type="password"], input[name="pass"], #m_login_password').first().focus().catch(() => {});
+              } else if (msg.field === 'submit') {
+                await page.locator('button[type="submit"], button[name="login"], input[type="submit"]').first().click().catch(() => {});
+              }
+              break;
             case 'scroll':
               if (typeof msg.deltaY === 'number') {
                 await page.mouse.wheel(0, msg.deltaY);
               }
               break;
             case 'reload':
-              await page.reload().catch(() => {});
+              socket.send(JSON.stringify({ type: 'status', text: 'Перезагрузка страницы...' }));
+              await page.reload({ waitUntil: 'domcontentloaded' }).catch(() => {});
+              socket.send(JSON.stringify({ type: 'status', text: 'Готово к вводу' }));
               break;
             case 'save_manual':
               await checkAndSaveSession(true);

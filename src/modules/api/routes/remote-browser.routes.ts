@@ -138,17 +138,31 @@ export const remoteBrowserRoutes: FastifyPluginAsync<RemoteBrowserRoutesOptions>
       display: flex;
       align-items: center;
       justify-content: center;
-      background: #000;
+      background: #0d1117;
       position: relative;
       overflow: hidden;
     }
     #screencast {
       max-width: 100%;
       max-height: 100%;
+      aspect-ratio: 414 / 750;
       object-fit: contain;
       box-shadow: 0 4px 20px rgba(0,0,0,0.5);
+      border-radius: 6px;
       cursor: crosshair;
     }
+
+    .quick-bar {
+      background: #161b22;
+      border-bottom: 1px solid #30363d;
+      padding: 6px 10px;
+      display: flex;
+      gap: 6px;
+      align-items: center;
+      overflow-x: auto;
+      white-space: nowrap;
+    }
+    .quick-bar::-webkit-scrollbar { display: none; }
 
     /* Mobile Text Toolbar */
     #toolbar {
@@ -202,13 +216,20 @@ export const remoteBrowserRoutes: FastifyPluginAsync<RemoteBrowserRoutesOptions>
       </div>
     </div>
     <div class="actions">
-      <button class="btn" onclick="sendAction({ type: 'reload' })">🔄</button>
+      <button class="btn" onclick="reloadPage()">🔄</button>
       <button class="btn btn-primary" onclick="sendAction({ type: 'save_manual' })">💾 Сохранить</button>
     </div>
   </header>
 
+  <div class="quick-bar">
+    <span style="font-size: 11px; color: #8b949e; margin-right: 2px;">Быстрый фокус:</span>
+    <button class="btn" onclick="focusField('email')">👤 Логин</button>
+    <button class="btn" onclick="focusField('password')">🔑 Пароль</button>
+    <button class="btn btn-primary" onclick="focusField('submit')">🚀 Войти</button>
+  </div>
+
   <div id="viewport-container">
-    <canvas id="screencast" width="1280" height="800"></canvas>
+    <canvas id="screencast" width="414" height="750"></canvas>
 
     <div id="overlay-success">
       <div class="success-icon">🎉</div>
@@ -234,8 +255,8 @@ export const remoteBrowserRoutes: FastifyPluginAsync<RemoteBrowserRoutesOptions>
     const overlaySuccess = document.getElementById('overlay-success');
     const successMsg = document.getElementById('success-msg');
 
-    const PAGE_W = 1280;
-    const PAGE_H = 800;
+    const PAGE_W = 414;
+    const PAGE_H = 750;
 
     const loc = window.location;
     const proto = loc.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -292,6 +313,19 @@ export const remoteBrowserRoutes: FastifyPluginAsync<RemoteBrowserRoutesOptions>
       }
     }
 
+    function reloadPage() {
+      statusLabel.textContent = 'Обновление...';
+      sendAction({ type: 'reload' });
+    }
+
+    function focusField(field) {
+      statusLabel.textContent = 'Фокус: ' + (field === 'email' ? 'логин' : field === 'password' ? 'пароль' : 'вход');
+      sendAction({ type: 'focus_field', field });
+      if (field !== 'submit') {
+        inputText.focus();
+      }
+    }
+
     function submitTextInput() {
       const text = inputText.value;
       if (text) {
@@ -306,7 +340,7 @@ export const remoteBrowserRoutes: FastifyPluginAsync<RemoteBrowserRoutesOptions>
       }
     });
 
-    // Touch & Mouse Coordinate Translation to 1280x800 Page
+    // Touch & Mouse Coordinate Translation to 414x750 Page
     function getNormalizedCoords(e) {
       const rect = canvas.getBoundingClientRect();
       const clientX = e.clientX ?? (e.touches && e.touches[0] ? e.touches[0].clientX : 0);
