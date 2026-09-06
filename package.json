@@ -27,6 +27,7 @@
   },
   "dependencies": {
     "@fastify/cors": "^11.3.0",
+    "@fastify/rate-limit": "^11.2.0",
     "@fastify/websocket": "^11.3.0",
     "@google/genai": "^2.20.0",
     "@google/generative-ai": "^0.24.1",

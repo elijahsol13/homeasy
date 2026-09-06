@@ -30,10 +30,24 @@ export const favoritesRoutes: FastifyPluginAsync<{ container: AppContainer }> = 
   /**
    * POST /api/v1/favorites/toggle
    * Toggle save/unsave a property in favorites.
+   * Rate-limited to 30 req/min to prevent automated bot clicking.
    */
   fastify.post(
     '/api/v1/favorites/toggle',
-    { preHandler: requireTelegramAuth },
+    {
+      preHandler: requireTelegramAuth,
+      config: {
+        rateLimit: {
+          max: 30,
+          timeWindow: '1 minute',
+          errorResponseBuilder: (_request, context) => ({
+            statusCode: 429,
+            error: 'Too Many Requests',
+            message: `Too many favorite actions (limit: 30/min). Try again in ${Math.ceil(context.ttl / 1000)} seconds.`,
+          }),
+        },
+      },
+    },
     async (request, reply) => {
       const tgUser = request.telegramUser!;
       const user = container.usersRepo.upsertUser(tgUser.id, tgUser.username ?? null);

@@ -387,4 +387,29 @@ describe('Telegram Mini App (TMA) Backend API', () => {
       expect(toggleRes2.json().totalFavorites).toBe(0);
     });
   });
+
+  // ─── 8. Tiered Rate Limiting ──────────────────────────────────────────────────
+
+  describe('Tiered Rate Limiting Protection', () => {
+    it('enforces heavy route rate limit (max 5 req/min on /admin/remote-browser)', async () => {
+      // Perform 5 requests (allowed)
+      for (let i = 0; i < 5; i++) {
+        const res = await app.inject({
+          method: 'GET',
+          url: '/admin/remote-browser?token=invalid_test_token',
+        });
+        // 401 or 400 is expected for invalid token, but not 429 yet
+        expect(res.statusCode).not.toBe(429);
+      }
+
+      // 6th request must be rejected with 429 Too Many Requests
+      const blockedRes = await app.inject({
+        method: 'GET',
+        url: '/admin/remote-browser?token=invalid_test_token',
+      });
+      expect(blockedRes.statusCode).toBe(429);
+      expect(blockedRes.json()).toHaveProperty('error', 'Too Many Requests');
+      expect(blockedRes.json().message).toContain('Too many remote browser connection attempts');
+    });
+  });
 });
