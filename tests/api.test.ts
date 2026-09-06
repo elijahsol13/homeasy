@@ -138,6 +138,17 @@ describe('Telegram Mini App (TMA) Backend API', () => {
       expect(result.data?.user.username).toBe(mockUser.username);
     });
 
+    it('validates URI-encoded initData containing non-ASCII / Cyrillic characters', () => {
+      const cyrillicUser = { id: 12345678, first_name: 'Илья', username: 'ilya_dev' };
+      const rawInitData = createMockTelegramInitData(cyrillicUser, testBotToken);
+      const encodedInitData = encodeURIComponent(rawInitData);
+
+      const result = validateTelegramInitData(encodedInitData, testBotToken);
+      expect(result.isValid).toBe(true);
+      expect(result.data?.user.id).toBe(cyrillicUser.id);
+      expect(result.data?.user.first_name).toBe('Илья');
+    });
+
     it('rejects tampered data with mismatched HMAC hash', () => {
       const validInitData = createMockTelegramInitData(mockUser, testBotToken);
       // Tamper user ID in payload
