@@ -1,3 +1,4 @@
+import fs from 'node:fs';
 import { runKhmer24Scraper } from '../modules/parser/khmer24.scraper';
 import { runFacebookScraper } from '../modules/parser/facebook.scraper';
 import { createDatabaseBackup } from '../database/backup';
@@ -89,6 +90,21 @@ export class ScraperWorker {
     }
   }
 
+  private async checkDiskSpace(): Promise<void> {
+    try {
+      const checkPath = fs.existsSync(env.DATABASE_PATH) ? env.DATABASE_PATH : process.cwd();
+      const stat = fs.statfsSync(checkPath);
+      if (stat.blocks > 0) {
+        const freePercent = (stat.bfree / stat.blocks) * 100;
+        if (freePercent < 15) {
+          await this.container.alertService.critical('<b>Заканчивается место на диске!</b> Осталось менее 15%.');
+        }
+      }
+    } catch (err) {
+      console.warn('⚠️ [Worker] Failed to check disk space:', err);
+    }
+  }
+
   private async checkAndRunMaintenance(): Promise<void> {
     const now = Date.now();
     if (now - this.lastMaintenanceAt < this.MAINTENANCE_INTERVAL_MS) {
@@ -97,6 +113,9 @@ export class ScraperWorker {
 
     console.log(`\n🛡️ [Worker] Starting scheduled database maintenance at ${new Date().toISOString()}...`);
     try {
+      // Step 0: Disk space check
+      await this.checkDiskSpace();
+
       // Step 1: Pre-maintenance backup
       console.log('📦 [Worker] Creating pre-maintenance database backup...');
       const backupResult = createDatabaseBackup();
@@ -208,6 +227,13 @@ export class ScraperWorker {
             this.hourlyStats.facebook.inserted += fbStats.inserted;
             this.hourlyStats.facebook.duplicates += fbStats.duplicates;
             this.hourlyStats.facebook.errors += fbStats.errors;
+
+            // Zero Yield Anomaly: warn admins if Facebook returned 0 listings
+            if (fbStats.inserted === 0 && fbStats.totalScraped === 0) {
+              await this.container.alertService.warn(
+                '<b>Zero Yield:</b> Скрапер FB отработал, но не нашел ни одного поста. Проверьте верстку GraphQL.',
+              );
+            }
 
             // Persist to historical metrics table
             try {

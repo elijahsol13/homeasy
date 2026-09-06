@@ -33,6 +33,7 @@ async function main(): Promise<void> {
 
   const bot = createBot(container);
   container.notifierService.setApi(bot.api);
+  container.alertService.setApi(bot.api);
 
   // Start sequential worker
   startWorker(container, 12);

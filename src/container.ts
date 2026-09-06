@@ -8,6 +8,7 @@ import { FavoritesRepository } from './database/repositories/favorites.repo';
 import { MetricsRepository } from './database/repositories/metrics.repo';
 import { AnalyticsRepository } from './database/repositories/analytics.repo';
 import { NotifierService } from './services/notifier';
+import { AlertService } from './services/alert.service';
 import { MatcherService } from './modules/matcher/matcher';
 import { IngestionService } from './modules/parser/ingestor';
 import { RemoteBrowserService } from './services/remote-browser.service';
@@ -24,6 +25,7 @@ export interface AppContainer {
   matcherService: MatcherService;
   ingestionService: IngestionService;
   remoteBrowserService: RemoteBrowserService;
+  alertService: AlertService;
 }
 
 export interface CreateContainerOptions {
@@ -44,6 +46,7 @@ export function createContainer(options?: CreateContainerOptions): AppContainer 
   const metricsRepo = new MetricsRepository(db);
   const analyticsRepo = new AnalyticsRepository(db);
   const notifierService = new NotifierService(options?.api);
+  const alertService = new AlertService(options?.api);
   const matcherService = new MatcherService(filtersRepo, usersRepo, propertiesRepo, notifierService);
   const ingestionService = new IngestionService(propertiesRepo, matcherService);
 
@@ -58,6 +61,7 @@ export function createContainer(options?: CreateContainerOptions): AppContainer 
     notifierService,
     matcherService,
     ingestionService,
+    alertService,
   } as AppContainer;
 
   container.remoteBrowserService = new RemoteBrowserService(container);

@@ -119,7 +119,7 @@ async function route(ctx: MyContext, data: string): Promise<void> {
     if (!isNaN(id)) {
       const { reports_count, is_active } = ctx.container.propertiesRepo.reportProperty(id);
       if (!is_active) {
-        console.log(`🚩 Property #${id} has been deactivated (reached ${reports_count} reports)`);
+        await ctx.container.alertService.warn('Объект #' + id + ' скрыт из-за превышения лимита жалоб.');
       }
       ctx.container.analyticsRepo.trackEvent({
         userId: ctx.from ? ctx.container.usersRepo.findByTelegramId(ctx.from.id)?.id : null,

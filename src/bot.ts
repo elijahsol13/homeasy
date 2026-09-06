@@ -19,8 +19,9 @@ export async function runBot(): Promise<void> {
   // 2. Create the grammY bot instance with injected container
   const bot = createBot(container);
 
-  // 3. Register active bot API instance with notifier service
+  // 3. Register active bot API instance with notifier and alert services
   container.notifierService.setApi(bot.api);
+  container.alertService.setApi(bot.api);
 
   // 4. Register bot command hints in Telegram UI
   await bot.api.setMyCommands([
