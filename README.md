@@ -1,117 +1,166 @@
-# 🏡 HomEasy — Cambodia Real Estate Aggregator & Telegram Bot
+# 🏡 HomEasy — Cambodia Real Estate Aggregator, Telegram Bot & Mini App
 
-> Production-grade real estate aggregator and Telegram bot for **Siem Reap** and **Phnom Penh**, Cambodia.
+> Enterprise-grade real estate aggregator, notification bot, and interactive Telegram Mini App (TMA) for **Siem Reap** and **Phnom Penh**, Cambodia.
 
-Built with **TypeScript · Node.js 22+ · grammY · native SQLite (WAL) · Playwright Stealth · Google Gemini 2.5 Flash · Sharp (pHash) · Docker Compose**.
-
----
-
-## ✨ Features
-
-- **Dual-Container Architecture:** Separate `bot` (Telegram polling & user UI) and `scraper` (Playwright worker with circuit breakers and session monitoring) containers sharing a persistent SQLite volume in WAL mode.
-- **Smart Notification Cards:** Dynamic cards featuring property type (`Flat House`, `Private Villa`, `Condo`, `Apartment`, `Hotel Room`), 3-way location cross-validation (`📍 Sala Kamreuk ↗`), and clickable golden landmarks (`🚩 Landmark: Pub Street / Old Market ↗`).
-- **Cambodian Utilities & Specs:** Auto-extracts electricity (`⚡ EDC ~$0.20/kWh` or fixed rates) and water (`💧 Included`, `State Rate ~1000៛/m³`, or `$5/person`), cleaning frequencies, and house rules/restrictions (`🚫 No Pets`, `🚭 No Smoking`).
-- **Geo-Sanity & Consensus Engine:** Validates coordinates against city boundaries, rejects pins inside water bodies (Lake Tonle Sap), and enforces a 2-against-1 majority consensus across coordinates, listing text, and category dropdowns.
-- **Multi-Image Deduplication:** Computes 64-bit dHash perceptual image hashes with Sharp across multiple photos alongside weighted attribute scoring (price ±5%, rooms, phone, category).
-- **Resilient AI Extraction Cascade:** Cascades through `gemini-2.5-flash` ➔ `gemini-2.5-flash-lite` ➔ `gpt-4o-mini` ➔ regex heuristics, featuring batching (5–10 items) to conserve API quotas.
-- **Scraper Circuit Breaker:** Isolated scraping loops with automatic error handling, exponential backoff, and Telegram admin alerts for expired cookies (Facebook and Khmer24).
-- **Persistent Scraper Metrics & Analytics:** Long-term historical database tracking (`scraper_metrics`, `usage_events`) with hourly Telegram Heartbeat reports.
-- **Remote Visual Browser Streaming:** Mobile-friendly interactive CDP browser screencast for 100% human-driven Facebook (proxied) and Khmer24 authentication.
-- **macOS APFS Hardening:** Guaranteed repository durability with hardware fsync and Spotlight exclusion.
+Built with **TypeScript · Node.js 22+ · grammY · Native SQLite (WAL) · Fastify · React / Vite · Playwright Stealth · Google Gemini 2.5 Flash · Sharp (pHash) · Docker Compose**.
 
 ---
 
 ## 🛡️ Critical Architectural Principle: Facebook Scraping & Authentication
 
 > ⚠️ **Критический архитектурный закон HomEasy**:  
-> **Вход в Facebook через консольные скрипты или headless-автоматизацию ввода паролей — это верный путь к мгновенному чекпоинту или блокировке аккаунта.**  
-> В связи с этим в проекте HomEasy строго зафиксировано:
-> 1. **Обязательный резидентный прокси:** Любые сетевые обращения к Facebook (парсинг и авторизация) маршрутизируются исключительно через резидентный камбоджийский прокси (`FB_PROXY`). Запуск без прокси заблокирован на уровне кода с алертом админу.
-> 2. **Исключительно визуальный вход человеком:** Авторизация Facebook ДОЛЖНА осуществляться человеком через реальный графический интерфейс (с живыми интервалами ввода, решением 2FA и чекпоинтов безопасности). Любой программный headless-ввод учетных данных запрещен.
-> 3. **Удаленная авторизация с телефона (Remote Browser Streaming):** Для удобного входа с мобильного телефона в Telegram реализован веб-интерфейс (`/auth_fb`): сервер запускает Chromium через прокси и транслирует живой экран (CDP Screencast) на телефон. Вы пальцем вводите пароль и 2FA в реальном окне Facebook, а сессия автоматически сохраняется в `data/fb_session.json`.
+> **Вход в Facebook через консольные скрипты или headless-автоматизацию ввода паролей — это верный путь к мгновенному чекпоинту или блокировке аккаунта.**
+
+В связи с этим в проекте HomEasy строго действуют следующие правила:
+1. **Обязательный резидентный прокси (`FB_PROXY`):** Любые сетевые обращения к Facebook (парсинг и авторизация) маршрутизируются исключительно через резидентный камбоджийский прокси. Запуск скрапинга или авторизации без прокси заблокирован на уровне кода с мгновенным алертом администратору.
+2. **Исключительно визуальный вход человеком:** Авторизация Facebook осуществляется исключительно человеком через реальный графический браузер (с естественными интервалами ввода, решением капчи, 2FA и подтверждением доверенных устройств). Любой программный headless-ввод логина/пароля категорически запрещен.
+3. **Удаленная авторизация со смартфона (Remote Browser Streaming):** Для управления сервером на лету без необходимости открывать SSH/VNC реализован встроенный движок удаленного стриминга браузера (`/auth_fb` и `/auth_k24`). Сервер запускает Playwright Chromium через резидентный прокси и транслирует экран (CDP Screencast) через WebSocket прямо в веб-интерфейс на телефоне. Администратор пальцем вводит данные в реальное окно Facebook, а сессия автоматически сохраняется в `data/fb_session.json`.
 
 ---
 
-## 🗂 Architecture & Code Structure
+## ✨ Ключевые возможности
+
+### 1. Архитектура трех контейнеров (Trio-Container Architecture)
+- **`bot`**: Поллинг и UI Telegram-бота (grammY), 8-шаговый визард поиска, подписки, мгновенные пуш-уведомления.
+- **`scraper`**: Автономный воркер (Playwright Stealth + GraphQL API), циклический скрапинг Khmer24 и целевых групп Facebook, контроль сессий, circuit breakers.
+- **`api`**: Высокопроизводительный сервер (Fastify), обслуживающий Telegram Mini App (TMA) и WebSocket-сессии удаленного браузера.
+- **SQLite WAL**: Единая база данных `data/homeasy.db` в режиме Write-Ahead Logging с поддержкой параллельного чтения несколькими процессами.
+
+### 2. Telegram Mini App (TMA)
+- Полноценная витрина объявлений прямо внутри Telegram (React + Tailwind CSS + Lucide Icons).
+- Безопасная авторизация через криптографическую валидацию Telegram `initData` по алгоритму HMAC-SHA256.
+- Каталог с фильтрацией по городам, категориям, диапазону цен, бассейнам, спальням.
+- Быстрый просмотр деталей с галереей фото, контактами и гео-привязкой.
+- Персональные избранные объявления (`favorites`).
+- Деплой фронтенда на Cloudflare Pages с поддержкой SPA-роутинга (`_redirects`).
+
+### 3. Удаленная визуальная авторизация (Remote Browser Screencast)
+- Команды админа `/auth_fb` и `/auth_k24` с генерацией защищенных одноразовых токенов (15 мин TTL).
+- Полноценный мобильный touch-клиент на HTML5 Canvas со вспомогательной панелью ввода (`Backspace`, `Enter`, `Tab`).
+- Автоматический перехват авторизационных кук (`c_user` для FB) и мгновенное сохранение сессии в JSON без необходимости перезапуска контейнеров.
+
+### 4. Умный парсинг и Cambodian Real Estate Heuristics
+- **3-Way Location Consensus:** Кросс-валидация локации между координатами GPS, текстом объявления и категорией лота. Автоматическое отсечение нереалистичных координат и точек на воде (озеро Тонлесап).
+- **Golden Landmarks:** Автоопределение расстояния и привязка к ключевым ориентирам (Pub Street, Old Market, Angkor Wat, Russian Market и др.).
+- **Камбоджийские коммунальные тарифы:** Извлечение тарифов на электричество (EDC ~$0.20/kWh или фикс), воду (государственный тариф ~1000៛/m³, включено или $5/чел), уборку и ограничения (No Pets, No Smoking).
+
+### 5. Дедупликация и объединение объявлений (Smart Merge)
+- Вычисление 64-битных перцептивных хэшей изображений (Sharp dHash) по нескольким фото.
+- Взвешенный скоринг схожести: совпадение цен (±5%), комнатности, телефона агента и категории.
+- Объединение дублей: сохранение истории цен, обновление свежести объявления без спама пользователям повторными уведомлениями.
+
+### 6. Долгосрочные метрики и продуктовая аналитика (Heartbeat)
+- Персистентное сохранение результатов каждого запуска скрапера в таблицу `scraper_metrics` (время, найдено, дубли, ошибки, статус прокси).
+- Трекинг пользовательской активности в `usage_events` (клики в боте, открытие TMA, просмотр карточек).
+- Автоматический ежечасный отчет в Telegram (Telegram Heartbeat) с часовой, суточной и общей сводкой работы системы, а также команда `/stats`.
+
+### 7. Надежность файловой системы macOS APFS
+- Исключение служебных файлов `.git` из индексации Spotlight (`.metadata_never_index`).
+- Включение аппаратного `fsync` (`fcntl(F_FULLFSYNC)`) и отключение ложных проверок `trustctime` для исключения повреждения кэша Git.
+
+---
+
+## 🗂 Структура проекта
 
 ```
-src/
-├── config/
-│   ├── env.ts               # Zod-validated environment config
-│   ├── settings.ts          # Districts, sangkats, rates & thresholds
-│   ├── locations.ts         # Geo-bounds, Haversine distance, 3-way consensus
-│   └── landmarks.ts         # Golden landmarks dictionary & text extractor
-├── database/
-│   ├── db.ts                # node:sqlite singleton in WAL mode
-│   ├── migrate.ts           # Append-only migrations
-│   └── repositories/        # users, filters, properties, favorites
-├── modules/
-│   ├── bot/                 # grammY bot, 8-step wizard, interactive keyboards
-│   ├── matcher/             # User filter matching engine
-│   └── parser/              # Facebook & Khmer24 scrapers, LLM extractors, Sharp pHash
-└── services/
-    ├── notifier.ts          # Rate-limited Telegram card dispatcher
-    ├── scheduler.ts         # ScraperWorker daemon loop & cron
-    └── backup.ts            # Daily automated SQLite backups
+homeasy/
+├── src/
+│   ├── config/              # Zod-схема окружения, гео-зоны, лендмарки, константы
+│   │   ├── env.ts           # Валидация переменных окружения
+│   │   ├── locations.ts     # Координаты городов, районов и 3-way consensus
+│   │   └── landmarks.ts     # Каталог золотых ориентиров Камбоджи
+│   ├── database/            # SQLite база данных и репозитории
+│   │   ├── db.ts            # Singleton подключения к SQLite в режиме WAL
+│   │   ├── migrate.ts       # Накатываемые миграции (v1 - v10)
+│   │   └── repositories/    # Properties, Filters, Users, Metrics, Analytics
+│   ├── modules/
+│   │   ├── api/             # Fastify сервер: REST API для TMA и WebSocket screencast
+│   │   ├── bot/             # Telegram бот grammY: хендлеры, сессии, визард
+│   │   ├── matcher/         # Движок сопоставления объявлений с фильтрами клиентов
+│   │   └── parser/          # Скраперы Facebook (GraphQL) и Khmer24, AI-экстракторы
+│   └── services/
+│       ├── remote-browser.service.ts # Playwright CDP screencast движок
+│       ├── scheduler.ts     # Расписание скраперов, health-чеки, Heartbeat
+│       └── notifier.ts      # Формирование и рассылка карточек в Telegram
+├── webapp/                  # Исходный код Telegram Mini App (React + Vite + Tailwind)
+├── docker-compose.yml       # Конфигурация запуска bot + scraper + api
+├── package.json
+└── README.md
 ```
 
 ---
 
-## 🚀 Deployment & Quickstart
+## ⚙️ Переменные окружения (.env)
 
-### 1. Environment Configuration
+| Переменная | Обязательна | По умолчанию | Описание |
+| :--- | :---: | :---: | :--- |
+| `BOT_TOKEN` | Да | — | Токен Telegram-бота от @BotFather |
+| `ADMIN_IDS` | Да | — | Telegram ID администраторов (через запятую) |
+| `GEMINI_API_KEY` | Да | — | API-ключ Google AI Studio (Gemini 2.5 Flash) |
+| `OPENAI_API_KEY` | Нет | — | Fallback API-ключ OpenAI (gpt-4o-mini) |
+| `DATABASE_PATH` | Да | `./data/homeasy.db` | Путь к файлу базы данных SQLite |
+| `FB_PROXY` | **Да для FB** | — | Резидентный камбоджийский HTTP/SOCKS5 прокси |
+| `API_PORT` | Нет | `3000` | Порт Fastify API сервиса |
+| `API_HOST` | Нет | `0.0.0.0` | Хост Fastify API сервиса |
+| `API_PUBLIC_URL` | Нет | — | Публичный HTTPS URL API (для мобильного стриминга) |
+| `WEBAPP_URL` | Нет | — | URL развернутого TMA-фронтенда (Cloudflare Pages) |
 
-Copy `.env.example` to `.env`:
+---
 
-```bash
-cp .env.example .env
-```
+## 🚀 Запуск и эксплуатация
 
-Key environment variables:
-
-```env
-BOT_TOKEN=1234567890:ABCdefGHIjklMNOpqrSTUvwxYZ
-ADMIN_IDS=123456789
-GEMINI_API_KEY=AIzaSy...
-DATABASE_PATH=/app/data/homeasy.db
-BACKUP_PATH=/app/backups
-NODE_ENV=production
-```
-
-### 2. Docker Compose (Production)
-
-Run the dual-container setup:
+### 1. Локальная разработка
 
 ```bash
-docker compose up -d --build
-```
-
-- **Bot Container:** Handles real-time Telegram interactions, instant notifications, and alerts.
-- **Scraper Container:** Executes Playwright headless scraping for Khmer24 and Facebook with 20-minute intervals and session health checks.
-
-### 3. Local Development & Testing
-
-```bash
-# Install dependencies & browsers
+# 1. Установка зависимостей бэкенда и фронтенда
 npm install
+npm --prefix webapp install
+
+# 2. Установка браузера Playwright
 npx playwright install chromium
 
-# Run automated test suites (169+ tests)
+# 3. Настройка переменных окружения
+cp .env.example .env
+# Заполните BOT_TOKEN, ADMIN_IDS, GEMINI_API_KEY, FB_PROXY
+
+# 4. Запуск тестов (18 сьютов, 208 тестов)
 npm test
 
-# Build TypeScript
-npm run build
+# 5. Запуск сервисов в режиме разработки
+npm run dev        # Бэкенд
+npm run dev:webapp # TMA фронтенд (http://localhost:5173)
+```
+
+### 2. Запуск в продакшене (Docker Compose)
+
+```bash
+# Сборка и запуск всех трех сервисов в фоне
+docker compose up -d --build
+
+# Проверка статуса контейнеров
+docker compose ps
+
+# Просмотр логов
+docker compose logs -f
 ```
 
 ---
 
-## 🛠 Manual Scraper Commands
+## 🛠 Команды администратора в Telegram
 
-```bash
-# Manual Facebook login session bootstrap
-npm run fb:login
+| Команда | Описание |
+| :--- | :--- |
+| `/start` | Запуск бота, главное меню и быстрый запуск Mini App |
+| `/auth_fb` | Инициация удаленной авторизации в Facebook через резидентный прокси |
+| `/auth_k24` | Инициация удаленной авторизации в Khmer24 |
+| `/stats` | Сводка по спарсенным объявлениям (1ч / 24ч / все время) и активным пользователям |
+| `/backup` | Создание мгновенной резервной копии базы данных SQLite |
 
-# Run one-off scrapers
-npm run scrape:fb
-npm run scrape:khmer24
-```
+---
+
+## 📋 Бэклог и следующие шаги развития
+
+Подробный роадмап и инженерные спецификации зафиксированы в [BACKLOG.md](file:///Users/lacr0s/Projects/homeasy/BACKLOG.md):
+1. **AI Natural Language Search Alert:** Создание поисковой подписки из произвольного текста пользователя (Gemini Flash-Lite).
+2. **Voice-to-Filter:** Преобразование голосовых сообщений из Telegram в структурированный фильтр.
+3. **Миграция v10:** Вынесение коммунальных тарифов и ограничений (`utilities`, `restrictions`) в отдельные индексированные колонки базы для точной SQL-фильтрации.
