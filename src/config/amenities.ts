@@ -347,3 +347,4 @@ export const CANONICAL_AMENITIES: AmenityDefinition[] = [
     isFilterable: false,
   },
 ];
+

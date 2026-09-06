@@ -46,3 +46,5 @@ backups/
 *.zip
 data/reparse_checkpoint.json
 data/ai_extraction_eval.json
+data/discovered_features_report.json
+

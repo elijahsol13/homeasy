@@ -36,8 +36,37 @@ export const App: React.FC = () => {
   // Navigation & Filter states
   const [activeTab, setActiveTab] = useState<ActiveTab>('feed');
   const [filters, setFilters] = useState<FilterState>(INITIAL_FILTERS);
+  const [isStorageReady, setIsStorageReady] = useState(false);
   const [metadata, setMetadata] = useState<FilterMetadata | null>(null);
   const [isFilterOpen, setIsFilterOpen] = useState(false);
+
+  // Restore saved filter state on mount (anti-flicker)
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem('homeasy_filters');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (parsed && typeof parsed === 'object') {
+          setFilters((prev) => ({ ...prev, ...parsed }));
+        }
+      }
+    } catch {
+      // ignore
+    } finally {
+      setIsStorageReady(true);
+    }
+  }, []);
+
+  // Persist filters on change
+  useEffect(() => {
+    if (isStorageReady) {
+      try {
+        localStorage.setItem('homeasy_filters', JSON.stringify(filters));
+      } catch {
+        // ignore
+      }
+    }
+  }, [filters, isStorageReady]);
 
   // Property feed states
   const [properties, setProperties] = useState<PropertyDTO[]>([]);
@@ -88,6 +117,7 @@ export const App: React.FC = () => {
 
   // Fetch properties on filter change (debounced for search query)
   useEffect(() => {
+    if (!isStorageReady) return;
     let active = true;
     setLoading(true);
     setError(null);
