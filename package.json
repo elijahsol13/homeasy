@@ -21,6 +21,7 @@
     "scrape:fb": "ts-node src/modules/parser/facebook.scraper.ts",
     "db:enrich": "ts-node src/database/enrich-properties.ts",
     "db:backup": "ts-node src/database/backup.ts",
+    "reparse:listings": "ts-node scripts/reparse-listings.ts",
     "pack": "node scripts/pack-codebase.js",
     "test": "jest"
   },
