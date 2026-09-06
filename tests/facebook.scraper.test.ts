@@ -2,8 +2,15 @@ import {
   cleanFacebookUrl,
   extractPhoneFromText,
   parseFacebookPostText,
+  extractStoriesFromGraphQL,
+  extractTextFromStory,
+  extractPhotosFromStory,
+  extractUrlFromStory,
+  extractDateFromStory,
+  extractPostsFromFbGraphQL,
   FB_GROUP_TARGETS,
   type FBGroupTarget,
+  type FbGraphQLStoryNode,
 } from '../src/modules/parser/facebook.scraper';
 import { RawListingSchema } from '../src/modules/parser/schemas';
 
@@ -137,6 +144,147 @@ describe('Facebook Scraper', () => {
       const err = new FacebookSessionExpiredError('Test session error');
       expect(err.name).toBe('FacebookSessionExpiredError');
       expect(err.message).toBe('Test session error');
+    });
+  });
+
+  describe('Facebook GraphQL API Extraction Engine', () => {
+    const sampleStory: FbGraphQLStoryNode = {
+      __typename: 'Story',
+      id: 'S:_I123456:9988776655',
+      post_id: '9988776655',
+      creation_time: 1725600000,
+      comet_sections: {
+        context_layout: {
+          story: {
+            comet_sections: {
+              metadata: [
+                {
+                  story: {
+                    creation_time: 1725600000,
+                    url: 'https://www.facebook.com/groups/siemreaprealestate/posts/9988776655/?__cft__[0]=AZX',
+                  },
+                },
+              ],
+            },
+          },
+        },
+        content: {
+          story: {
+            message: {
+              text: 'Modern 2BR apartment for rent in Wat Bo, Siem Reap. $450/month with pool and wifi. Contact: 012 345 678',
+            },
+            attachments: [
+              {
+                styles: {
+                  attachment: {
+                    media: {
+                      photo_image: {
+                        uri: 'https://scontent.fpnh1-1.fna.fbcdn.net/v/t39.30808-6/photo1.jpg?stp=dst-jpg',
+                      },
+                    },
+                    all_subattachments: {
+                      nodes: [
+                        {
+                          media: {
+                            image: {
+                              uri: 'https://scontent.fpnh1-1.fna.fbcdn.net/v/t39.30808-6/photo2.jpg?stp=dst-jpg',
+                            },
+                          },
+                        },
+                      ],
+                    },
+                  },
+                },
+              },
+            ],
+          },
+        },
+      },
+    };
+
+    test('extractStoriesFromGraphQL finds Story nodes in Relay response', () => {
+      const relayResponse = {
+        data: {
+          node: {
+            __typename: 'Group',
+            group_feed: {
+              edges: [
+                { cursor: 'cur1', node: sampleStory },
+                { cursor: 'cur2', node: { __typename: 'Ad' } }, // ignored
+              ],
+            },
+          },
+        },
+      };
+
+      const stories = extractStoriesFromGraphQL(relayResponse);
+      expect(stories.length).toBe(1);
+      expect(stories[0]!.post_id).toBe('9988776655');
+    });
+
+    test('extractTextFromStory extracts complete message and strips UI noise', () => {
+      const text = extractTextFromStory(sampleStory);
+      expect(text).toContain('Modern 2BR apartment for rent in Wat Bo');
+      expect(text).toContain('$450/month');
+      expect(text).not.toContain('See more');
+    });
+
+    test('extractPhotosFromStory extracts primary and subattachment photo URLs', () => {
+      const photos = extractPhotosFromStory(sampleStory);
+      expect(photos.length).toBe(2);
+      expect(photos[0]).toContain('photo1.jpg');
+      expect(photos[1]).toContain('photo2.jpg');
+    });
+
+    test('extractUrlFromStory extracts permalink and cleans tracking params', () => {
+      const url = extractUrlFromStory(sampleStory, defaultTarget.url);
+      expect(url).toBe('https://www.facebook.com/groups/siemreaprealestate/posts/9988776655/');
+      expect(url).not.toContain('__cft__');
+    });
+
+    test('extractDateFromStory converts epoch timestamp to ISO string', () => {
+      const dateStr = extractDateFromStory(sampleStory);
+      expect(dateStr).toBeDefined();
+      expect(new Date(dateStr!).getTime()).toBe(1725600000 * 1000);
+    });
+
+    test('extractPostsFromFbGraphQL handles complete feed JSON into parsed posts', () => {
+      const relayResponse = {
+        data: {
+          node: {
+            __typename: 'Group',
+            group_feed: {
+              edges: [{ node: sampleStory }],
+            },
+          },
+        },
+      };
+
+      const posts = extractPostsFromFbGraphQL(relayResponse, defaultTarget.url);
+      expect(posts.length).toBe(1);
+      expect(posts[0]!.id).toBe('9988776655');
+      expect(posts[0]!.text).toContain('Modern 2BR apartment');
+      expect(posts[0]!.photos.length).toBe(2);
+      expect(posts[0]!.postUrl).toBe(
+        'https://www.facebook.com/groups/siemreaprealestate/posts/9988776655/',
+      );
+    });
+
+    test('extractTextFromStory falls back to comet_sections.message.story.text', () => {
+      const alternativeStory: FbGraphQLStoryNode = {
+        __typename: 'Story',
+        id: '12345',
+        comet_sections: {
+          message: {
+            story: {
+              text: 'Cozy wooden bungalow for rent in Svay Dangkum $300/mo. Phone: 089 999 888',
+            },
+          },
+        },
+      };
+
+      const text = extractTextFromStory(alternativeStory);
+      expect(text).toContain('Cozy wooden bungalow');
     });
   });
 });

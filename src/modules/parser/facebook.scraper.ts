@@ -1,13 +1,13 @@
 /**
- * Facebook Groups Real Estate Scraper
+ * Facebook Groups Real Estate Scraper — GraphQL API Interception Architecture
  *
  * Architecture:
  *  - Uses Playwright with Stealth plugin and saved session cookies (`./data/fb_session.json`).
  *  - Navigates to targeted Facebook Groups (e.g., Siem Reap real estate & rental groups).
- *  - Emulates human-like scrolling behavior with randomized delays to trigger React lazy-loading.
- *  - Expands "See more" post buttons to capture complete text.
- *  - Extracts post permalinks, text content, and photos (for pHash deduplication).
- *  - Feeds extracted data through `extractor.ts` heuristics to structure price, location, bedrooms, etc.
+ *  - Intercepts internal GraphQL API responses (`/api/graphql/`) via `page.on('response')`.
+ *  - Recursively extracts full un-truncated post text, direct photo URLs, and timestamps from Relay Comet nodes.
+ *  - Emulates human-like scrolling behavior with randomized delays to trigger React GraphQL pagination.
+ *  - Feeds extracted data through `extractor.ts` heuristics/LLM to structure price, location, bedrooms, etc.
  *  - Ingests clean listings into the `ingestRawListing` pipeline with automatic deduplication.
  */
 
@@ -293,141 +293,381 @@ export function parseFacebookRelativeDate(dateStr?: string, nowMs = Date.now()):
   return undefined;
 }
 
-// ─── DOM Post Extractor ───────────────────────────────────────────────────────
+// ─── Facebook GraphQL API Types ───────────────────────────────────────────────
 
-interface ExtractedDomPost {
+export interface FbGraphQLStoryNode {
+  __typename?: string;
+  id?: string;
+  post_id?: string;
+  url?: string;
+  creation_time?: number | string;
+  message?: { text?: string };
+  shareable?: { url?: string; id?: string };
+  comet_sections?: {
+    context_layout?: {
+      story?: {
+        comet_sections?: {
+          metadata?: Array<{
+            story?: {
+              creation_time?: number | string;
+              url?: string;
+            };
+          }>;
+        };
+      };
+    };
+    content?: {
+      story?: {
+        message?: { text?: string };
+        wwwURL?: string;
+        comet_sections?: {
+          message_container?: {
+            story?: {
+              message?: { text?: string };
+            };
+          };
+        };
+        attachments?: Array<{
+          styles?: {
+            attachment?: {
+              media?: {
+                photo_image?: { uri?: string };
+                image?: { uri?: string };
+              };
+              all_subattachments?: {
+                nodes?: Array<{
+                  media?: {
+                    image?: { uri?: string };
+                    photo_image?: { uri?: string };
+                  };
+                }>;
+              };
+            };
+          };
+        }>;
+      };
+    };
+    message?: {
+      story?: {
+        text?: string;
+        message?: { text?: string };
+      };
+    };
+  };
+  attachments?: Array<unknown>;
+  [key: string]: unknown;
+}
+
+export interface FbGraphQLEdge {
+  node?: FbGraphQLStoryNode;
+  cursor?: string;
+  [key: string]: unknown;
+}
+
+export interface FbGraphQLFeedResponse {
+  data?: {
+    node?: {
+      __typename?: string;
+      group_feed?: {
+        edges?: FbGraphQLEdge[];
+        page_info?: { end_cursor?: string; has_next_page?: boolean };
+      };
+      [key: string]: unknown;
+    };
+    viewer?: {
+      news_feed?: { edges?: FbGraphQLEdge[] };
+      [key: string]: unknown;
+    };
+    [key: string]: unknown;
+  };
+  [key: string]: unknown;
+}
+
+export interface ParsedFbGraphQLPost {
+  id?: string;
   text: string;
-  url: string;
+  postUrl: string;
   photos: string[];
   rawDate?: string;
 }
 
+// ─── GraphQL Extraction Engine ────────────────────────────────────────────────
+
 /**
- * Extracts visible posts from the Facebook group feed in the browser page context.
- * Targets ONLY message body, explicitly excluding UI noise, timestamps, and author text.
+ * Recursively traverses any nested GraphQL response object to discover all Story nodes.
  */
-async function extractPostsFromPage(page: Page): Promise<ExtractedDomPost[]> {
-  return page.evaluate(() => {
-    const doc = (
-      globalThis as unknown as {
-        document: {
-          querySelectorAll: (sel: string) => { forEach: (cb: (unit: unknown) => void) => void };
-        };
+export function extractStoriesFromGraphQL(root: unknown): FbGraphQLStoryNode[] {
+  const stories: FbGraphQLStoryNode[] = [];
+  const visited = new Set<unknown>();
+
+  function walk(curr: unknown): void {
+    if (!curr || typeof curr !== 'object' || visited.has(curr)) return;
+    visited.add(curr);
+
+    if (Array.isArray(curr)) {
+      for (const item of curr) walk(item);
+      return;
+    }
+
+    const obj = curr as Record<string, unknown>;
+
+    // Check if current object represents a top-level Story node
+    const isStory =
+      (obj.__typename === 'Story' && (obj.id != null || obj.post_id != null || obj.comet_sections != null)) ||
+      (obj.comet_sections != null && typeof obj.comet_sections === 'object');
+
+    if (isStory) {
+      stories.push(obj as FbGraphQLStoryNode);
+      // A Story's internal comet_sections contain child story fragments of the same post.
+      // Avoid recursing deeper inside this story node for other stories.
+      return;
+    }
+
+    // Traverse children
+    for (const val of Object.values(obj)) {
+      walk(val);
+    }
+  }
+
+  walk(root);
+  return stories;
+}
+
+function cleanFbText(rawText: string): string {
+  if (!rawText) return '';
+  return rawText
+    .replace(
+      /\b(?:Показать перевод|Show translation|See translation|See original|Поделился\/-ась|Подписаться|Общедоступная группа)\b/gi,
+      '',
+    )
+    .replace(/\.\.\.\s*(?:Ещё|See more|See More)/gi, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function isUiNoiseText(t: string): boolean {
+  return (
+    t.length < 5 ||
+    t === 'Like' ||
+    t === 'Comment' ||
+    t === 'Share' ||
+    t.startsWith('http') ||
+    t === 'Public group' ||
+    t === 'Visible to anyone'
+  );
+}
+
+/**
+ * Extracts complete un-truncated post text from a Story node.
+ */
+export function extractTextFromStory(node: FbGraphQLStoryNode): string {
+  // 1. Check known high-priority Comet paths
+  const cometContent = node.comet_sections?.content?.story;
+  if (cometContent?.message?.text) {
+    return cleanFbText(cometContent.message.text);
+  }
+
+  const messageContainer = cometContent?.comet_sections?.message_container?.story;
+  if (messageContainer?.message?.text) {
+    return cleanFbText(messageContainer.message.text);
+  }
+
+  const cometMessage = node.comet_sections?.message?.story;
+  if (cometMessage?.text) {
+    return cleanFbText(cometMessage.text);
+  }
+  if (cometMessage?.message?.text) {
+    return cleanFbText(cometMessage.message.text);
+  }
+
+  if (node.message?.text) {
+    return cleanFbText(node.message.text);
+  }
+
+  // 2. Fallback: search recursively inside comet_sections for any message text
+  let bestText = '';
+  function findText(curr: unknown): void {
+    if (!curr || typeof curr !== 'object' || bestText.length > 50) return;
+    const o = curr as Record<string, unknown>;
+    if (typeof o.text === 'string' && o.text.length > bestText.length) {
+      const t = o.text.trim();
+      if (!isUiNoiseText(t)) {
+        bestText = t;
       }
-    ).document;
-    const results: Array<{ text: string; url: string; photos: string[]; rawDate?: string }> = [];
+    }
+    for (const val of Object.values(o)) {
+      findText(val);
+    }
+  }
 
-    // Find all post feed containers
-    const feedUnits = doc.querySelectorAll(
-      '[role="feed"] > div, div[role="article"], div[data-pagelet*="FeedUnit"]',
-    );
+  if (node.comet_sections) {
+    findText(node.comet_sections);
+  }
 
-    feedUnits.forEach((unit: unknown) => {
-      const el = unit as {
-        querySelector: (sel: string) => {
-          textContent?: string | null;
-          getAttribute: (attr: string) => string | null;
-          href?: string;
-        } | null;
-        querySelectorAll: (sel: string) => Array<{
-          getAttribute: (attr: string) => string | null;
-          src?: string;
-          width?: number;
-          height?: number;
-          naturalWidth?: number;
-          naturalHeight?: number;
-          textContent?: string | null;
-        }>;
-        textContent?: string | null;
-      };
+  return cleanFbText(bestText);
+}
 
-      // 1. Target specifically the post message body (excluding headers, authors, timestamps)
-      const textContainer = el.querySelector(
-        'div[data-ad-comet-preview="message"], div[data-ad-preview="message"]',
-      );
+/**
+ * Extracts high-resolution direct photo URLs from a Story node.
+ */
+export function extractPhotosFromStory(node: FbGraphQLStoryNode): string[] {
+  const photos: string[] = [];
 
-      let rawText = '';
-      if (textContainer && textContainer.textContent) {
-        rawText = textContainer.textContent;
-      } else {
-        const contentContainers = el.querySelectorAll('div[dir="auto"]');
-        for (const c of contentContainers) {
-          const t = (c.textContent || '').trim();
-          if (t.length > 30 && !t.includes('Поделился') && !t.includes('Подписаться')) {
-            rawText = t;
-            break;
-          }
+  function addUrl(uri?: string): void {
+    if (!uri || typeof uri !== 'string') return;
+    const isPhoto = uri.includes('fbcdn') || uri.includes('scontent');
+    const isNoise =
+      uri.includes('emoji') ||
+      uri.includes('profile') ||
+      uri.includes('rsrc.php') ||
+      uri.includes('static.xx.fbcdn.net') ||
+      uri.includes('lookaside');
+
+    if (isPhoto && !isNoise && !photos.includes(uri)) {
+      photos.push(uri);
+    }
+  }
+
+  // 1. Check known attachment layouts
+  const attachments = node.comet_sections?.content?.story?.attachments;
+  if (Array.isArray(attachments)) {
+    for (const att of attachments) {
+      const media = att.styles?.attachment?.media;
+      addUrl(media?.photo_image?.uri);
+      addUrl(media?.image?.uri);
+
+      // Subattachments (multi-photo albums)
+      const subNodes = att.styles?.attachment?.all_subattachments?.nodes;
+      if (Array.isArray(subNodes)) {
+        for (const sub of subNodes) {
+          addUrl(sub.media?.photo_image?.uri);
+          addUrl(sub.media?.image?.uri);
         }
       }
+    }
+  }
 
-      // Clean out UI noise / button artifacts ("Translate", "See translation", "Ещё", etc.)
-      const text = rawText
-        .replace(
-          /\b(?:Показать перевод|Show translation|See translation|See original|Поделился\/-ась|Подписаться|Общедоступная группа)\b/gi,
-          '',
-        )
-        .replace(/\.\.\.\s*(?:Ещё|See more|See More)/gi, '')
-        .replace(/\s+/g, ' ')
-        .trim();
+  // 2. Recursive fallback to capture image URIs anywhere in the story
+  function findUris(curr: unknown): void {
+    if (!curr || typeof curr !== 'object') return;
+    if (Array.isArray(curr)) {
+      for (const item of curr) findUris(item);
+      return;
+    }
+    const o = curr as Record<string, unknown>;
+    if (typeof o.uri === 'string') addUrl(o.uri);
+    if (typeof o.url === 'string') addUrl(o.url);
 
-      // Skip posts that are too short to be property listings
-      if (text.length < 25) return;
+    for (const val of Object.values(o)) {
+      findUris(val);
+    }
+  }
 
-      // 2. Extract Post Permanent URL
-      let postUrl = '';
-      const permalinkAnchor = el.querySelector(
-        'a[href*="/posts/"], a[href*="/permalink/"], a[href*="multi_permalinks="], a[role="link"][href*="facebook.com/groups/"]',
-      );
-      if (permalinkAnchor) {
-        postUrl = permalinkAnchor.href || permalinkAnchor.getAttribute('href') || '';
+  findUris(node);
+  return photos;
+}
+
+/**
+ * Extracts the permalink URL for a Story node.
+ */
+export function extractUrlFromStory(node: FbGraphQLStoryNode, targetGroupUrl: string): string {
+  // 1. Direct url property
+  if (node.url) return cleanFacebookUrl(node.url);
+
+  // 2. Metadata array in context layout
+  const metadata = node.comet_sections?.context_layout?.story?.comet_sections?.metadata;
+  if (Array.isArray(metadata)) {
+    for (const meta of metadata) {
+      if (meta.story?.url) return cleanFacebookUrl(meta.story.url);
+    }
+  }
+
+  // 3. wwwURL in content story
+  const wwwURL = node.comet_sections?.content?.story?.wwwURL;
+  if (wwwURL) return cleanFacebookUrl(wwwURL);
+
+  // 4. Shareable URL
+  if (node.shareable?.url) return cleanFacebookUrl(node.shareable.url);
+
+  // 5. Construct URL from Post ID if available
+  const postId =
+    node.post_id || (typeof node.id === 'string' && /^\d+$/.test(node.id) ? node.id : undefined);
+  if (postId) {
+    const baseGroup =
+      targetGroupUrl.split('?')[0]?.replace(/\/$/, '') || 'https://www.facebook.com/groups';
+    return `${baseGroup}/posts/${postId}/`;
+  }
+
+  return '';
+}
+
+/**
+ * Extracts the publication date string from a Story node.
+ */
+export function extractDateFromStory(node: FbGraphQLStoryNode): string | undefined {
+  // 1. Creation time (epoch seconds or milliseconds)
+  const ct = node.creation_time;
+  if (typeof ct === 'number' && ct > 0) {
+    const ms = ct > 1e11 ? ct : ct * 1000;
+    return new Date(ms).toISOString();
+  }
+  if (typeof ct === 'string' && /^\d+$/.test(ct)) {
+    const num = parseInt(ct, 10);
+    const ms = num > 1e11 ? num : num * 1000;
+    return new Date(ms).toISOString();
+  }
+
+  // 2. Metadata creation_time
+  const metadata = node.comet_sections?.context_layout?.story?.comet_sections?.metadata;
+  if (Array.isArray(metadata)) {
+    for (const meta of metadata) {
+      const metaCt = meta.story?.creation_time;
+      if (typeof metaCt === 'number' && metaCt > 0) {
+        const ms = metaCt > 1e11 ? metaCt : metaCt * 1000;
+        return new Date(ms).toISOString();
       }
+    }
+  }
 
-      if (!postUrl) {
-        const anyPostLink = el.querySelector('a[href*="groups/"]');
-        if (anyPostLink) {
-          postUrl = anyPostLink.href || anyPostLink.getAttribute('href') || '';
-        }
-      }
+  return undefined;
+}
 
-      // 3. Extract Attached Images (filtering out small icons/avatars)
-      const photos: string[] = [];
-      const imgElements = el.querySelectorAll('img');
-      imgElements.forEach((img) => {
-        const src = img.src || img.getAttribute('src');
-        if (!src) return;
-        const width = img.naturalWidth || img.width || 0;
-        const height = img.naturalHeight || img.height || 0;
-        const isThumbnail =
-          src.includes('emoji') ||
-          src.includes('profile') ||
-          (width > 0 && width < 120) ||
-          (height > 0 && height < 120);
-        if (!isThumbnail && (src.includes('fbcdn') || src.includes('scontent'))) {
-          if (!photos.includes(src)) {
-            photos.push(src);
-          }
-        }
-      });
+/**
+ * Extracts and maps all real estate candidate posts from a Facebook GraphQL response JSON.
+ */
+export function extractPostsFromFbGraphQL(
+  json: unknown,
+  targetGroupUrl: string,
+): ParsedFbGraphQLPost[] {
+  const stories = extractStoriesFromGraphQL(json);
+  const results: ParsedFbGraphQLPost[] = [];
+  const seenKeys = new Set<string>();
 
-      // 4. Extract Post Creation Timestamp String
-      let rawDate = '';
-      if (permalinkAnchor) {
-        rawDate = permalinkAnchor.getAttribute('aria-label') || permalinkAnchor.textContent || '';
-      }
-      if (!rawDate) {
-        const timeEl = el.querySelector('abbr, a[href*="/posts/"] span, span[id*="jsc_c"]');
-        if (timeEl) {
-          rawDate = timeEl.getAttribute('aria-label') || timeEl.textContent || '';
-        }
-      }
+  for (const story of stories) {
+    const text = extractTextFromStory(story);
+    // Ignore posts with insufficient text for a real estate listing
+    if (text.length < 25) continue;
 
-      if (text && (postUrl || photos.length > 0)) {
-        results.push({ text, url: postUrl, photos, rawDate: rawDate.trim() });
-      }
+    const postUrl = extractUrlFromStory(story, targetGroupUrl);
+    const photos = extractPhotosFromStory(story);
+    const rawDate = extractDateFromStory(story);
+
+    const postId = story.post_id || story.id;
+    const dedupKey = postId || postUrl || text.slice(0, 50);
+
+    if (seenKeys.has(dedupKey)) continue;
+    seenKeys.add(dedupKey);
+
+    results.push({
+      id: postId,
+      text,
+      postUrl,
+      photos,
+      rawDate,
     });
+  }
 
-    return results;
-  });
+  return results;
 }
 
 // ─── Group Scraper ────────────────────────────────────────────────────────────
@@ -444,6 +684,8 @@ export async function scrapeFacebookGroup(
   const page = await context.newPage();
   const listings: RawListing[] = [];
   const seenUrls = new Set<string>();
+  const seenPostIds = new Set<string>();
+  const interceptedPosts: ParsedFbGraphQLPost[] = [];
 
   try {
     // Block stylesheets, fonts, media, tracking, and non-listing UI images to minimize Chromium memory footprint
@@ -486,6 +728,35 @@ export async function scrapeFacebookGroup(
       }
 
       return route.continue();
+    });
+
+    // Intercept Facebook GraphQL API responses
+    page.on('response', async (resp) => {
+      const url = resp.url();
+      if (!url.includes('/api/graphql')) return;
+
+      try {
+        const bodyText = await resp.text();
+        // Support newline-delimited or streaming JSON chunks
+        const lines = bodyText.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+        for (const line of lines) {
+          try {
+            const cleanLine = line.replace(/^for\s*\(\s*;\s*;\s*\);/, '');
+            const json = JSON.parse(cleanLine);
+            const posts = extractPostsFromFbGraphQL(json, target.url);
+            for (const post of posts) {
+              const key = post.id || post.postUrl || post.text.slice(0, 40);
+              if (seenPostIds.has(key)) continue;
+              seenPostIds.add(key);
+              interceptedPosts.push(post);
+            }
+          } catch {
+            // Ignore non-JSON line fragments
+          }
+        }
+      } catch {
+        // Ignore aborted response stream errors
+      }
     });
 
     await page.goto(target.url, { waitUntil: 'domcontentloaded', timeout: 45000 });
@@ -535,7 +806,9 @@ export async function scrapeFacebookGroup(
     if (!hasFeed) {
       const isBlockedDialog =
         (await page
-          .locator('[role="dialog"]:has-text("Log In"), [role="dialog"]:has-text("Sign Up"), [role="dialog"]:has-text("blocked")')
+          .locator(
+            '[role="dialog"]:has-text("Log In"), [role="dialog"]:has-text("Sign Up"), [role="dialog"]:has-text("blocked")',
+          )
           .count()) > 0;
       if (isBlockedDialog) {
         throw new FacebookSessionExpiredError('Facebook login/blocking dialog detected');
@@ -543,32 +816,19 @@ export async function scrapeFacebookGroup(
     }
 
     let scrollAttempts = 0;
-    const maxScrolls = 6;
+    const maxScrolls = 8;
+    let processedIndex = 0;
 
-    while (listings.length < maxPosts && scrollAttempts < maxScrolls) {
-      // Natural human mouse movement across the viewport
-      await simulateHumanMouseMove(page);
+    // Helper to process captured GraphQL posts
+    const processInterceptedPosts = async () => {
+      while (processedIndex < interceptedPosts.length && listings.length < maxPosts) {
+        const post = interceptedPosts[processedIndex++];
+        if (!post) continue;
 
-      // Expand "See more" buttons with realistic human cadence
-      try {
-        const seeMoreBtns = page.locator(
-          'div[role="button"]:has-text("See more"), div[role="button"]:has-text("See More"), div[role="button"]:has-text("Показать больше")',
-        );
-        const count = await seeMoreBtns.count();
-        for (let i = 0; i < Math.min(count, 4); i++) {
-          await simulateHumanMouseMove(page);
-          await seeMoreBtns.nth(i).click().catch(() => {});
-          await sleepRandom(350, 950);
-        }
-      } catch {
-        // Continue if expanding fails
-      }
+        const cleanedUrl =
+          cleanFacebookUrl(post.postUrl) ||
+          `https://facebook.com/groups/post-${listings.length + 1}`;
 
-      // Extract visible posts from current viewport DOM
-      const domPosts = await extractPostsFromPage(page);
-
-      for (const domPost of domPosts) {
-        const cleanedUrl = cleanFacebookUrl(domPost.url) || `https://facebook.com/post-${listings.length + 1}`;
         if (seenUrls.has(cleanedUrl)) continue;
         seenUrls.add(cleanedUrl);
 
@@ -593,40 +853,67 @@ export async function scrapeFacebookGroup(
         }
 
         try {
-          const rawListing = await parseFacebookPostText(domPost.text, target, cleanedUrl, domPost.photos, domPost.rawDate);
+          const rawListing = await parseFacebookPostText(
+            post.text,
+            target,
+            cleanedUrl,
+            post.photos,
+            post.rawDate,
+          );
+
           if (!rawListing) {
             console.log(`  ⏩ [Skipped] Post identified as non-residential / land sale / irrelevant`);
             continue;
           }
+
           listings.push(rawListing);
           console.log(
-            `  📄 [Post #${listings.length}] "${rawListing.title?.slice(0, 45)}" | ` +
+            `  📄 [GraphQL Post #${listings.length}] "${rawListing.title?.slice(0, 45)}" | ` +
               `💰 $${rawListing.price ?? '?'} | 📍 ${rawListing.location} | 🖼️ ${rawListing.photos.length} photos`,
           );
         } catch (err: unknown) {
-          console.warn(`  ⚠️ Failed to parse post: ${err instanceof Error ? err.message : String(err)}`);
+          console.warn(
+            `  ⚠️ Failed to parse GraphQL post: ${err instanceof Error ? err.message : String(err)}`,
+          );
         }
-
-        if (listings.length >= maxPosts) break;
       }
+    };
 
-      // Variable human scroll with occasional slight upward backtrack
+    while (listings.length < maxPosts && scrollAttempts < maxScrolls) {
+      // Natural human mouse movement across the viewport
+      await simulateHumanMouseMove(page);
+
+      // Process GraphQL posts intercepted so far
+      await processInterceptedPosts();
+
+      if (listings.length >= maxPosts) break;
+
+      // Variable human scroll with occasional slight upward backtrack (triggers next GraphQL pagination query)
       await simulateHumanScroll(page);
       scrollAttempts++;
 
-      // Realistic reading pause between scroll iterations
+      // Wait for network response to be received and processed
       await sleepRandom(2800, 5200);
+
+      // Process posts received after scroll
+      await processInterceptedPosts();
 
       // 12% probability of a longer human reading pause (6s - 11s)
       if (Math.random() < 0.12) {
         await sleepRandom(6000, 11000);
       }
     }
+
+    // Final drain of any GraphQL posts captured in the last network roundtrip
+    await processInterceptedPosts();
   } catch (err: unknown) {
     if (err instanceof FacebookSessionExpiredError) {
       throw err;
     }
-    console.error(`💥 Error scraping group [${target.name}]:`, err instanceof Error ? err.message : String(err));
+    console.error(
+      `💥 Error scraping group [${target.name}]:`,
+      err instanceof Error ? err.message : String(err),
+    );
   } finally {
     await page.close().catch(() => {});
   }
