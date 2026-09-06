@@ -41,12 +41,9 @@ describe('RemoteBrowserService', () => {
   });
 
   test('expires token after TTL', () => {
-    const token = service.createSessionToken(999, 'facebook');
-    const session = (service as any).activeTokens.get(token);
-    // Artificially expire the token
-    session.expiresAt = Date.now() - 1000;
-
-    expect(service.verifySessionToken(token)).toBeNull();
+    // Create an expired token with -1000ms TTL
+    const expiredToken = service.createSessionToken(999, 'facebook', -1000);
+    expect(service.verifySessionToken(expiredToken)).toBeNull();
   });
 });
 

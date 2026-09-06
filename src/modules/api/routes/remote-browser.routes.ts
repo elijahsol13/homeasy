@@ -31,8 +31,9 @@ export const remoteBrowserRoutes: FastifyPluginAsync<RemoteBrowserRoutesOptions>
     const token = query?.token;
 
     if (!token) {
-      return reply.status(400).type('text/html').send(`
-        <html>
+      return reply.status(400).type('text/html; charset=utf-8').send(`<!DOCTYPE html>
+        <html lang="ru">
+          <head><meta charset="utf-8"><title>Ошибка токена</title></head>
           <body style="font-family:sans-serif; background:#121212; color:#fff; text-align:center; padding:50px;">
             <h2>❌ Ошибка: Отсутствует токен сессии</h2>
             <p>Запустите авторизацию заново из Telegram-бота через команду /auth_fb или /auth_k24.</p>
@@ -43,8 +44,9 @@ export const remoteBrowserRoutes: FastifyPluginAsync<RemoteBrowserRoutesOptions>
 
     const sessionInfo = container.remoteBrowserService.verifySessionToken(token);
     if (!sessionInfo) {
-      return reply.status(401).type('text/html').send(`
-        <html>
+      return reply.status(401).type('text/html; charset=utf-8').send(`<!DOCTYPE html>
+        <html lang="ru">
+          <head><meta charset="utf-8"><title>Токен недействителен</title></head>
           <body style="font-family:sans-serif; background:#121212; color:#fff; text-align:center; padding:50px;">
             <h2>⚠️ Токен устарел или недействителен</h2>
             <p>Срок действия ссылки (15 минут) истек. Запросите новую сессию в Telegram-боте.</p>

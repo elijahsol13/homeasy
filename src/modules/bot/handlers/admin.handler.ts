@@ -275,6 +275,7 @@ export function createAdminHandler(container: AppContainer): Composer<MyContext>
         '• Сессия запускается на сервере строго через прокси `FB_PROXY`.\n' +
         '• Введите свои учетные данные и пройдите 2FA.\n' +
         '• После успешного входа сессия автоматически сохранится на сервере.\n\n' +
+        `Прямая ссылка:\n${url}\n\n` +
         '<i>Ссылка активна 15 минут.</i>',
       { parse_mode: 'HTML', reply_markup: kb },
     );
