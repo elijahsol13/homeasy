@@ -177,31 +177,41 @@ export const PropertyCard: React.FC<PropertyCardProps> = ({
         </div>
 
         {/* Quick Contact Buttons */}
-        <div className="mt-auto pt-2 border-t border-zinc-100 dark:border-zinc-700/50 flex items-center gap-2">
-          {property.contact.telegramLink ? (
-            <button
-              type="button"
-              onClick={handleTelegramClick}
-              className="flex-1 bg-sky-500 hover:bg-sky-600 text-white text-xs font-semibold py-2 px-3 rounded-xl flex items-center justify-center gap-1.5 transition-all shadow-xs active:scale-98"
-            >
-              <Send className="w-3.5 h-3.5" />
-              <span>Message Agent</span>
-            </button>
-          ) : (
-            <span className="text-[11px] text-zinc-400 italic">No Telegram specified</span>
-          )}
+        {(property.contact.telegramLink || property.contact.phone || property.originalUrl) && (
+          <div className="mt-auto pt-2 border-t border-zinc-100 dark:border-zinc-700/50 flex items-center gap-2">
+            {property.contact.telegramLink ? (
+              <button
+                type="button"
+                onClick={handleTelegramClick}
+                className="flex-1 bg-sky-500 hover:bg-sky-600 text-white text-xs font-semibold py-2 px-3 rounded-xl flex items-center justify-center gap-1.5 transition-all shadow-xs active:scale-98"
+              >
+                <Send className="w-3.5 h-3.5" />
+                <span>Message Agent</span>
+              </button>
+            ) : property.originalUrl ? (
+              <a
+                href={property.originalUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                onClick={(e) => e.stopPropagation()}
+                className="flex-1 bg-zinc-100 dark:bg-zinc-800 hover:bg-zinc-200 dark:hover:bg-zinc-700 text-zinc-700 dark:text-zinc-200 text-xs font-medium py-2 px-3 rounded-xl flex items-center justify-center gap-1.5 transition-all"
+              >
+                <span>View Original Post ↗</span>
+              </a>
+            ) : null}
 
-          {property.contact.phone && (
-            <button
-              type="button"
-              onClick={handlePhoneClick}
-              className="p-2 bg-zinc-100 dark:bg-zinc-700 hover:bg-zinc-200 text-zinc-700 dark:text-zinc-200 rounded-xl transition-all active:scale-95"
-              aria-label="Call Agent"
-            >
-              <Phone className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
-            </button>
-          )}
-        </div>
+            {property.contact.phone && (
+              <button
+                type="button"
+                onClick={handlePhoneClick}
+                className="p-2 bg-zinc-100 dark:bg-zinc-700 hover:bg-zinc-200 text-zinc-700 dark:text-zinc-200 rounded-xl transition-all active:scale-95"
+                aria-label="Call Agent"
+              >
+                <Phone className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
+              </button>
+            )}
+          </div>
+        )}
       </div>
     </article>
   );

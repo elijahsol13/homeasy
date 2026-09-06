@@ -1,7 +1,7 @@
 import { Api, type InlineKeyboard } from 'grammy';
 import type { Property } from '../database/repositories/properties.repo';
 import { CITIES, KHR_TO_USD_RATE, RATE_LIMIT } from '../config/settings';
-import { listingActionKeyboard } from '../modules/bot/keyboards/listing.keyboard';
+import { listingActionKeyboard, getTelegramContactLink } from '../modules/bot/keyboards/listing.keyboard';
 import { formatPhoneNumber } from '../modules/parser/normalizer';
 import {
   crossValidateLocation,
@@ -367,10 +367,16 @@ export function formatListingCard(property: Property): string {
   if (property.direct_contact.telegram) {
     const tgUsername = property.direct_contact.telegram.replace(/^@/, '');
     contactLines.push(`💬 Telegram: <a href="https://t.me/${escapeHtml(tgUsername)}">@${escapeHtml(tgUsername)}</a>`);
+  } else {
+    const tgLink = getTelegramContactLink(property.direct_contact);
+    if (tgLink) {
+      contactLines.push(`💬 Telegram: <a href="${escapeHtml(tgLink)}">DM via Phone ↗</a>`);
+    }
   }
   const source = property.source_url || property.original_url;
   if (source && (source.startsWith('http://') || source.startsWith('https://'))) {
-    contactLines.push(`🔗 Source: <a href="${escapeHtml(source)}">View Link</a>`);
+    const cleanSource = source.replace('web.facebook.com', 'www.facebook.com');
+    contactLines.push(`🔗 Source: <a href="${escapeHtml(cleanSource)}">View Link</a>`);
   }
   const contactSection =
     contactLines.length > 0 ? `\n\n👤 <b>Contact:</b>\n${contactLines.join('\n')}` : '';

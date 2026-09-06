@@ -106,6 +106,10 @@ const SPAM_REGEXES = [
   // Short-term hotel / guesthouse per night
   /\b(?:1\s*night|per\s*night)\b/i,
   /1\s*យប់\s*\d+\$/, // "1 night $XX"
+  // Beauty, Hair, Nails, Massage & Salons
+  /\b(?:hair\s*salon|nail\s*salon|beauty\s*salon|massage|layer\s*perm|perm|uonnongtieuchuan)\b/i,
+  /#Rin26\b/i,
+  /ហាងកាត់សក់|សាឡន/, // barbershop / salon in Khmer
 ];
 
 export function isNonRealEstateSpam(title: string, description: string): { isSpam: boolean; reason?: string } {
@@ -386,6 +390,18 @@ export function enrichPropertyRecord(prop: PropertyRecord): EnrichmentResult {
       patch.primary_landmark = primary;
       patch.landmarks = allLandmarksJson;
     }
+  }
+
+  // 12. Normalize desktop web.facebook.com to www.facebook.com for mobile accessibility
+  if (prop.original_url && prop.original_url.includes('web.facebook.com')) {
+    const fixedUrl = prop.original_url.replace('web.facebook.com', 'www.facebook.com');
+    changes.original_url = { oldVal: prop.original_url, newVal: fixedUrl };
+    patch.original_url = fixedUrl;
+  }
+  if (prop.source_url && prop.source_url.includes('web.facebook.com')) {
+    const fixedUrl = prop.source_url.replace('web.facebook.com', 'www.facebook.com');
+    changes.source_url = { oldVal: prop.source_url, newVal: fixedUrl };
+    patch.source_url = fixedUrl;
   }
 
   const updated = Object.keys(changes).length > 0;
