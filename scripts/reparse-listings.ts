@@ -23,6 +23,7 @@ import {
 } from '../src/modules/parser/extractor';
 import { extractCleaning, extractRestrictions } from '../src/services/notifier';
 import { findLandmarksInText } from '../src/config/landmarks';
+import { CANONICAL_AMENITIES } from '../src/config/amenities';
 import { chromium } from 'playwright-extra';
 import stealthPlugin from 'puppeteer-extra-plugin-stealth';
 import { parseProxyConfig } from '../src/modules/parser/proxy';
@@ -389,22 +390,68 @@ Inspect for and extract ALL features mentioned in the text. Normalize them to cl
 - Services & Terms: "Cleaning Service", "Bed Linen Change", "Drinking Water Provided", "Foreigner Friendly", "Digital Nomad Friendly"
 Do NOT invent features not mentioned in the text.`;
 
+export const FEATURE_PROPOSAL_THRESHOLD_PERCENT = 2.0; // 2.0% of total active database
+
 function updateDiscoveredReport(featuresTally: Record<string, number>, totalAnalyzed: number): void {
+  const safeTotal = Math.max(1, totalAnalyzed);
+  const canonicalNames = new Set(
+    CANONICAL_AMENITIES.flatMap((a) => [
+      a.id.toLowerCase(),
+      a.nameEn.toLowerCase(),
+      a.nameKh.toLowerCase(),
+      a.nameRu.toLowerCase(),
+      // Common aliases
+      a.nameEn.toLowerCase().replace(/ \/ .*/, ''),
+    ]),
+  );
+
   const ranking = Object.entries(featuresTally)
     .sort((a, b) => b[1] - a[1])
-    .map(([feature, count]) => ({
-      feature,
-      count,
-      percentage: `${((count / Math.max(1, totalAnalyzed)) * 100).toFixed(1)}%`,
+    .map(([feature, count]) => {
+      const pct = (count / safeTotal) * 100;
+      const isCanonical = canonicalNames.has(feature.toLowerCase()) ||
+        CANONICAL_AMENITIES.some((a) => feature.toLowerCase().includes(a.id.toLowerCase()) || a.nameEn.toLowerCase().includes(feature.toLowerCase()));
+      return {
+        feature,
+        count,
+        percentage: `${pct.toFixed(1)}%`,
+        percentageNum: pct,
+        isCanonical,
+      };
+    });
+
+  // Automatically filter proposals that exceed threshold percentage and are not yet canonical
+  const proposedNewAmenities = ranking
+    .filter((r) => !r.isCanonical && r.percentageNum >= FEATURE_PROPOSAL_THRESHOLD_PERCENT)
+    .map((r) => ({
+      feature: r.feature,
+      count: r.count,
+      percentage: r.percentage,
+      recommendation: `Discovered in ${r.percentage} of listings (>= ${FEATURE_PROPOSAL_THRESHOLD_PERCENT}% threshold). Recommended for canonical catalog.`,
     }));
 
   const report = {
     totalListingsAnalyzed: totalAnalyzed,
+    proposalThresholdPercent: `${FEATURE_PROPOSAL_THRESHOLD_PERCENT}%`,
     generatedAt: new Date().toISOString(),
     uniqueFeaturesCount: ranking.length,
-    ranking,
+    proposedNewAmenities,
+    ranking: ranking.map(({ feature, count, percentage, isCanonical }) => ({
+      feature,
+      count,
+      percentage,
+      isCanonical,
+    })),
   };
+
   fs.writeFileSync(DISCOVERED_REPORT_PATH, JSON.stringify(report, null, 2), 'utf8');
+
+  if (proposedNewAmenities.length > 0) {
+    console.log(`\n💡 [Feature Discovery] ${proposedNewAmenities.length} new features exceeded ${FEATURE_PROPOSAL_THRESHOLD_PERCENT}% threshold:`);
+    for (const prop of proposedNewAmenities) {
+      console.log(`   ✨ ${prop.feature} (${prop.percentage}, ${prop.count} listings)`);
+    }
+  }
 }
 
 // ─── Step 3: Full Gemini AI Batch Enrichment & Comparison Log ────────────────
