@@ -12,6 +12,8 @@ import fs from 'fs';
 import readline from 'readline';
 import { chromium } from 'playwright-extra';
 import stealthPlugin from 'puppeteer-extra-plugin-stealth';
+import { env } from '../../config/env';
+import { parseProxyConfig } from './proxy';
 
 chromium.use(stealthPlugin());
 
@@ -63,16 +65,16 @@ export async function runFbLogin(): Promise<void> {
   }
 
   const useTunnel = process.argv.includes('--tunnel') || process.env.USE_TUNNEL === 'true';
-  const customProxy = process.env.PROXY;
-  const proxyServer = customProxy || (useTunnel ? 'socks5://127.0.0.1:1080' : undefined);
+  const rawProxy = env.FB_PROXY || process.env.PROXY || (useTunnel ? 'socks5://127.0.0.1:1080' : undefined);
+  const proxyResult = parseProxyConfig(rawProxy);
 
   const isHeadless =
     process.argv.includes('--headless') ||
     process.env.HEADLESS === 'true' ||
     (!process.env.DISPLAY && process.platform === 'linux');
 
-  if (proxyServer) {
-    console.log(`🌐 Routing browser traffic through German VPS proxy: ${proxyServer}`);
+  if (proxyResult) {
+    console.log(`🌐 Proxy enabled: ${proxyResult.masked}`);
   }
 
   if (isHeadless) {
@@ -83,7 +85,7 @@ export async function runFbLogin(): Promise<void> {
 
   const browser = await chromium.launch({
     headless: isHeadless,
-    proxy: proxyServer ? { server: proxyServer } : undefined,
+    proxy: proxyResult?.config,
     args: [
       '--no-sandbox',
       '--disable-setuid-sandbox',
