@@ -1,5 +1,6 @@
 import type { DatabaseSync } from 'node:sqlite';
-import { extractCoordinatesFromMapsUrl } from '../config/locations';
+import { extractCoordinatesFromMapsUrl, getFallbackCoordinates } from '../config/locations';
+import type { CityKey } from '../config/settings';
 
 /**
  * Each entry is a SQL block that runs exactly once.
@@ -289,6 +290,12 @@ const MIGRATIONS: string[] = [
     ON properties(latitude, longitude)
     WHERE is_active = 1;
   `,
+
+  // ── v13: Coordinates backfill with Sangkat centroids and micro-jitter ────────
+  `
+  -- Backfill coordinates for all properties without GPS
+  SELECT 1;
+  `,
 ];
 
 export function runMigrations(db: DatabaseSync): void {
@@ -328,17 +335,28 @@ export function runMigrations(db: DatabaseSync): void {
         insertMigration.run(version);
         console.log(`  ✅ Applied migration v${version}`);
 
-        if (version === 12) {
+        if (version === 12 || version === 13) {
           try {
             const rows = db
-              .prepare('SELECT id, maps_url FROM properties WHERE maps_url IS NOT NULL AND latitude IS NULL')
-              .all() as unknown as Array<{ id: number; maps_url: string }>;
+              .prepare('SELECT id, location, city, maps_url FROM properties WHERE latitude IS NULL')
+              .all() as unknown as Array<{ id: number; location: string; city: CityKey; maps_url: string | null }>;
             const updateStmt = db.prepare('UPDATE properties SET latitude = ?, longitude = ? WHERE id = ?');
             for (const r of rows) {
-              const coords = extractCoordinatesFromMapsUrl(r.maps_url);
-              if (coords) {
-                updateStmt.run(coords.latitude, coords.longitude, r.id);
+              let lat: number | null = null;
+              let lng: number | null = null;
+              if (r.maps_url) {
+                const coords = extractCoordinatesFromMapsUrl(r.maps_url);
+                if (coords) {
+                  lat = coords.latitude;
+                  lng = coords.longitude;
+                }
               }
+              if (lat === null || lng === null) {
+                const fallback = getFallbackCoordinates(r.location, r.city, r.id);
+                lat = fallback.lat;
+                lng = fallback.lng;
+              }
+              updateStmt.run(lat, lng, r.id);
             }
           } catch (e) {
             console.warn('  ⚠️ Coordinate backfill notice:', e);

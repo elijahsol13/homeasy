@@ -34,7 +34,16 @@ export function validateTelegramInitData(
   }
 
   try {
-    const params = new URLSearchParams(initDataRaw);
+    let cleanInitData = initDataRaw;
+    if (!cleanInitData.includes('hash=') && cleanInitData.includes('%')) {
+      try {
+        cleanInitData = decodeURIComponent(cleanInitData);
+      } catch {
+        // Fall back to original if decode fails
+      }
+    }
+
+    const params = new URLSearchParams(cleanInitData);
     const hash = params.get('hash');
 
     if (!hash) {

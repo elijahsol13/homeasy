@@ -9,7 +9,7 @@ import {
   extractRestrictions,
 } from '../../services/notifier';
 import { findLandmarksInText, type LandmarkEntry } from '../../config/landmarks';
-import { extractCoordinatesFromMapsUrl } from '../../config/locations';
+import { extractCoordinatesFromMapsUrl, getFallbackCoordinates } from '../../config/locations';
 import { formatPhoneNumber } from '../parser/normalizer';
 
 export interface PropertyDTO {
@@ -85,8 +85,19 @@ export function toPropertyDTO(property: Property, isFavorite?: boolean): Propert
     link: l.gmapsLink,
   }));
 
-  const rawCoords = property.maps_url ? extractCoordinatesFromMapsUrl(property.maps_url) : null;
-  const coords = rawCoords ? { lat: rawCoords.latitude, lng: rawCoords.longitude } : null;
+  let coords: { lat: number; lng: number } | null = null;
+  if (property.latitude !== null && property.latitude !== undefined && property.longitude !== null && property.longitude !== undefined) {
+    coords = { lat: Number(property.latitude), lng: Number(property.longitude) };
+  } else if (property.maps_url) {
+    const rawCoords = extractCoordinatesFromMapsUrl(property.maps_url);
+    if (rawCoords) {
+      coords = { lat: rawCoords.latitude, lng: rawCoords.longitude };
+    }
+  }
+
+  if (!coords) {
+    coords = getFallbackCoordinates(property.location, property.city, property.id);
+  }
 
   // Build clean contact links
   const contact: PropertyDTO['contact'] = {};
@@ -150,8 +161,20 @@ export function toPropertyDTO(property: Property, isFavorite?: boolean): Propert
 export function toMapMarkerDTO(property: Property): MapMarkerDTO {
   const fullText = `${property.title}\n${property.description}`;
   const propertyType = extractPropertyType(fullText, property.category) ?? (property.category ?? 'Property');
-  const rawCoords = property.maps_url ? extractCoordinatesFromMapsUrl(property.maps_url) : null;
-  const coords = rawCoords ? { lat: rawCoords.latitude, lng: rawCoords.longitude } : null;
+  
+  let coords: { lat: number; lng: number } | null = null;
+  if (property.latitude !== null && property.latitude !== undefined && property.longitude !== null && property.longitude !== undefined) {
+    coords = { lat: Number(property.latitude), lng: Number(property.longitude) };
+  } else if (property.maps_url) {
+    const rawCoords = extractCoordinatesFromMapsUrl(property.maps_url);
+    if (rawCoords) {
+      coords = { lat: rawCoords.latitude, lng: rawCoords.longitude };
+    }
+  }
+
+  if (!coords) {
+    coords = getFallbackCoordinates(property.location, property.city, property.id);
+  }
 
   return {
     id: property.id,

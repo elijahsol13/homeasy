@@ -513,6 +513,92 @@ export function isCoordinateInSanityBounds(
   return dist <= bounds.maxRadiusKm;
 }
 
+/**
+ * Centroid GPS coordinates for Sangkats and Khans across Cambodia.
+ */
+export const LOCATION_CENTROIDS: Record<string, { lat: number; lng: number }> = {
+  // Siem Reap Sangkats
+  'Svay Dangkum': { lat: 13.3525, lng: 103.8440 },
+  'Sala Kamreuk': { lat: 13.3512, lng: 103.8645 },
+  'Sla Kram': { lat: 13.3640, lng: 103.8670 },
+  'Chreav': { lat: 13.3250, lng: 103.8750 },
+  'Kouk Chak': { lat: 13.3850, lng: 103.8450 },
+  'Nokor Thum': { lat: 13.3880, lng: 103.8820 },
+  'Sambour': { lat: 13.3320, lng: 103.8200 },
+  'Siem Reap': { lat: 13.3540, lng: 103.8550 },
+  'Srangae': { lat: 13.3650, lng: 103.8100 },
+  'Tuek Vil': { lat: 13.3700, lng: 103.8000 },
+  'Krabei Riel': { lat: 13.3750, lng: 103.7700 },
+  'Chong Kneas': { lat: 13.2650, lng: 103.8250 },
+  'Bakong': { lat: 13.3350, lng: 103.9650 },
+  'Prasat Bakong': { lat: 13.3350, lng: 103.9650 },
+
+  // Phnom Penh Khans & Sangkats
+  'BKK1': { lat: 11.5520, lng: 104.9280 },
+  'BKK2': { lat: 11.5480, lng: 104.9200 },
+  'BKK3': { lat: 11.5440, lng: 104.9150 },
+  'Boeung Keng Kang': { lat: 11.5480, lng: 104.9210 },
+  'Chamkar Mon': { lat: 11.5380, lng: 104.9250 },
+  'Tonle Bassac': { lat: 11.5470, lng: 104.9330 },
+  'Tuol Tompoung': { lat: 11.5350, lng: 104.9150 },
+  'Toul Tompoung': { lat: 11.5350, lng: 104.9150 },
+  'Toul Tom Poung': { lat: 11.5350, lng: 104.9150 },
+  'Daun Penh': { lat: 11.5720, lng: 104.9250 },
+  'Tuol Kork': { lat: 11.5730, lng: 104.8980 },
+  'Toul Kork': { lat: 11.5730, lng: 104.8980 },
+  'Chroy Changvar': { lat: 11.5950, lng: 104.9350 },
+  'Sen Sok': { lat: 11.5850, lng: 104.8700 },
+  'Mean Chey': { lat: 11.5150, lng: 104.9100 },
+  'Meanchey': { lat: 11.5150, lng: 104.9100 },
+  'Russei Keo': { lat: 11.6150, lng: 104.9050 },
+  'Russey Keo': { lat: 11.6150, lng: 104.9050 },
+  'Chbar Ampov': { lat: 11.5300, lng: 104.9600 },
+  'Dangkao': { lat: 11.4850, lng: 104.8700 },
+  'Pou Senchey': { lat: 11.5500, lng: 104.8400 },
+  'Por Senchey': { lat: 11.5500, lng: 104.8400 },
+  'Boeung Kak': { lat: 11.5760, lng: 104.9120 },
+};
+
+/**
+ * Returns deterministic fallback GPS coordinates for a listing based on its
+ * Sangkat/location name and city, with subtle micro-jitter so multiple properties
+ * in the same neighborhood don't stack directly on the exact same coordinate.
+ */
+export function getFallbackCoordinates(
+  location: string | null | undefined,
+  city: CityKey,
+  propertyId: number = 0,
+): { lat: number; lng: number } {
+  let base: { lat: number; lng: number } | undefined;
+
+  if (location && location.trim().length > 0) {
+    const locTrimmed = location.trim();
+    if (LOCATION_CENTROIDS[locTrimmed]) {
+      base = LOCATION_CENTROIDS[locTrimmed];
+    } else {
+      const canonical = findCanonicalLocation(locTrimmed, city);
+      if (canonical && LOCATION_CENTROIDS[canonical.canonicalName]) {
+        base = LOCATION_CENTROIDS[canonical.canonicalName];
+      }
+    }
+  }
+
+  if (!base) {
+    const cityBounds = CITY_GEO_BOUNDS[city] || CITY_GEO_BOUNDS.siem_reap;
+    base = { lat: cityBounds.centerLat, lng: cityBounds.centerLng };
+  }
+
+  // Deterministic micro-jitter (±200m to 400m) based on ID so markers don't overlap exactly
+  const seed = propertyId > 0 ? propertyId : 42;
+  const jitterLat = (((seed * 37) % 100) - 50) * 0.00007;
+  const jitterLng = (((seed * 53) % 100) - 50) * 0.00007;
+
+  return {
+    lat: Number((base.lat + jitterLat).toFixed(6)),
+    lng: Number((base.lng + jitterLng).toFixed(6)),
+  };
+}
+
 export interface CrossValidatedLocation {
   resolvedLocation: string;
   finalMapsUrl: string;

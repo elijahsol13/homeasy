@@ -10,7 +10,13 @@ function getAuthHeaders(): HeadersInit {
 
   const initData = getTelegramInitData();
   if (initData) {
-    headers['Authorization'] = `tma ${initData}`;
+    // WebKit / Safari strictly enforces ByteString (0x00-0xFF) for all HTTP headers.
+    // If the Telegram user's name has Cyrillic, Khmer, or emojis, raw initData throws:
+    // "The string did not match the expected pattern."
+    // encodeURIComponent guarantees a 100% valid ASCII ByteString.
+    const safeInitData = encodeURIComponent(initData);
+    headers['Authorization'] = `tma ${safeInitData}`;
+    headers['X-Telegram-Init-Data'] = safeInitData;
   } else if (import.meta.env.DEV) {
     // In local dev without Telegram client, provide test user header
     headers['X-Dev-Telegram-Id'] = '999888777';
