@@ -15,6 +15,9 @@
 import { createDatabase } from './db';
 import { runMigrations } from './migrate';
 import { normalizePhoneNumber } from '../modules/parser/normalizer';
+import { extractElectricity, extractWater } from '../modules/parser/extractor';
+import { extractCleaning, extractRestrictions } from '../services/notifier';
+import { findLandmarksInText } from '../config/landmarks';
 import type { PropertyCategory } from '../config/settings';
 
 export interface PropertyRecord {
@@ -46,6 +49,13 @@ export interface PropertyRecord {
   created_at: string;
   posted_at: string | null;
   updated_at: string;
+  electricity?: string | null;
+  water?: string | null;
+  cleaning?: string | null;
+  restrictions?: string | null;
+  pet_friendly?: number | boolean;
+  primary_landmark?: string | null;
+  landmarks?: string | null;
 }
 
 export interface EnrichmentResult {
@@ -67,6 +77,11 @@ export interface EnrichmentStats {
   recoveredPhone: number;
   recoveredTelegram: number;
   backfilledPostedAt: number;
+  recoveredElectricity: number;
+  recoveredWater: number;
+  recoveredCleaning: number;
+  recoveredPetFriendly: number;
+  recoveredLandmarks: number;
   totalUpdated: number;
 }
 
@@ -308,6 +323,71 @@ export function enrichPropertyRecord(prop: PropertyRecord): EnrichmentResult {
     patch.posted_at = finalPostedAt;
   }
 
+  // 9. Utilities recovery (Electricity & Water & Cleaning)
+  if (!prop.electricity) {
+    const elec = extractElectricity(text);
+    if (elec) {
+      changes.electricity = { oldVal: prop.electricity, newVal: elec };
+      patch.electricity = elec;
+    }
+  }
+
+  if (!prop.water) {
+    const water = extractWater(text);
+    if (water) {
+      changes.water = { oldVal: prop.water, newVal: water };
+      patch.water = water;
+    }
+  }
+
+  if (!prop.cleaning) {
+    const cleaning = extractCleaning(text);
+    if (cleaning) {
+      changes.cleaning = { oldVal: prop.cleaning, newVal: cleaning };
+      patch.cleaning = cleaning;
+    }
+  }
+
+  // 10. Restrictions & Pet-friendly recovery
+  let currentRestrictions: string[] = [];
+  try {
+    if (prop.restrictions) {
+      currentRestrictions = JSON.parse(prop.restrictions);
+    }
+  } catch {
+    currentRestrictions = [];
+  }
+
+  if (currentRestrictions.length === 0) {
+    const restr = extractRestrictions(text);
+    if (restr.length > 0) {
+      const restrJson = JSON.stringify(restr);
+      changes.restrictions = { oldVal: prop.restrictions, newVal: restrJson };
+      patch.restrictions = restrJson;
+    }
+  }
+
+  if (!prop.pet_friendly) {
+    const restrictionsList = (patch.restrictions ? JSON.parse(patch.restrictions) : currentRestrictions) as string[];
+    const hasPetRestriction = restrictionsList.includes('🚫 No Pets');
+    if (!hasPetRestriction && /\b(?:pet friendly|pets allowed)\b/i.test(text)) {
+      changes.pet_friendly = { oldVal: prop.pet_friendly, newVal: 1 };
+      patch.pet_friendly = 1;
+    }
+  }
+
+  // 11. Landmarks recovery
+  if (!prop.primary_landmark) {
+    const landmarksFound = findLandmarksInText(text, prop.city);
+    if (landmarksFound.length > 0) {
+      const primary = landmarksFound[0].canonicalName;
+      const allLandmarksJson = JSON.stringify(landmarksFound.map((l) => l.canonicalName));
+      changes.primary_landmark = { oldVal: prop.primary_landmark, newVal: primary };
+      patch.primary_landmark = primary;
+      patch.landmarks = allLandmarksJson;
+    }
+  }
+
   const updated = Object.keys(changes).length > 0;
   return { updated, deactivated: false, changes, patch };
 }
@@ -329,6 +409,11 @@ export function runEnrichment(customDbPath?: string): EnrichmentStats {
     recoveredPhone: 0,
     recoveredTelegram: 0,
     backfilledPostedAt: 0,
+    recoveredElectricity: 0,
+    recoveredWater: 0,
+    recoveredCleaning: 0,
+    recoveredPetFriendly: 0,
+    recoveredLandmarks: 0,
     totalUpdated: 0,
   };
 
@@ -359,6 +444,11 @@ export function runEnrichment(customDbPath?: string): EnrichmentStats {
     if (res.changes.location) stats.recoveredLocation++;
     if (res.changes.category) stats.recoveredCategory++;
     if (res.changes.posted_at) stats.backfilledPostedAt++;
+    if (res.changes.electricity) stats.recoveredElectricity++;
+    if (res.changes.water) stats.recoveredWater++;
+    if (res.changes.cleaning) stats.recoveredCleaning++;
+    if (res.changes.pet_friendly) stats.recoveredPetFriendly++;
+    if (res.changes.primary_landmark) stats.recoveredLandmarks++;
     if (res.changes.direct_contact) {
       const oldContacts = JSON.parse(String(res.changes.direct_contact.oldVal || '{}'));
       const newContacts = JSON.parse(String(res.changes.direct_contact.newVal || '{}'));
@@ -391,6 +481,11 @@ export function runEnrichment(customDbPath?: string): EnrichmentStats {
   console.log(`  • Categories recovered:         ${stats.recoveredCategory}`);
   console.log(`  • Phones / Telegrams recovered: ${stats.recoveredPhone + stats.recoveredTelegram}`);
   console.log(`  • posted_at backfilled:         ${stats.backfilledPostedAt}`);
+  console.log(`  • Electricity tariffs parsed:   ${stats.recoveredElectricity}`);
+  console.log(`  • Water tariffs parsed:         ${stats.recoveredWater}`);
+  console.log(`  • Cleaning services parsed:     ${stats.recoveredCleaning}`);
+  console.log(`  • Pet-friendly tags recovered:  ${stats.recoveredPetFriendly}`);
+  console.log(`  • Landmarks matched:            ${stats.recoveredLandmarks}`);
   console.log(`═══════════════════════════════════════════════════════════════\n`);
 
   return stats;

@@ -229,7 +229,7 @@ const MIGRATIONS: string[] = [
   PRAGMA foreign_keys=ON;
   `,
 
-  // ── v9: scraper_metrics & usage_events ──────────────────────────────────────
+  // ── v10: scraper_metrics & usage_events ─────────────────────────────────────
   `
   CREATE TABLE IF NOT EXISTS scraper_metrics (
     id            INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -259,6 +259,24 @@ const MIGRATIONS: string[] = [
     ON usage_events(user_id, created_at DESC);
   CREATE INDEX IF NOT EXISTS idx_usage_events_telegram_created
     ON usage_events(telegram_id, created_at DESC);
+  `,
+
+  // ── v11: Utilities, restrictions, landmarks, and pet-friendly columns ─────────
+  `
+  ALTER TABLE properties ADD COLUMN electricity TEXT;
+  ALTER TABLE properties ADD COLUMN water TEXT;
+  ALTER TABLE properties ADD COLUMN cleaning TEXT;
+  ALTER TABLE properties ADD COLUMN restrictions TEXT;
+  ALTER TABLE properties ADD COLUMN pet_friendly INTEGER NOT NULL DEFAULT 0 CHECK(pet_friendly IN (0, 1));
+  ALTER TABLE properties ADD COLUMN primary_landmark TEXT;
+  ALTER TABLE properties ADD COLUMN landmarks TEXT;
+
+  CREATE INDEX IF NOT EXISTS idx_properties_pet_friendly
+    ON properties(pet_friendly);
+  CREATE INDEX IF NOT EXISTS idx_properties_primary_landmark
+    ON properties(primary_landmark);
+
+  ALTER TABLE search_filters ADD COLUMN pet_friendly INTEGER DEFAULT 0 CHECK(pet_friendly IN (0, 1));
   `,
 ];
 

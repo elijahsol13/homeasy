@@ -6,13 +6,17 @@ import {
   extractBedrooms,
   extractCategory,
   extractDeposit,
+  extractElectricity,
   extractHasPool,
   extractLocation,
   extractMapsUrl,
   extractMinLease,
   extractPrice,
   extractType,
+  extractWater,
 } from './extractor';
+import { extractCleaning, extractRestrictions } from '../../services/notifier';
+import { findLandmarksInText } from '../../config/landmarks';
 import type { PropertiesRepository } from '../../database/repositories/properties.repo';
 import { checkDuplicate, computeListingPhashes } from '../matcher/deduplicator';
 import type { MatcherService } from '../matcher/matcher';
@@ -173,6 +177,17 @@ export function normalizeRawToClean(
   if (raw.phone) directContact.phone = normalizeText(raw.phone);
   if (raw.telegram_contact) directContact.telegram = normalizeText(raw.telegram_contact);
 
+  // ── Utilities, Restrictions, Landmarks & Pet-Friendly ──────────────────────
+  const electricity = extractElectricity(combinedText);
+  const water = extractWater(combinedText);
+  const cleaning = extractCleaning(combinedText);
+  const restrictions = extractRestrictions(combinedText);
+  const hasPetRestriction = restrictions.includes('🚫 No Pets');
+  const petFriendly = !hasPetRestriction && /\b(?:pet friendly|pets allowed)\b/i.test(combinedText);
+  const landmarkEntries = findLandmarksInText(combinedText, city);
+  const primaryLandmark = landmarkEntries[0]?.canonicalName ?? null;
+  const landmarks = landmarkEntries.map((l) => l.canonicalName);
+
   return {
     title,
     description,
@@ -195,6 +210,13 @@ export function normalizeRawToClean(
     source_url: sourceUrl,
     original_url: raw.url ?? sourceUrl,
     posted_at: raw.posted_at ?? null,
+    electricity,
+    water,
+    cleaning,
+    restrictions,
+    pet_friendly: petFriendly,
+    primary_landmark: primaryLandmark,
+    landmarks,
   };
 }
 
