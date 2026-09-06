@@ -81,3 +81,4 @@ export interface FilterState {
 }
 
 export type ActiveTab = 'feed' | 'map' | 'saved';
+
