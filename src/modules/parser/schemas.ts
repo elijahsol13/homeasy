@@ -63,6 +63,13 @@ export const CleanPropertySchema = z.object({
     .default({}),
   original_url: z.string().default(''),
   posted_at: z.string().nullable().default(null),
+  electricity: z.string().nullable().default(null),
+  water: z.string().nullable().default(null),
+  cleaning: z.string().nullable().default(null),
+  restrictions: z.array(z.string()).default([]),
+  pet_friendly: z.boolean().default(false),
+  primary_landmark: z.string().nullable().default(null),
+  landmarks: z.array(z.string()).default([]),
 });
 
 export type CleanProperty = z.infer<typeof CleanPropertySchema>;

@@ -40,12 +40,31 @@ export interface Property {
   posted_at: string | null;
   updated_at: string;
   created_at: string;
+  electricity?: string | null;
+  water?: string | null;
+  cleaning?: string | null;
+  restrictions?: string[];
+  pet_friendly?: boolean;
+  primary_landmark?: string | null;
+  landmarks?: string[];
 }
 
 interface PropertyRow
   extends Omit<
     Property,
-    'photos' | 'direct_contact' | 'has_pool' | 'image_phashes' | 'reports_count' | 'is_active'
+    | 'photos'
+    | 'direct_contact'
+    | 'has_pool'
+    | 'image_phashes'
+    | 'reports_count'
+    | 'is_active'
+    | 'restrictions'
+    | 'pet_friendly'
+    | 'landmarks'
+    | 'electricity'
+    | 'water'
+    | 'cleaning'
+    | 'primary_landmark'
   > {
   has_pool: 0 | 1;
   photos: string;
@@ -53,6 +72,13 @@ interface PropertyRow
   image_phashes?: string | null;
   reports_count?: number;
   is_active?: 0 | 1;
+  electricity?: string | null;
+  water?: string | null;
+  cleaning?: string | null;
+  restrictions?: string | null;
+  pet_friendly?: 0 | 1;
+  primary_landmark?: string | null;
+  landmarks?: string | null;
 }
 
 function rowToProperty(row: PropertyRow): Property {
@@ -67,6 +93,24 @@ function rowToProperty(row: PropertyRow): Property {
     imagePhashes = row.image_phash ? [row.image_phash] : [];
   }
 
+  let parsedRestrictions: string[] = [];
+  try {
+    if (row.restrictions) {
+      parsedRestrictions = JSON.parse(row.restrictions) as string[];
+    }
+  } catch {
+    parsedRestrictions = [];
+  }
+
+  let parsedLandmarks: string[] = [];
+  try {
+    if (row.landmarks) {
+      parsedLandmarks = JSON.parse(row.landmarks) as string[];
+    }
+  } catch {
+    parsedLandmarks = [];
+  }
+
   return {
     ...row,
     has_pool: Boolean(row.has_pool),
@@ -77,12 +121,34 @@ function rowToProperty(row: PropertyRow): Property {
     is_active: row.is_active !== undefined ? row.is_active : 1,
     posted_at: row.posted_at ?? null,
     updated_at: row.updated_at || row.created_at,
+    electricity: row.electricity ?? null,
+    water: row.water ?? null,
+    cleaning: row.cleaning ?? null,
+    restrictions: parsedRestrictions,
+    pet_friendly: Boolean(row.pet_friendly),
+    primary_landmark: row.primary_landmark ?? null,
+    landmarks: parsedLandmarks,
   };
 }
 
 export type CreatePropertyInput = Omit<
   Property,
-  'id' | 'created_at' | 'updated_at' | 'parsed_at' | 'image_phashes' | 'image_phash' | 'reports_count' | 'is_active' | 'posted_at'
+  | 'id'
+  | 'created_at'
+  | 'updated_at'
+  | 'parsed_at'
+  | 'image_phashes'
+  | 'image_phash'
+  | 'reports_count'
+  | 'is_active'
+  | 'posted_at'
+  | 'restrictions'
+  | 'landmarks'
+  | 'pet_friendly'
+  | 'electricity'
+  | 'water'
+  | 'cleaning'
+  | 'primary_landmark'
 > & {
   image_phash?: string | null;
   image_phashes?: string[];
@@ -90,6 +156,13 @@ export type CreatePropertyInput = Omit<
   is_active?: 0 | 1;
   parsed_at?: string;
   posted_at?: string | null;
+  electricity?: string | null;
+  water?: string | null;
+  cleaning?: string | null;
+  restrictions?: string[] | string | null;
+  pet_friendly?: boolean | number;
+  primary_landmark?: string | null;
+  landmarks?: string[] | string | null;
 };
 
 // ─── Repository ───────────────────────────────────────────────────────────────
@@ -104,13 +177,27 @@ export class PropertiesRepository {
     const phashes = input.image_phashes ?? (input.image_phash ? [input.image_phash] : []);
     const primaryPhash = phashes[0] ?? input.image_phash ?? null;
 
+    const restrictionsJson = Array.isArray(input.restrictions)
+      ? JSON.stringify(input.restrictions)
+      : typeof input.restrictions === 'string'
+        ? input.restrictions
+        : '[]';
+    const landmarksJson = Array.isArray(input.landmarks)
+      ? JSON.stringify(input.landmarks)
+      : typeof input.landmarks === 'string'
+        ? input.landmarks
+        : '[]';
+    const petFriendlyVal = input.pet_friendly ? 1 : 0;
+
     const result = this.db
       .prepare(
         `INSERT INTO properties
            (hash, title, description, price, currency, type, category,
             bedrooms, bathrooms, deposit, min_lease, has_pool, location, city,
-            maps_url, source_url, photos, image_phash, image_phashes, direct_contact, original_url, posted_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))`,
+            maps_url, source_url, photos, image_phash, image_phashes, direct_contact, original_url, posted_at, updated_at,
+            electricity, water, cleaning, restrictions, pet_friendly, primary_landmark, landmarks)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%SZ', 'now'),
+                 ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         input.hash,
@@ -135,6 +222,13 @@ export class PropertiesRepository {
         JSON.stringify(input.direct_contact ?? {}),
         input.original_url ?? '',
         input.posted_at ?? null,
+        input.electricity ?? null,
+        input.water ?? null,
+        input.cleaning ?? null,
+        restrictionsJson,
+        petFriendlyVal,
+        input.primary_landmark ?? null,
+        landmarksJson,
       );
 
     const row = this.db
@@ -200,6 +294,13 @@ export class PropertiesRepository {
       maps_url?: string;
       posted_at?: string | null;
       source_url?: string;
+      electricity?: string | null;
+      water?: string | null;
+      cleaning?: string | null;
+      restrictions?: string[] | string | null;
+      pet_friendly?: boolean | number;
+      primary_landmark?: string | null;
+      landmarks?: string[] | string | null;
     },
   ): Property | undefined {
     const existing = this.getPropertyById(id);
@@ -234,6 +335,28 @@ export class PropertiesRepository {
       }
     }
 
+    const newElectricity = existing.electricity || update.electricity || null;
+    const newWater = existing.water || update.water || null;
+    const newCleaning = existing.cleaning || update.cleaning || null;
+    const newRestrictions =
+      existing.restrictions && existing.restrictions.length > 0
+        ? JSON.stringify(existing.restrictions)
+        : Array.isArray(update.restrictions)
+          ? JSON.stringify(update.restrictions)
+          : typeof update.restrictions === 'string'
+            ? update.restrictions
+            : '[]';
+    const newPetFriendly = existing.pet_friendly ? 1 : update.pet_friendly ? 1 : 0;
+    const newPrimaryLandmark = existing.primary_landmark || update.primary_landmark || null;
+    const newLandmarks =
+      existing.landmarks && existing.landmarks.length > 0
+        ? JSON.stringify(existing.landmarks)
+        : Array.isArray(update.landmarks)
+          ? JSON.stringify(update.landmarks)
+          : typeof update.landmarks === 'string'
+            ? update.landmarks
+            : '[]';
+
     this.db
       .prepare(
         `UPDATE properties
@@ -242,10 +365,31 @@ export class PropertiesRepository {
              location = ?,
              maps_url = ?,
              posted_at = ?,
+             electricity = ?,
+             water = ?,
+             cleaning = ?,
+             restrictions = ?,
+             pet_friendly = ?,
+             primary_landmark = ?,
+             landmarks = ?,
              updated_at = (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
          WHERE id = ?`,
       )
-      .run(newPrice, JSON.stringify(contact), newLocation, newMapsUrl, newPostedAt, id);
+      .run(
+        newPrice,
+        JSON.stringify(contact),
+        newLocation,
+        newMapsUrl,
+        newPostedAt,
+        newElectricity,
+        newWater,
+        newCleaning,
+        newRestrictions,
+        newPetFriendly,
+        newPrimaryLandmark,
+        newLandmarks,
+        id,
+      );
 
     return this.getPropertyById(id);
   }
@@ -340,6 +484,15 @@ export class PropertiesRepository {
 
     if (options.hasPool === true) {
       whereClauses.push('has_pool = 1');
+    }
+
+    if (options.petFriendly === true) {
+      whereClauses.push('pet_friendly = 1');
+    }
+
+    if (options.primaryLandmark) {
+      whereClauses.push('primary_landmark = ?');
+      params.push(options.primaryLandmark);
     }
 
     if (typeof options.minLeaseMax === 'number' && options.minLeaseMax > 0) {
@@ -466,6 +619,8 @@ export interface PropertyFilterOptions {
   bedrooms?: number[];
   bathrooms?: number[];
   hasPool?: boolean;
+  petFriendly?: boolean;
+  primaryLandmark?: string;
   minLeaseMax?: number;
   query?: string;
   sort?: 'newest' | 'price_asc' | 'price_desc';

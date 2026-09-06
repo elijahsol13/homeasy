@@ -58,6 +58,15 @@ export const propertiesRoutes: FastifyPluginAsync<{ container: AppContainer }> =
         hasPool = query.has_pool === 'true' || query.has_pool === '1';
       }
 
+      // Pet friendly
+      let petFriendly: boolean | undefined;
+      if (query.pet_friendly !== undefined) {
+        petFriendly = query.pet_friendly === 'true' || query.pet_friendly === '1';
+      }
+
+      // Primary landmark
+      const primaryLandmark = query.primary_landmark ? query.primary_landmark.trim() : undefined;
+
       // Min lease
       const minLeaseMax = query.min_lease_max ? parseInt(query.min_lease_max, 10) : undefined;
 
@@ -82,6 +91,8 @@ export const propertiesRoutes: FastifyPluginAsync<{ container: AppContainer }> =
         bedrooms,
         bathrooms,
         hasPool,
+        petFriendly,
+        primaryLandmark,
         minLeaseMax,
         query: textQuery,
         sort,

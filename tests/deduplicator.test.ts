@@ -29,6 +29,13 @@ function mockCleanProperty(overrides: Partial<CleanProperty> = {}): CleanPropert
     direct_contact: { phone: '85512345678' },
     original_url: 'https://example.com/prop-1',
     posted_at: null,
+    electricity: null,
+    water: null,
+    cleaning: null,
+    restrictions: [],
+    pet_friendly: false,
+    primary_landmark: null,
+    landmarks: [],
     ...overrides,
   };
 }

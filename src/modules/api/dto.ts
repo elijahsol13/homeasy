@@ -74,11 +74,11 @@ export interface MapMarkerDTO {
  */
 export function toPropertyDTO(property: Property, isFavorite?: boolean): PropertyDTO {
   const fullText = `${property.title}\n${property.description}`;
-  const electricity = extractElectricity(fullText);
-  const water = extractWater(fullText);
+  const electricity = property.electricity ?? extractElectricity(fullText);
+  const water = property.water ?? extractWater(fullText);
   const propertyType = extractPropertyType(fullText, property.category) ?? (property.category ?? 'Property');
-  const cleaning = extractCleaning(fullText);
-  const restrictions = extractRestrictions(fullText);
+  const cleaning = property.cleaning ?? extractCleaning(fullText);
+  const restrictions = property.restrictions && property.restrictions.length > 0 ? property.restrictions : extractRestrictions(fullText);
   const landmarks = findLandmarksInText(fullText, property.city).map((l: LandmarkEntry) => ({
     id: l.id,
     name: l.canonicalName,
