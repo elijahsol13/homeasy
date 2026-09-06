@@ -20,6 +20,8 @@ import type { RawListing } from './schemas';
 import { runMigrations } from '../../database/migrate';
 import type { AppContainer } from '../../container';
 import { createContainer } from '../../container';
+import { env } from '../../config/env';
+import { parseProxyConfig, type PlaywrightProxyConfig, type ParsedProxyResult } from './proxy';
 import { FB_GROUPS, type CityKey, type PropertyCategory } from '../../config/settings';
 import {
   extractBedrooms,
@@ -46,6 +48,8 @@ export class FacebookSessionExpiredError extends Error {
     this.name = 'FacebookSessionExpiredError';
   }
 }
+
+export { parseProxyConfig, type PlaywrightProxyConfig, type ParsedProxyResult };
 
 // ─── Target Group Definitions ─────────────────────────────────────────────────
 
@@ -953,9 +957,15 @@ export async function runFacebookScraper(containerInstance?: AppContainer): Prom
   let context: BrowserContext | null = null;
 
   try {
+    const proxyResult = parseProxyConfig(env.FB_PROXY);
+    if (proxyResult) {
+      console.log(`🌐 Proxy enabled: ${proxyResult.masked}`);
+    }
+
     console.log('🌐 Launching headless browser with saved session...');
     browser = await chromium.launch({
       headless: true,
+      proxy: proxyResult?.config,
       args: [
         '--no-sandbox',
         '--disable-setuid-sandbox',
