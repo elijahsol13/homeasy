@@ -120,3 +120,4 @@ export class LinkVerifierService {
     return { checked, deactivated };
   }
 }
+

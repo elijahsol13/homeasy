@@ -28,6 +28,8 @@ import { chromium } from 'playwright-extra';
 import stealthPlugin from 'puppeteer-extra-plugin-stealth';
 import { parseProxyConfig } from '../src/modules/parser/proxy';
 import { env } from '../src/config/env';
+import { extractPostsFromFbGraphQL } from '../src/modules/parser/facebook.scraper';
+import { attachTrafficGuard } from '../src/modules/parser/traffic-guard';
 
 chromium.use(stealthPlugin());
 
@@ -213,13 +215,22 @@ async function reparseFacebook(db: any, limit?: number): Promise<void> {
     SELECT id, source_url, original_url, title, description, photos
     FROM properties
     WHERE source_url LIKE '%facebook%'
+      AND (
+        description LIKE '%... See more%'
+        OR description LIKE '%... See More%'
+        OR description LIKE '%... Ещё%'
+        OR description LIKE '%…%'
+        OR photos IS NULL
+        OR photos = '[]'
+        OR length(description) < 60
+      )
     ORDER BY id DESC
   `;
   const rows = db.prepare(query).all() as any[];
-  console.log(`📦 Found ${rows.length} total Facebook listings in database.`);
+  console.log(`📦 Found ${rows.length} truncated Facebook listings that require full text / photo recovery.`);
 
   const targets = limit ? rows.slice(0, limit) : rows;
-  console.log(`🎯 Processing ${targets.length} listings safely...\n`);
+  console.log(`🎯 Processing ${targets.length} listings safely with minimal proxy bandwidth...\n`);
 
   const browser = await chromium.launch({
     headless: true,
@@ -242,36 +253,13 @@ async function reparseFacebook(db: any, limit?: number): Promise<void> {
   const page = await context.newPage();
 
   // 🛡️ IRONCLAD RULE: Block all images, videos, audio, fonts, stylesheets, and telemetry over residential proxy!
-  await page.route('**/*', (route) => {
-    const req = route.request();
-    const type = req.resourceType();
-    const u = req.url().toLowerCase();
-
-    if (['image', 'media', 'font', 'stylesheet', 'other'].includes(type)) {
-      return route.abort();
-    }
-
-    if (
-      u.includes('google-analytics') ||
-      u.includes('googletagmanager') ||
-      u.includes('doubleclick') ||
-      u.includes('connect.facebook.net') ||
-      u.includes('facebook.com/tr/') ||
-      u.includes('facebook.com/ajax/bz') ||
-      u.includes('logging_client_events') ||
-      u.includes('video') ||
-      u.includes('audio')
-    ) {
-      return route.abort();
-    }
-
-    return route.continue();
-  });
+  await attachTrafficGuard(page);
 
   let count = 0;
   for (const row of targets) {
     count++;
-    const targetUrl = row.original_url || row.source_url;
+    const rawUrl = row.original_url || row.source_url || '';
+    const targetUrl = rawUrl.replace('web.facebook.com', 'www.facebook.com');
     console.log(`\n[${count}/${targets.length}] #${row.id}: ${row.title.slice(0, 35)}...`);
 
     let fullTextFromGraphQL: string | null = null;
@@ -279,10 +267,32 @@ async function reparseFacebook(db: any, limit?: number): Promise<void> {
 
     // Intercept Relay Comet GraphQL responses for this post
     const responseHandler = async (res: any) => {
-      if (res.url().includes('/api/graphql/')) {
+      if (res.url().includes('/api/graphql')) {
         try {
           const text = await res.text();
-          // Extract message text from Relay node
+          // 1. Process Relay streaming / newline-delimited chunks
+          const lines = text.split(/\r?\n/).map((l: string) => l.trim()).filter(Boolean);
+          for (const line of lines) {
+            try {
+              const cleanLine = line.replace(/^for\s*\(\s*;\s*;\s*\);/, '');
+              const json = JSON.parse(cleanLine);
+              const posts = extractPostsFromFbGraphQL(json, targetUrl);
+              for (const post of posts) {
+                if (post.text && (!fullTextFromGraphQL || post.text.length > fullTextFromGraphQL.length)) {
+                  fullTextFromGraphQL = post.text;
+                }
+                for (const photo of post.photos) {
+                  if (!interceptedPhotos.includes(photo)) {
+                    interceptedPhotos.push(photo);
+                  }
+                }
+              }
+            } catch {
+              // ignore non-JSON line fragment
+            }
+          }
+
+          // 2. Direct regex fallback for message text
           const matches = text.match(/"text":"((?:\\"|[^"])+)"/g);
           if (matches) {
             for (const m of matches) {
@@ -292,7 +302,7 @@ async function reparseFacebook(db: any, limit?: number): Promise<void> {
               }
             }
           }
-          // Extract all high-res photos
+          // 3. Extract high-res photo URLs (strings only, no binary downloads)
           const photoMatches = text.match(/https:\/\/[^"'\\]+fbcdn\.net[^"'\\]+/g);
           if (photoMatches) {
             for (const p of photoMatches) {
