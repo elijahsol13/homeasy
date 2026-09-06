@@ -982,10 +982,7 @@ export async function runFacebookScraper(containerInstance?: AppContainer): Prom
   // Check proxy requirement (mandatory to prevent IP bans)
   const proxyResult = parseProxyConfig(env.FB_PROXY);
   if (!proxyResult) {
-    const errorMsg =
-      '🚨 <b>Facebook Scraper Aborted</b>: Proxy is NOT configured! Scraping Facebook without a residential proxy is strictly disabled to prevent AWS IP and account bans. Please configure <code>FB_PROXY</code> in your .env file.';
-    console.error(`\n❌ FATAL: ${errorMsg}\n`);
-    await container.notifierService.notifyAdmins(errorMsg);
+    await container.alertService.critical('Отсутствует FB_PROXY. Скрапер Facebook не запущен.');
     return { totalScraped: 0, inserted: 0, duplicates: 0, errors: 1 };
   }
 
@@ -1075,8 +1072,7 @@ export async function runFacebookScraper(containerInstance?: AppContainer): Prom
           // Abort all remaining groups immediately to prevent further failures or unproxied leaks
           break;
         } else if (err instanceof FacebookSessionExpiredError) {
-          console.error(`💥 Facebook session expired or blocked: ${err.message}`);
-          console.error('📢 Sending high-priority alert to administrators...');
+          await container.alertService.critical('<b>Facebook Checkpoint!</b> Скрапер остановлен. Требуется ручная авторизация через /auth_fb');
           const authKb = new InlineKeyboard().text('🔑 Авторизоваться в Facebook', 'admin:auth:fb');
           await container.notifierService.notifyAdmins(
             '⚠️ <b>Facebook session expired or blocked.</b>\nНажмите кнопку ниже, чтобы открыть интерактивное окно авторизации через резидентный прокси.',
