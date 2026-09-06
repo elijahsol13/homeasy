@@ -211,11 +211,11 @@ async function reparseFacebook(db: any, limit?: number): Promise<void> {
   const query = `
     SELECT id, source_url, original_url, title, description, photos
     FROM properties
-    WHERE source_url LIKE '%facebook%' AND description LIKE '%... Ещё%'
+    WHERE source_url LIKE '%facebook%'
     ORDER BY id DESC
   `;
   const rows = db.prepare(query).all() as any[];
-  console.log(`📦 Found ${rows.length} Facebook listings with truncated descriptions.`);
+  console.log(`📦 Found ${rows.length} total Facebook listings in database.`);
 
   const targets = limit ? rows.slice(0, limit) : rows;
   console.log(`🎯 Processing ${targets.length} listings safely...\n`);
