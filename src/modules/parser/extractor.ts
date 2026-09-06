@@ -331,8 +331,8 @@ export function extractPropertyType(text: string, category?: PropertyCategory | 
 export async function extractListingWithLLM(text: string): Promise<LLMExtractedListing | null> {
   const geminiKey = getGeminiKey();
   if (geminiKey) {
-    // Model hierarchy: gemini-2.5-flash -> gemini-2.5-flash-lite
-    for (const modelName of ['gemini-2.5-flash', 'gemini-2.5-flash-lite']) {
+    // Model hierarchy with highest quotas (15 RPM, 500 RPD): gemini-3.1-flash-lite -> gemini-3.5-flash-lite -> gemini-flash-lite-latest
+    for (const modelName of ['gemini-3.1-flash-lite', 'gemini-3.5-flash-lite', 'gemini-flash-lite-latest', 'gemini-3.8-flash', 'gemini-3.6-flash']) {
       try {
         if (!genAIInstance) {
           genAIInstance = new GoogleGenerativeAI(geminiKey);
@@ -417,7 +417,7 @@ export async function extractListingsBatchWithLLM(
       'Return a JSON array of objects: `[{"id": ..., "result": {<schema>}}]` where result matches the extraction schema.\n' +
       'Do not skip any items.';
 
-    for (const modelName of ['gemini-2.5-flash', 'gemini-2.5-flash-lite']) {
+    for (const modelName of ['gemini-3.1-flash-lite', 'gemini-3.5-flash-lite', 'gemini-flash-lite-latest', 'gemini-3.8-flash', 'gemini-3.6-flash']) {
       try {
         if (!genAIInstance) {
           genAIInstance = new GoogleGenerativeAI(geminiKey);
