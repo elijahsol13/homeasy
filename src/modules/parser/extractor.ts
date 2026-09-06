@@ -174,28 +174,58 @@ function sanitizeLlmResult(rawJson: string): LLMExtractedListing | null {
 
 export function extractElectricity(text: string): string | null {
   // 1. Included / All inclusive
-  if (/\b(?:free\s+electric(?:ity)?|electric(?:ity)?\s+free|utilities\s+included|all\s+inclusive|electricity\s*:\s*included)\b/i.test(text)) {
+  if (
+    /\b(?:free\s+electric(?:ity)?|electric(?:ity)?\s+free|utilities\s+included|all\s+inclusive|electricity\s*:\s*included)\b/i.test(text) ||
+    /ភ្លើងឥតគិតថ្លៃ|ភ្លើងហ្វ្រី|រួមបញ្ចូលភ្លើង/.test(text)
+  ) {
     return 'Included';
   }
 
-  // 2. EDC / State rate
+  // 2. EDC / State rate / Government rate / 720r
   if (
-    /\b(?:edc|state\s+rate|gov(?:ernment)?\s+rate|state\s+electric(?:ity)?)\b/i.test(text) ||
-    /ភ្លើងរដ្ឋ/.test(text)
+    /\b(?:edc|electricit[eé]\s+du\s+cambodge|state\s+rate|gov(?:ernment)?\s+rate|state\s+electric(?:ity)?)\b/i.test(text) ||
+    /ភ្លើងរដ្ឋ/.test(text) ||
+    /(?:electricity|electric|ភ្លើង)\s*:\s*(?:720|740)\s*(?:r|riel|៛)/i.test(text)
   ) {
     return 'EDC (State Rate) ~$0.20/kWh';
   }
 
-  // 3. Fixed dollar rate (e.g. $0.25/kWh, 0.25$, $0.30)
-  const dollarMatch = /(?:electricity|electric|power|⚡)?\s*(?::\s*)?\$?(0\.\d{2})\s*\$?(?:\s*\/\s*kwh|\s*per\s*kwh|\s*\/unit)?\b/i.exec(text);
-  if (dollarMatch && parseFloat(dollarMatch[1]) >= 0.15 && parseFloat(dollarMatch[1]) <= 0.60) {
-    return `Fixed Rate ($${dollarMatch[1]}/kWh)`;
+  // 3a. Fixed dollar rate with explicit electricity keyword (e.g. "Electricity: $0.25/kWh", "Electric 0.25$", "Electricity: 0.25")
+  const kwDollarMatch = /(?:electricity|electric|power|⚡|ភ្លើង|ថ្លៃភ្លើង)\s*(?::|\s+is|-)?\s*\$?(0\.\d{1,2})\s*\$?(?:\s*\/\s*(?:kwh|kw|unit|degree)|\s*per\s*(?:kwh|kw|unit))?/i.exec(text);
+  if (kwDollarMatch) {
+    const val = parseFloat(kwDollarMatch[1]);
+    if (val >= 0.15 && val <= 0.80) {
+      return `Fixed Rate ($${val.toFixed(2)}/kWh)`;
+    }
   }
 
-  // 4. Fixed Riel rate (e.g. 1000r, 1000 riel, 1200r/kwh)
-  const rielMatch = /(?:electricity|electric|power|⚡)?\s*(?::\s*)?([1-9]\d{2,3})\s*(?:r|riel|៛)(?:\s*\/\s*kwh|\s*per\s*kwh|\s*\/unit)?\b/i.exec(text);
-  if (rielMatch && parseInt(rielMatch[1], 10) >= 500 && parseInt(rielMatch[1], 10) <= 3000) {
-    return `Fixed Rate (${rielMatch[1]}៛/kWh)`;
+  // 3b. Fixed dollar rate with explicit unit /kWh or /kw without explicit electricity keyword (e.g. "$0.25/kWh")
+  const unitDollarMatch = /\$?(0\.\d{1,2})\s*\$?\s*(?:\/\s*(?:kwh|kw|unit)|per\s*(?:kwh|kw))\b/i.exec(text);
+  if (unitDollarMatch) {
+    const val = parseFloat(unitDollarMatch[1]);
+    if (val >= 0.15 && val <= 0.80) {
+      return `Fixed Rate ($${val.toFixed(2)}/kWh)`;
+    }
+  }
+
+  // 4a. Fixed Riel rate with explicit keyword (e.g. "Electricity 1000r", "Electricity: 1,000 riels/kwh", "ភ្លើង 1000៛")
+  const kwRielMatch = /(?:electricity|electric|power|⚡|ភ្លើង|ថ្លៃភ្លើង)\s*(?::|\s+is|-)?\s*([1-9][\d,]{2,4})\s*(?:r|riel|៛)?(?:\s*\/\s*(?:kwh|kw|unit|degree)|\s*per\s*(?:kwh|kw|unit))?/i.exec(text);
+  if (kwRielMatch) {
+    const cleanNum = kwRielMatch[1].replace(/,/g, '');
+    const val = parseInt(cleanNum, 10);
+    if (val >= 500 && val <= 3500) {
+      return `Fixed Rate (${val}៛/kWh)`;
+    }
+  }
+
+  // 4b. Fixed Riel rate with explicit unit /kWh (e.g. "1,000 riels/kwh")
+  const unitRielMatch = /([1-9][\d,]{2,4})\s*(?:r|riel|៛)\s*(?:\/\s*(?:kwh|kw|unit)|per\s*(?:kwh|kw))\b/i.exec(text);
+  if (unitRielMatch) {
+    const cleanNum = unitRielMatch[1].replace(/,/g, '');
+    const val = parseInt(cleanNum, 10);
+    if (val >= 500 && val <= 3500) {
+      return `Fixed Rate (${val}៛/kWh)`;
+    }
   }
 
   return null;
@@ -204,26 +234,53 @@ export function extractElectricity(text: string): string | null {
 export function extractWater(text: string): string | null {
   // 1. Included / Free
   if (
-    /\b(?:free\s+water|water\s+free|water\s*(?::|\s+is)?\s*included|including\s+water|water\s*:\s*free)\b/i.test(text) ||
+    /\b(?:free\s+water|water\s+free|water\s*(?::|\s+is)?\s*included|including\s+water|water\s*:\s*free|water\s+supply\s+free)\b/i.test(text) ||
     /ទឹកឥតគិតថ្លៃ|ទឹកហ្វ្រី|រួមបញ្ចូលទឹក/.test(text)
   ) {
     return 'Included';
   }
 
-  // 2. State rate
+  // 2. State rate / PPWSA / 1000r/m3
   if (
-    /\b(?:state\s+water|gov(?:ernment)?\s+water|1000\s*(?:r|riel)\s*\/\s*m3)\b/i.test(text) ||
+    /\b(?:state\s+water|gov(?:ernment)?\s+water|state\s+rate\s+water|ppwsa|1000\s*(?:r|riel|៛)?\s*\/\s*m[3³])\b/i.test(text) ||
+    /(?:water|ទឹក)\s*:\s*(?:state|gov|រដ្ឋ|1000\s*(?:r|riel|៛)?\s*\/\s*m[3³])/i.test(text) ||
     /ទឹករដ្ឋ|ទឹកដ្ឋ/.test(text)
   ) {
     return 'State Rate (~1000៛/m³)';
   }
 
-  // 3. Fixed per person / per month
-  const fixedMatch = /(?:water|💧)?\s*(?::\s*)?\$?(\d+(?:\.\d+)?)\s*\$?\s*(?:\/\s*person|\/\s*pax|\/\s*people|\/\s*month|\/\s*mo)\b/i.exec(text);
-  if (fixedMatch) {
-    const val = fixedMatch[1];
-    const unit = /month|mo/i.test(fixedMatch[0]) ? '/month' : '/person';
-    return `Fixed ($${val}${unit})`;
+  // 3a. Fixed per cubic meter ($/m3, e.g. "$0.50/m3", "0.5$/m³")
+  const m3DollarMatch = /(?:water|water\s+supply|ទឹក|ថ្លៃទឹក|💧)?\s*(?::|\s+is|-)?\s*\$?(0\.\d{1,2})\s*\$?\s*(?:\/\s*(?:m3|m³|cubic\s*meter)|per\s*(?:m3|m³))/i.exec(text);
+  if (m3DollarMatch) {
+    const val = parseFloat(m3DollarMatch[1]);
+    if (val >= 0.15 && val <= 2.50) {
+      return `Fixed Rate ($${val.toFixed(2)}/m³)`;
+    }
+  }
+
+  // 3b. Fixed per cubic meter (Riel/m3, e.g. "water 2,000 riels/m³", "2500 riel/m3")
+  const m3RielMatch = /(?:water|water\s+supply|ទឹក|ថ្លៃទឹក|💧)?\s*(?::|\s+is|-)?\s*([1-9][\d,]{2,4})\s*(?:r|riels?|៛)?\s*(?:\/\s*(?:m3|m³|cubic\s*meter)|per\s*(?:m3|m³))/i.exec(text);
+  if (m3RielMatch) {
+    const cleanNum = m3RielMatch[1].replace(/,/g, '');
+    const val = parseInt(cleanNum, 10);
+    if (val >= 500 && val <= 5000) {
+      return `Fixed Rate (${val}៛/m³)`;
+    }
+  }
+
+  // 4a. Fixed per person (e.g. "Water: $5/person", "5$/pax", "Water: 5$/person")
+  const personMatch = /(?:water|water\s+supply|ទឹក|ថ្លៃទឹក|💧)\s*(?::|\s+is|-)?\s*\$?(\d+(?:\.\d+)?)\s*\$?\s*(?:\/\s*(?:person|pax|people)|per\s*(?:person|pax|people))/i.exec(text);
+  if (personMatch) {
+    return `Fixed ($${personMatch[1]}/person)`;
+  }
+
+  // 4b. Fixed per month (e.g. "Water: $5/month", "Water: $5", "Water 5$/mo", "Water: 5$")
+  const monthMatch = /(?:water|water\s+supply|ទឹក|ថ្លៃទឹក|💧)\s*(?::|\s+is|-)?\s*\$?(\d+(?:\.\d+)?)\s*\$?(?:\s*(?:\/\s*(?:month|mo)|per\s*(?:month|mo)))?/i.exec(text);
+  if (monthMatch) {
+    const val = parseFloat(monthMatch[1]);
+    if (val >= 1 && val <= 50) {
+      return `Fixed ($${val}/month)`;
+    }
   }
 
   return null;

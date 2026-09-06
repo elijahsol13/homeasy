@@ -25,16 +25,21 @@ describe('Extractor: Cambodian Utilities & Property Types', () => {
       expect(extractElectricity('Electricity $0.25/kwh')).toBe('Fixed Rate ($0.25/kWh)');
       expect(extractElectricity('Power: 0.30$/kWh')).toBe('Fixed Rate ($0.30/kWh)');
       expect(extractElectricity('Electric 0.25 per kwh')).toBe('Fixed Rate ($0.25/kWh)');
+      expect(extractElectricity('Electricity: 0.25$')).toBe('Fixed Rate ($0.25/kWh)');
+      expect(extractElectricity('affordable electricity at $0.25 per kwh')).toBe('Fixed Rate ($0.25/kWh)');
     });
 
     test('extracts fixed KHR rates per kWh', () => {
       expect(extractElectricity('Electric 1000r/kwh')).toBe('Fixed Rate (1000៛/kWh)');
       expect(extractElectricity('Electricity: 1200 riel per kwh')).toBe('Fixed Rate (1200៛/kWh)');
+      expect(extractElectricity('electricity 1,000 riels/kwh')).toBe('Fixed Rate (1000៛/kWh)');
       expect(extractElectricity('ភ្លើង 1000៛/unit')).toBe('Fixed Rate (1000៛/kWh)');
+      expect(extractElectricity('Electricity: EDC (720 Riels)')).toBe('EDC (State Rate) ~$0.20/kWh');
     });
 
     test('returns null when electricity is not mentioned', () => {
       expect(extractElectricity('Nice 2 bedroom house near Old Market.')).toBeNull();
+      expect(extractElectricity('Only 0.3 miles to pub street')).toBeNull();
     });
   });
 
@@ -42,22 +47,33 @@ describe('Extractor: Cambodian Utilities & Property Types', () => {
     test('extracts Included / Free water', () => {
       expect(extractWater('Free water and garbage collection')).toBe('Included');
       expect(extractWater('Water: included')).toBe('Included');
+      expect(extractWater('ទឹកឥតគិតថ្លៃ')).toBe('Included');
     });
 
     test('extracts State Rate water', () => {
       expect(extractWater('State water rate directly from meter')).toBe('State Rate (~1000៛/m³)');
       expect(extractWater('ទឹកដ្ឋ តាមកុងទ័រ')).toBe('State Rate (~1000៛/m³)');
       expect(extractWater('Water: 1000 r/m3')).toBe('State Rate (~1000៛/m³)');
+      expect(extractWater('Water: PPWSA state rate')).toBe('State Rate (~1000៛/m³)');
     });
 
     test('extracts fixed water rates per person or per month', () => {
       expect(extractWater('Water: $5/person/month')).toBe('Fixed ($5/person)');
       expect(extractWater('Water $5/pax')).toBe('Fixed ($5/person)');
       expect(extractWater('Water: $10/month')).toBe('Fixed ($10/month)');
+      expect(extractWater('Water: $5')).toBe('Fixed ($5/month)');
+      expect(extractWater('Water: 5$/mo')).toBe('Fixed ($5/month)');
+    });
+
+    test('extracts fixed water rates per m3', () => {
+      expect(extractWater('water 2,000 riels/m³')).toBe('Fixed Rate (2000៛/m³)');
+      expect(extractWater('Water: $0.50/m3')).toBe('Fixed Rate ($0.50/m³)');
+      expect(extractWater('water 2500 riel/m3')).toBe('Fixed Rate (2500៛/m³)');
     });
 
     test('returns null when water is not mentioned', () => {
       expect(extractWater('Studio apartment with kitchen and balcony.')).toBeNull();
+      expect(extractWater('Hot water system in bathroom')).toBeNull();
     });
   });
 
