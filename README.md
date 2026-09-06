@@ -17,6 +17,7 @@ Built with **TypeScript · Node.js 22+ · grammY · native SQLite (WAL) · Playw
 - **Scraper Circuit Breaker:** Isolated scraping loops with automatic error handling, exponential backoff, and Telegram admin alerts for expired cookies (Facebook and Khmer24).
 - **Persistent Scraper Metrics & Analytics:** Long-term historical database tracking (`scraper_metrics`, `usage_events`) with hourly Telegram Heartbeat reports.
 - **Remote Visual Browser Streaming:** Mobile-friendly interactive CDP browser screencast for 100% human-driven Facebook (proxied) and Khmer24 authentication.
+- **macOS APFS Hardening:** Guaranteed repository durability with hardware fsync and Spotlight exclusion.
 
 ---
 
