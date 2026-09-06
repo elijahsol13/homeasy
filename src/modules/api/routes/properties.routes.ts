@@ -1,6 +1,7 @@
 import type { FastifyPluginAsync } from 'fastify';
 import type { AppContainer } from '../../../container';
 import type { CityKey } from '../../../config/settings';
+import type { MapBoundingBox } from '../../../database/repositories/properties.repo';
 import { optionalTelegramAuth } from '../auth';
 import { toPropertyDTO, toMapMarkerDTO } from '../dto';
 
@@ -135,10 +136,35 @@ export const propertiesRoutes: FastifyPluginAsync<{ container: AppContainer }> =
     const type = (query.type as 'rent' | 'sale') || undefined;
     const limit = query.limit ? Math.min(500, parseInt(query.limit, 10)) : 300;
 
+    let bounds: MapBoundingBox | undefined = undefined;
+    if (
+      query.minLat !== undefined &&
+      query.maxLat !== undefined &&
+      query.minLng !== undefined &&
+      query.maxLng !== undefined
+    ) {
+      const minLat = parseFloat(query.minLat);
+      const maxLat = parseFloat(query.maxLat);
+      const minLng = parseFloat(query.minLng);
+      const maxLng = parseFloat(query.maxLng);
+      const paddingRatio = query.paddingRatio !== undefined ? parseFloat(query.paddingRatio) : 0.2;
+
+      if (!isNaN(minLat) && !isNaN(maxLat) && !isNaN(minLng) && !isNaN(maxLng)) {
+        bounds = {
+          minLat,
+          maxLat,
+          minLng,
+          maxLng,
+          paddingRatio: !isNaN(paddingRatio) ? paddingRatio : 0.2,
+        };
+      }
+    }
+
     const properties = container.propertiesRepo.getPropertiesForMap(city, {
       category,
       type,
       limit,
+      bounds,
     });
 
     const markers = properties.map(toMapMarkerDTO);

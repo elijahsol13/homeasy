@@ -1,5 +1,6 @@
 import type { DatabaseSync } from 'node:sqlite';
 import type { CityKey, PropertyCategory } from '../../config/settings';
+import { extractCoordinatesFromMapsUrl } from '../../config/locations';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -47,6 +48,8 @@ export interface Property {
   pet_friendly?: boolean;
   primary_landmark?: string | null;
   landmarks?: string[];
+  latitude?: number | null;
+  longitude?: number | null;
 }
 
 interface PropertyRow
@@ -128,6 +131,8 @@ function rowToProperty(row: PropertyRow): Property {
     pet_friendly: Boolean(row.pet_friendly),
     primary_landmark: row.primary_landmark ?? null,
     landmarks: parsedLandmarks,
+    latitude: row.latitude !== undefined && row.latitude !== null ? Number(row.latitude) : null,
+    longitude: row.longitude !== undefined && row.longitude !== null ? Number(row.longitude) : null,
   };
 }
 
@@ -165,6 +170,14 @@ export type CreatePropertyInput = Omit<
   landmarks?: string[] | string | null;
 };
 
+export interface MapBoundingBox {
+  minLat: number;
+  maxLat: number;
+  minLng: number;
+  maxLng: number;
+  paddingRatio?: number; // default 0.2 (20% overscan buffer = ~5-10 mm beyond screen)
+}
+
 // ─── Repository ───────────────────────────────────────────────────────────────
 
 export class PropertiesRepository {
@@ -195,9 +208,9 @@ export class PropertiesRepository {
            (hash, title, description, price, currency, type, category,
             bedrooms, bathrooms, deposit, min_lease, has_pool, location, city,
             maps_url, source_url, photos, image_phash, image_phashes, direct_contact, original_url, posted_at, updated_at,
-            electricity, water, cleaning, restrictions, pet_friendly, primary_landmark, landmarks)
+            electricity, water, cleaning, restrictions, pet_friendly, primary_landmark, landmarks, latitude, longitude)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%SZ', 'now'),
-                 ?, ?, ?, ?, ?, ?, ?)`,
+                 ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         input.hash,
@@ -229,6 +242,8 @@ export class PropertiesRepository {
         petFriendlyVal,
         input.primary_landmark ?? null,
         landmarksJson,
+        input.latitude ?? null,
+        input.longitude ?? null,
       );
 
     const row = this.db
@@ -301,6 +316,8 @@ export class PropertiesRepository {
       pet_friendly?: boolean | number;
       primary_landmark?: string | null;
       landmarks?: string[] | string | null;
+      latitude?: number | null;
+      longitude?: number | null;
     },
   ): Property | undefined {
     const existing = this.getPropertyById(id);
@@ -326,6 +343,16 @@ export class PropertiesRepository {
     let newMapsUrl = existing.maps_url;
     if (update.maps_url && !existing.maps_url) {
       newMapsUrl = update.maps_url;
+    }
+
+    let newLat = existing.latitude ?? update.latitude ?? null;
+    let newLng = existing.longitude ?? update.longitude ?? null;
+    if ((newLat === null || newLng === null) && newMapsUrl) {
+      const coords = extractCoordinatesFromMapsUrl(newMapsUrl);
+      if (coords) {
+        newLat = coords.latitude;
+        newLng = coords.longitude;
+      }
     }
 
     let newPostedAt = existing.posted_at;
@@ -364,6 +391,8 @@ export class PropertiesRepository {
              direct_contact = ?,
              location = ?,
              maps_url = ?,
+             latitude = ?,
+             longitude = ?,
              posted_at = ?,
              electricity = ?,
              water = ?,
@@ -380,6 +409,8 @@ export class PropertiesRepository {
         JSON.stringify(contact),
         newLocation,
         newMapsUrl,
+        newLat,
+        newLng,
         newPostedAt,
         newElectricity,
         newWater,
@@ -535,11 +566,16 @@ export class PropertiesRepository {
   }
 
   /**
-   * Lightweight query for map markers.
+   * Lightweight query for map markers with optional Bounding Box & 20% overscan buffer.
    */
   getPropertiesForMap(
     city: CityKey,
-    options: { category?: string; type?: 'rent' | 'sale'; limit?: number } = {},
+    options: {
+      category?: string;
+      type?: 'rent' | 'sale';
+      limit?: number;
+      bounds?: MapBoundingBox;
+    } = {},
   ): Property[] {
     const whereClauses: string[] = ['is_active = 1', 'city = ?'];
     const params: Array<string | number> = [city];
@@ -552,6 +588,26 @@ export class PropertiesRepository {
     if (options.type) {
       whereClauses.push('type = ?');
       params.push(options.type);
+    }
+
+    if (options.bounds) {
+      const { minLat, maxLat, minLng, maxLng, paddingRatio = 0.2 } = options.bounds;
+      const latDelta = Math.abs(maxLat - minLat) * paddingRatio;
+      const lngDelta = Math.abs(maxLng - minLng) * paddingRatio;
+      const queryMinLat = Math.min(minLat, maxLat) - latDelta;
+      const queryMaxLat = Math.max(minLat, maxLat) + latDelta;
+      const queryMinLng = Math.min(minLng, maxLng) - lngDelta;
+      const queryMaxLng = Math.max(minLng, maxLng) + lngDelta;
+
+      whereClauses.push(
+        'latitude IS NOT NULL',
+        'longitude IS NOT NULL',
+        'latitude >= ?',
+        'latitude <= ?',
+        'longitude >= ?',
+        'longitude <= ?',
+      );
+      params.push(queryMinLat, queryMaxLat, queryMinLng, queryMaxLng);
     }
 
     const limit = Math.min(options.limit ?? 300, 500);

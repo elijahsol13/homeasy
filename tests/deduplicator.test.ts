@@ -36,6 +36,8 @@ function mockCleanProperty(overrides: Partial<CleanProperty> = {}): CleanPropert
     pet_friendly: false,
     primary_landmark: null,
     landmarks: [],
+    latitude: null,
+    longitude: null,
     ...overrides,
   };
 }

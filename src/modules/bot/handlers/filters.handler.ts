@@ -25,7 +25,7 @@ import {
   type CityKey,
 } from '../../../config/settings';
 import type { FilterDraft, WizardStep } from '../session';
-import type { SearchFilter } from '../../../database/repositories/filters.repo';
+import { type SearchFilter, MAX_USER_FILTERS } from '../../../database/repositories/filters.repo';
 
 // ─── Free-form text input for custom budget ───────────────────────────────────
 
@@ -78,6 +78,30 @@ export function parseCustomBudgetInput(text: string): { min?: number; max?: numb
 // ─── Wizard entry ─────────────────────────────────────────────────────────────
 
 export async function startFilterWizard(ctx: MyContext): Promise<void> {
+  const from = ctx.from;
+  if (from) {
+    const user = ctx.container.usersRepo.findByTelegramId(from.id);
+    if (user) {
+      const activeCount = ctx.container.filtersRepo.countUserActiveFilters(user.id);
+      if (activeCount >= MAX_USER_FILTERS) {
+        await sendOrEdit(
+          ctx,
+          `⚠️ <b>Достигнут лимит сохранённых алертов (${activeCount} из ${MAX_USER_FILTERS})</b>\n\n` +
+            `На этапе открытого тестирования разрешено до ${MAX_USER_FILTERS} активных фильтров на одного пользователя.\n\n` +
+            `Чтобы создать новый фильтр, пожалуйста, удалите или отключите ненужный в меню <b>🛠 Мои фильтры</b>.`,
+          {
+            parse_mode: 'HTML' as const,
+            reply_markup: new InlineKeyboard()
+              .text('🛠 Мои фильтры', 'cb:menu:filters')
+              .row()
+              .text('🔙 Главное меню', 'cb:menu:main'),
+          },
+        );
+        return;
+      }
+    }
+  }
+
   ctx.session.wizardStep = 'filter:type';
   ctx.session.filterDraft = { locations: [], bedrooms: [], requires_pool: false };
 
@@ -740,6 +764,16 @@ export async function handleFilterCallback(ctx: MyContext, data: string): Promis
       return;
     }
 
+    const activeCount = ctx.container.filtersRepo.countUserActiveFilters(user.id);
+    if (activeCount >= MAX_USER_FILTERS) {
+      await ctx.answerCallbackQuery({
+        text: `⚠️ Лимит ${MAX_USER_FILTERS} фильтров исчерпан. Удалите старый фильтр!`,
+        show_alert: true,
+      });
+      ctx.session.wizardStep = 'idle';
+      return;
+    }
+
     const savedFilter = ctx.container.filtersRepo.createFilter({
       user_id: user.id,
       type: draft.type,
@@ -822,7 +856,7 @@ export async function handleFilterCallback(ctx: MyContext, data: string): Promis
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-function buildPriceRangeLabel(min: number | null, max: number | null): string {
+export function buildPriceRangeLabel(min: number | null, max: number | null): string {
   const hasMin = min !== null && min > 0;
   const hasMax = max !== null;
 

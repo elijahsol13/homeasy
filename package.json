@@ -10,7 +10,7 @@
     "start": "node --max-old-space-size=350 --expose-gc dist/index.js",
     "start:bot": "node --max-old-space-size=180 dist/bot.js",
     "start:scraper": "node --max-old-space-size=600 --expose-gc dist/scraper.js",
-    "start:api": "node --max-old-space-size=150 dist/api.js",
+    "start:api": "node --max-old-space-size=350 dist/api.js",
     "dev:webapp": "npm --prefix webapp run dev",
     "build:webapp": "npm --prefix webapp run build",
     "lint": "eslint src --ext .ts --max-warnings 0",

@@ -1,4 +1,5 @@
 import type { DatabaseSync } from 'node:sqlite';
+import { extractCoordinatesFromMapsUrl } from '../config/locations';
 
 /**
  * Each entry is a SQL block that runs exactly once.
@@ -278,6 +279,16 @@ const MIGRATIONS: string[] = [
 
   ALTER TABLE search_filters ADD COLUMN pet_friendly INTEGER DEFAULT 0 CHECK(pet_friendly IN (0, 1));
   `,
+
+  // ── v12: Latitude, Longitude, and coordinates index for Bounding Box queries ───
+  `
+  ALTER TABLE properties ADD COLUMN latitude REAL;
+  ALTER TABLE properties ADD COLUMN longitude REAL;
+
+  CREATE INDEX IF NOT EXISTS idx_properties_coords
+    ON properties(latitude, longitude)
+    WHERE is_active = 1;
+  `,
 ];
 
 export function runMigrations(db: DatabaseSync): void {
@@ -316,6 +327,23 @@ export function runMigrations(db: DatabaseSync): void {
         db.exec(sql);
         insertMigration.run(version);
         console.log(`  ✅ Applied migration v${version}`);
+
+        if (version === 12) {
+          try {
+            const rows = db
+              .prepare('SELECT id, maps_url FROM properties WHERE maps_url IS NOT NULL AND latitude IS NULL')
+              .all() as unknown as Array<{ id: number; maps_url: string }>;
+            const updateStmt = db.prepare('UPDATE properties SET latitude = ?, longitude = ? WHERE id = ?');
+            for (const r of rows) {
+              const coords = extractCoordinatesFromMapsUrl(r.maps_url);
+              if (coords) {
+                updateStmt.run(coords.latitude, coords.longitude, r.id);
+              }
+            }
+          } catch (e) {
+            console.warn('  ⚠️ Coordinate backfill notice:', e);
+          }
+        }
       }
     });
     db.exec('COMMIT');

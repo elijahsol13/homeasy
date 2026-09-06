@@ -12,6 +12,7 @@ import { AlertService } from './services/alert.service';
 import { MatcherService } from './modules/matcher/matcher';
 import { IngestionService } from './modules/parser/ingestor';
 import { RemoteBrowserService } from './services/remote-browser.service';
+import { NLSearchService } from './services/nl-search.service';
 
 export interface AppContainer {
   db: DatabaseSync;
@@ -26,6 +27,7 @@ export interface AppContainer {
   ingestionService: IngestionService;
   remoteBrowserService: RemoteBrowserService;
   alertService: AlertService;
+  nlSearchService: NLSearchService;
 }
 
 export interface CreateContainerOptions {
@@ -49,6 +51,7 @@ export function createContainer(options?: CreateContainerOptions): AppContainer 
   const alertService = new AlertService(options?.api);
   const matcherService = new MatcherService(filtersRepo, usersRepo, propertiesRepo, notifierService);
   const ingestionService = new IngestionService(propertiesRepo, matcherService);
+  const nlSearchService = new NLSearchService(propertiesRepo, analyticsRepo);
 
   const container = {
     db,
@@ -62,6 +65,7 @@ export function createContainer(options?: CreateContainerOptions): AppContainer 
     matcherService,
     ingestionService,
     alertService,
+    nlSearchService,
   } as AppContainer;
 
   container.remoteBrowserService = new RemoteBrowserService(container);

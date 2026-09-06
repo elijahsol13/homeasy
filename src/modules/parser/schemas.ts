@@ -26,6 +26,8 @@ export const RawListingSchema = z.object({
   telegram_contact: z.string().optional(),
   url: z.string().optional(),
   posted_at: z.string().optional(),
+  latitude: z.union([z.string(), z.number()]).optional(),
+  longitude: z.union([z.string(), z.number()]).optional(),
 });
 
 export type RawListing = z.infer<typeof RawListingSchema>;
@@ -70,6 +72,8 @@ export const CleanPropertySchema = z.object({
   pet_friendly: z.boolean().default(false),
   primary_landmark: z.string().nullable().default(null),
   landmarks: z.array(z.string()).default([]),
+  latitude: z.number().nullable().default(null),
+  longitude: z.number().nullable().default(null),
 });
 
 export type CleanProperty = z.infer<typeof CleanPropertySchema>;

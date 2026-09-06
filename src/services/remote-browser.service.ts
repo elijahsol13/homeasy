@@ -179,6 +179,11 @@ export class RemoteBrowserService {
           '--disable-gpu',
           '--disable-blink-features=AutomationControlled',
           '--disable-infobars',
+          '--single-process',
+          '--no-zygote',
+          '--disable-extensions',
+          '--mute-audio',
+          '--js-flags=--max-old-space-size=128',
         ],
       });
 
