@@ -13,7 +13,7 @@ import readline from 'readline';
 import { chromium } from 'playwright-extra';
 import stealthPlugin from 'puppeteer-extra-plugin-stealth';
 import { env } from '../../config/env';
-import { parseProxyConfig } from './proxy';
+import { parseProxyConfig, isProxyError } from './proxy';
 
 chromium.use(stealthPlugin());
 
@@ -68,14 +68,18 @@ export async function runFbLogin(): Promise<void> {
   const rawProxy = env.FB_PROXY || process.env.PROXY || (useTunnel ? 'socks5://127.0.0.1:1080' : undefined);
   const proxyResult = parseProxyConfig(rawProxy);
 
+  if (!proxyResult) {
+    console.error('\n❌ FATAL: FB_PROXY is required for Facebook login to prevent account and IP bans.');
+    console.error('👉 Please configure FB_PROXY in your .env file (e.g. FB_PROXY=http://user:pass@host:port).\n');
+    process.exit(1);
+  }
+
   const isHeadless =
     process.argv.includes('--headless') ||
     process.env.HEADLESS === 'true' ||
     (!process.env.DISPLAY && process.platform === 'linux');
 
-  if (proxyResult) {
-    console.log(`🌐 Proxy enabled: ${proxyResult.masked}`);
-  }
+  console.log(`🌐 Proxy enabled: ${proxyResult.masked}`);
 
   if (isHeadless) {
     console.log('🖥️  Running in HEADLESS terminal mode (directly on server)...');
@@ -212,7 +216,13 @@ export async function runFbLogin(): Promise<void> {
       console.error('❌ Failed to create session file.');
     }
   } catch (err: unknown) {
-    console.error('❌ Error during Facebook login:', err instanceof Error ? err.message : String(err));
+    if (isProxyError(err)) {
+      console.error('\n🚨 PROXY CONNECTION FAILED: Unable to establish tunnel or authenticate through the proxy.');
+      console.error(`Details: ${err instanceof Error ? err.message : String(err)}`);
+      console.error('👉 Please check your FB_PROXY URL, credentials, and network connectivity.\n');
+    } else {
+      console.error('❌ Error during Facebook login:', err instanceof Error ? err.message : String(err));
+    }
   } finally {
     await browser.close().catch(() => {});
   }

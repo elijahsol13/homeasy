@@ -26,7 +26,11 @@ export function parseProxyConfig(rawProxy?: string): ParsedProxyResult | undefin
   const trimmed = rawProxy.trim();
 
   try {
-    const urlStr = trimmed.includes('://') ? trimmed : `http://${trimmed}`;
+    // Sanitize common typos like 'hhttp://' and prepend default http:// if protocol is omitted
+    let urlStr = trimmed.replace(/^h+ttp:\/\//i, 'http://');
+    if (!urlStr.includes('://')) {
+      urlStr = `http://${urlStr}`;
+    }
     const parsed = new URL(urlStr);
 
     const server = `${parsed.protocol}//${parsed.host}`;
@@ -49,3 +53,32 @@ export function parseProxyConfig(rawProxy?: string): ParsedProxyResult | undefin
     return undefined;
   }
 }
+
+export class ProxyConnectionError extends Error {
+  constructor(message = 'Proxy connection or tunnel failed') {
+    super(message);
+    this.name = 'ProxyConnectionError';
+  }
+}
+
+/**
+ * Checks if an error corresponds to proxy failure, tunnel breakdown, or proxy auth rejection.
+ */
+export function isProxyError(err: unknown): boolean {
+  if (!err) return false;
+  if (err instanceof ProxyConnectionError) return true;
+  const msg = (err instanceof Error ? err.message : String(err)).toLowerCase();
+  return (
+    msg.includes('err_proxy_connection_failed') ||
+    msg.includes('err_tunnel_connection_failed') ||
+    msg.includes('err_proxy_auth_failed') ||
+    msg.includes('err_proxy_auth_requested') ||
+    msg.includes('err_proxy_certificate_invalid') ||
+    msg.includes('err_socks_connection_failed') ||
+    msg.includes('err_socks_connection_host_unreachable') ||
+    msg.includes('err_mandatory_proxy_configuration_failed') ||
+    msg.includes('proxy tunnel failed') ||
+    msg.includes('proxy connection failed')
+  );
+}
+

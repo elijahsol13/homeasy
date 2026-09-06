@@ -3,6 +3,21 @@ import { runFacebookScraper } from '../modules/parser/facebook.scraper';
 import { createDatabaseBackup } from '../database/backup';
 import { runEnrichment } from '../database/enrich-properties';
 import type { AppContainer } from '../container';
+import { env } from '../config/env';
+import { parseProxyConfig } from '../modules/parser/proxy';
+
+export interface ScraperCategoryStats {
+  scraped: number;
+  inserted: number;
+  duplicates: number;
+  errors: number;
+}
+
+export interface ScraperHeartbeatStats {
+  cyclesCompleted: number;
+  khmer24: ScraperCategoryStats;
+  facebook: ScraperCategoryStats;
+}
 
 /**
  * Sequential Scraper Worker & Queue
@@ -23,6 +38,15 @@ export class ScraperWorker {
   private resolveSleep: (() => void) | null = null;
   private lastMaintenanceAt = 0;
   private readonly MAINTENANCE_INTERVAL_MS = 24 * 60 * 60 * 1000; // 24 hours
+
+  private lastHeartbeatAt = Date.now();
+  private readonly HEARTBEAT_INTERVAL_MS = 60 * 60 * 1000; // 1 hour
+
+  private hourlyStats: ScraperHeartbeatStats = {
+    cyclesCompleted: 0,
+    khmer24: { scraped: 0, inserted: 0, duplicates: 0, errors: 0 },
+    facebook: { scraped: 0, inserted: 0, duplicates: 0, errors: 0 },
+  };
 
   constructor(
     private readonly container: AppContainer,
@@ -123,8 +147,15 @@ export class ScraperWorker {
         // ── 2. Khmer24 Scraper ──────────────────────────────────────────────
         console.log(`\n⏰ [Worker] Starting Khmer24 scrape at ${new Date().toISOString()}...`);
         try {
-          await runKhmer24Scraper(this.container);
+          const k24Stats = await runKhmer24Scraper(this.container);
+          if (k24Stats) {
+            this.hourlyStats.khmer24.scraped += k24Stats.totalScraped;
+            this.hourlyStats.khmer24.inserted += k24Stats.inserted;
+            this.hourlyStats.khmer24.duplicates += k24Stats.duplicates;
+            this.hourlyStats.khmer24.errors += k24Stats.errors;
+          }
         } catch (err: unknown) {
+          this.hourlyStats.khmer24.errors++;
           const msg = err instanceof Error ? err.message : String(err);
           console.error(`💥 [Worker] Error during Khmer24 scrape: ${msg}`);
         } finally {
@@ -150,14 +181,26 @@ export class ScraperWorker {
 
           if (!this.isRunning) break;
 
-          await runFacebookScraper(this.container);
+          const fbStats = await runFacebookScraper(this.container);
+          if (fbStats) {
+            this.hourlyStats.facebook.scraped += fbStats.totalScraped;
+            this.hourlyStats.facebook.inserted += fbStats.inserted;
+            this.hourlyStats.facebook.duplicates += fbStats.duplicates;
+            this.hourlyStats.facebook.errors += fbStats.errors;
+          }
         } catch (err: unknown) {
+          this.hourlyStats.facebook.errors++;
           const msg = err instanceof Error ? err.message : String(err);
           console.error(`💥 [Worker] Error during Facebook scrape: ${msg}`);
         } finally {
           this.triggerGc('Facebook');
           console.log('🏁 [Worker] Facebook scrape finished.');
         }
+
+        this.hourlyStats.cyclesCompleted++;
+
+        // ── 4. Hourly Heartbeat Notification ────────────────────────────────
+        await this.checkAndSendHeartbeat();
       } catch (fatalCycleError: unknown) {
         const msg = fatalCycleError instanceof Error ? fatalCycleError.message : String(fatalCycleError);
         console.error(`💥 [Worker] Unexpected worker cycle failure: ${msg}`);
@@ -173,6 +216,73 @@ export class ScraperWorker {
     }
 
     console.log('🛑 [Worker] Sequential worker loop terminated cleanly.');
+  }
+
+  public async sendHeartbeat(): Promise<void> {
+    try {
+      let totalActive = 0;
+      try {
+        const row = this.container.db
+          .prepare('SELECT count(*) as count FROM properties WHERE is_active = 1')
+          .get() as { count: number } | undefined;
+        totalActive = row?.count ?? 0;
+      } catch {
+        // ignore
+      }
+
+      const mem = process.memoryUsage();
+      const rssMb = Math.round(mem.rss / 1024 / 1024);
+      const heapUsedMb = Math.round(mem.heapUsed / 1024 / 1024);
+
+      const proxy = parseProxyConfig(env.FB_PROXY);
+      const proxyStatus = proxy ? `✅ Connected (${proxy.masked})` : '⚠️ Not configured';
+
+      const message =
+        `💓 <b>HomEasy Scraper Heartbeat</b> (Hourly Report)\n\n` +
+        `⏱ <b>Cycles in last hour:</b> ${this.hourlyStats.cyclesCompleted}\n` +
+        `🏠 <b>Total active listings in DB:</b> ${totalActive}\n\n` +
+        `🇰🇭 <b>Khmer24:</b>\n` +
+        `  • Scraped: <b>${this.hourlyStats.khmer24.scraped}</b>\n` +
+        `  • New inserted: <b>+${this.hourlyStats.khmer24.inserted}</b>\n` +
+        `  • Duplicates: <b>${this.hourlyStats.khmer24.duplicates}</b>\n` +
+        `  • Errors: <b>${this.hourlyStats.khmer24.errors}</b>\n\n` +
+        `👥 <b>Facebook Groups:</b>\n` +
+        `  • Scraped: <b>${this.hourlyStats.facebook.scraped}</b>\n` +
+        `  • New inserted: <b>+${this.hourlyStats.facebook.inserted}</b>\n` +
+        `  • Duplicates: <b>${this.hourlyStats.facebook.duplicates}</b>\n` +
+        `  • Errors: <b>${this.hourlyStats.facebook.errors}</b>\n` +
+        `  • Proxy: <code>${proxyStatus}</code>\n\n` +
+        `📊 <b>RAM:</b> RSS ${rssMb}MB | Heap ${heapUsedMb}MB\n` +
+        `🕒 <i>Next report in ~1 hour</i>`;
+
+      console.log(`\n💓 [Worker] Sending hourly scraper heartbeat to admins...`);
+      await this.container.notifierService.notifyAdmins(message);
+
+      // Reset hourly accumulator
+      this.hourlyStats = {
+        cyclesCompleted: 0,
+        khmer24: { scraped: 0, inserted: 0, duplicates: 0, errors: 0 },
+        facebook: { scraped: 0, inserted: 0, duplicates: 0, errors: 0 },
+      };
+      this.lastHeartbeatAt = Date.now();
+    } catch (err: unknown) {
+      console.error('[Worker] Failed to send hourly heartbeat:', err);
+    }
+  }
+
+  private async checkAndSendHeartbeat(): Promise<void> {
+    const now = Date.now();
+    if (now - this.lastHeartbeatAt >= this.HEARTBEAT_INTERVAL_MS) {
+      await this.sendHeartbeat();
+    }
+  }
+
+  public getHourlyStats(): ScraperHeartbeatStats {
+    return {
+      cyclesCompleted: this.hourlyStats.cyclesCompleted,
+      khmer24: { ...this.hourlyStats.khmer24 },
+      facebook: { ...this.hourlyStats.facebook },
+    };
   }
 
   public stop(): void {
