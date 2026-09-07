@@ -1,4 +1,4 @@
-import { Composer } from 'grammy';
+import { Composer, InlineKeyboard } from 'grammy';
 import type { MyContext } from '../session';
 import type { AppContainer } from '../../../container';
 import { startFilterWizard, showUserFilters, handleFilterCallback } from './filters.handler';
@@ -80,7 +80,38 @@ async function route(ctx: MyContext, data: string): Promise<void> {
   }
 
   if (data === 'cb:menu:search') {
+    const webUrl = env.WEBAPP_URL;
+    const kb = new InlineKeyboard()
+      .text('🛠 Step-by-Step Wizard', 'cb:filter:wizard:start')
+      .row();
+    if (webUrl && (webUrl.startsWith('https://') || webUrl.startsWith('http://'))) {
+      if (webUrl.startsWith('https://')) {
+        kb.webApp('📱 Open Map & Catalog', webUrl).row();
+      } else {
+        kb.url('📱 Open Map & Catalog', webUrl).row();
+      }
+    }
+    kb.text('🔙 Main Menu', 'cb:menu:main');
+
+    await ctx.editMessageText(
+      '🔍 <b>Find Properties & Create Alerts</b>\n\n' +
+        'HomEasy offers two ways to find listings and set alerts:\n\n' +
+        '🎙️ <b>AI Voice & Text Search (Instant):</b>\n' +
+        'Simply send a <b>voice message</b> (up to 30s) or type in chat what you need (e.g. <i>"1BR apartment in Wat Bo under $350"</i> or <i>"Сниму виллу в Сиемреапе с бассейном"</i>). Gemini AI will parse your criteria instantly!\n\n' +
+        '🛠 <b>Manual Step-by-Step Wizard:</b>\n' +
+        'Tap below to configure criteria manually step by step.',
+      {
+        parse_mode: 'HTML',
+        reply_markup: kb,
+      },
+    );
+    await safeAnswer(ctx);
+    return;
+  }
+
+  if (data === 'cb:filter:wizard:start') {
     await startFilterWizard(ctx);
+    await safeAnswer(ctx);
     return;
   }
 

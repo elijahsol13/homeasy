@@ -9,13 +9,14 @@ const WELCOME_TEXT = `
 
 Tired of scrolling through noisy Facebook groups, spam posts, and outdated ads? <b>HomEasy does the hard work for you:</b>
 
+🎙️ <b>AI Voice & Text Search:</b> Just send a voice note or type what you need in chat (e.g. <i>"1BR apartment in Wat Bo under $350"</i>)!
 ⚡️ <b>Instant Alerts:</b> Get new listings in Telegram the moment agents post them.
 🗺 <b>Interactive Map & Catalog:</b> Browse listings with photos and filters on the map.
 🤖 <b>AI-Powered Quality:</b> Automatically translates Khmer text, extracts pricing & specs, and filters spam.
 🎯 <b>Laser-Focused Search:</b> Filter by Sangkat, budget, bedrooms, swimming pool, and lease terms.
 👥 <b>Direct Contacts:</b> Verified phone numbers and Telegram direct messages.
 
-👇 <b>Get started below:</b> Open the Mini App or set up your search alert!
+👇 <b>Get started below:</b> Speak/type your search, open the Mini App, or set up an alert!
 `.trim();
 
 export function createStartHandler(container: AppContainer): Composer<MyContext> {
