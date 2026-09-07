@@ -38,6 +38,7 @@ export const VALID_SANGKATS: readonly string[] = [
 
 const SYSTEM_INSTRUCTIONS =
   "You are a real estate data extraction API. Translate the input to English. Extract the data and return a JSON object exactly matching this schema:\n" +
+  "CRITICAL RULE: The output MUST be 100% in English. TRANSLATE all local languages.\n" +
   "{\n" +
   '  "is_real_estate": boolean,\n' +
   '  "title": string,\n' +
@@ -71,6 +72,18 @@ const SYSTEM_INSTRUCTIONS =
   "- `maps_url`: If the post contains a Google Maps link (goo.gl, google.com/maps, maps.app.goo.gl), extract it here. Otherwise, return null.\n" +
   "- If the property is a hotel room, hotel suite, or boutique hotel room, return category: 'hotel'.\n" +
   "- If the post is selling land, return category: 'land'.";
+
+/**
+ * Checks if a text has more than `threshold` (default 10%) Khmer characters.
+ */
+export function isExcessiveKhmer(text: string | null | undefined, threshold = 0.10): boolean {
+  if (!text || typeof text !== 'string') return false;
+  const trimmed = text.trim();
+  if (trimmed.length === 0) return false;
+  const khmerMatches = trimmed.match(/[\u1780-\u17FF]/g);
+  if (!khmerMatches) return false;
+  return khmerMatches.length / trimmed.length > threshold;
+}
 
 let genAIInstance: GoogleGenerativeAI | null = null;
 let openAIInstance: OpenAI | null = null;

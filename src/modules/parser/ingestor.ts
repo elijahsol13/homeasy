@@ -1,6 +1,6 @@
 import crypto from 'crypto';
 import { BulkImportSchema, RawListingSchema, type BulkIngestResult, type CleanProperty, type IngestResult } from './schemas';
-import { normalizeText } from './normalizer';
+import { cleanPhotoUrls, normalizeText } from './normalizer';
 import {
   extractBathrooms,
   extractBedrooms,
@@ -21,8 +21,9 @@ import { extractCoordinatesFromMapsUrl } from '../../config/locations';
 import type { PropertiesRepository } from '../../database/repositories/properties.repo';
 import { checkDuplicate, computeListingPhashes } from '../matcher/deduplicator';
 import type { MatcherService } from '../matcher/matcher';
+import type { AlertService } from '../../services/alert.service';
 import type { CityKey, PropertyCategory } from '../../config/settings';
-import { isNonRealEstateSpam } from '../../database/enrich-properties';
+import { isNonRealEstateSpam } from './spam-detector';
 
 // ─── Hash (Fallback fingerprint) ──────────────────────────────────────────────
 
@@ -146,9 +147,7 @@ export function normalizeRawToClean(
     location = normalizeText(raw.location);
   }
 
-  const photos = (raw.photos ?? []).filter(
-    (u) => u.startsWith('http://') || u.startsWith('https://'),
-  );
+  const photos = cleanPhotoUrls(raw.photos);
 
   const mapsUrl = raw.maps_url ?? extractMapsUrl(combinedText);
   const sourceUrl = raw.source_url ?? raw.url ?? '';
@@ -235,6 +234,7 @@ export class IngestionService {
   constructor(
     private readonly propertiesRepo: PropertiesRepository,
     private readonly matcherService: MatcherService,
+    private readonly alertService?: AlertService,
   ) {}
 
   /**
@@ -337,17 +337,32 @@ export class IngestionService {
       };
     }
 
+    const hasNoPhotos = clean.photos.length === 0;
+    const isActive = hasNoPhotos ? 0 : 1;
+
     const property = this.propertiesRepo.insertProperty({
       ...clean,
+      is_active: isActive,
       hash,
       image_phash: clean.image_phash,
       image_phashes: clean.image_phashes,
     });
 
-    // ── Step 4: Trigger Matching Engine ─────────────────────────────────────────
-    this.matcherService.matchAndNotify(property).catch((err: unknown) => {
-      console.error('matchAndNotify error:', err);
-    });
+    if (hasNoPhotos) {
+      console.warn(
+        `⚠️ [Ingestor] Listing #${property.id} ("${clean.title}") has 0 photos. Quarantined with is_active = 0.`,
+      );
+      if (this.alertService) {
+        await this.alertService.warn(
+          `<b>Требует ревью (нет фото):</b>\n${clean.title}\n<a href="${clean.original_url}">Оригинал поста</a>`,
+        );
+      }
+    } else {
+      // ── Step 4: Trigger Matching Engine ─────────────────────────────────────────
+      this.matcherService.matchAndNotify(property).catch((err: unknown) => {
+        console.error('matchAndNotify error:', err);
+      });
+    }
 
     return {
       status: 'inserted',

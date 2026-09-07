@@ -14,11 +14,13 @@
 
 import { createDatabase } from './db';
 import { runMigrations } from './migrate';
-import { normalizePhoneNumber } from '../modules/parser/normalizer';
-import { extractElectricity, extractWater } from '../modules/parser/extractor';
+import { cleanPhotoUrls, normalizePhoneNumber } from '../modules/parser/normalizer';
+import { extractElectricity, extractWater, isExcessiveKhmer } from '../modules/parser/extractor';
 import { extractCleaning, extractRestrictions } from '../services/notifier';
 import { findLandmarksInText } from '../config/landmarks';
 import type { PropertyCategory } from '../config/settings';
+import type { AlertService } from '../services/alert.service';
+import { createContainer } from '../container';
 
 export interface PropertyRecord {
   id: number;
@@ -69,6 +71,9 @@ export interface EnrichmentResult {
 export interface EnrichmentStats {
   totalScanned: number;
   deactivatedSpam: number;
+  deactivatedNoPhotos: number;
+  deactivatedKhmer: number;
+  sanitizedPhotos: number;
   recoveredBedrooms: number;
   recoveredBathrooms: number;
   recoveredPool: number;
@@ -85,57 +90,8 @@ export interface EnrichmentStats {
   totalUpdated: number;
 }
 
-// ─── Non-Real-Estate Spam Patterns ──────────────────────────────────────────
-
-const SPAM_REGEXES = [
-  // Vehicles / scooters
-  /\b(?:zoomer|scoopy|scooby|motorcycle|motorbike)\b/i,
-  /មានកាតគ្រី/, // "has registration card" (vehicle title in Cambodia)
-  // Transportation / Taxis
-  /\b(?:airport transfer|taxi driver|reliable driver|transportation service)\b/i,
-  // Jobs & Employment
-  /\b(?:seeking a (?:cook|waiter|chef|cleaner)|line\/prep cook|salary is negotiable)\b/i,
-  /ទទួលយកការងារផ្នែកសំណង់/, // "accepting all construction work"
-  // Goods / Delivery ads
-  /ប្រេងក្រអូប/, // fragrant oil
-  /\b(?:free delivery|special promotion)\b/i,
-  /ដឹកជញ្ជូនឥតគិតថ្លៃ/, // "free delivery"
-  // Entertainment / Movies / Drama
-  /រឿង\s*មន្តស្នេហ៍/,
-  /\b(?:drama series|episode|ភាគ\d+)\b/i,
-  // Short-term hotel / guesthouse per night
-  /\b(?:1\s*night|per\s*night)\b/i,
-  /1\s*យប់\s*\d+\$/, // "1 night $XX"
-  // Beauty, Hair, Nails, Massage & Salons
-  /\b(?:hair\s*salon|nail\s*salon|beauty\s*salon|massage|layer\s*perm|perm|uonnongtieuchuan)\b/i,
-  /#Rin26\b/i,
-  /ហាងកាត់សក់|សាឡន/, // barbershop / salon in Khmer
-];
-
-export function isNonRealEstateSpam(title: string, description: string): { isSpam: boolean; reason?: string } {
-  const combined = `${title} ${description}`.trim();
-
-  // Exclude real estate posts that merely mention walking distance to airport or coffee shops
-  if (/\b(?:apartment|villa|condo|house for rent|room for rent)\b/i.test(title)) {
-    return { isSpam: false };
-  }
-
-  for (const regex of SPAM_REGEXES) {
-    if (regex.test(combined)) {
-      return { isSpam: true, reason: `Matched spam regex: ${regex}` };
-    }
-  }
-
-  // Pure land sales (we only list residential properties: apartments, houses, rooms)
-  if (
-    /^\s*ដី(?![\s\S]*(?:ផ្ទះ|house|villa|apartment))/i.test(title) &&
-    !/ផ្ទះ|house|villa/i.test(combined)
-  ) {
-    return { isSpam: true, reason: 'Pure land sale listing (no residential structure)' };
-  }
-
-  return { isSpam: false };
-}
+import { isNonRealEstateSpam, SPAM_REGEXES } from '../modules/parser/spam-detector';
+export { isNonRealEstateSpam, SPAM_REGEXES };
 
 // ─── Pure Enrichment Logic ───────────────────────────────────────────────────
 
@@ -143,6 +99,8 @@ export function enrichPropertyRecord(prop: PropertyRecord): EnrichmentResult {
   const changes: Record<string, { oldVal: unknown; newVal: unknown }> = {};
   const patch: Partial<PropertyRecord> = {};
   const text = `${prop.title} ${prop.description}`.trim();
+  let deactivated = false;
+  let deactivateReason: string | undefined;
 
   // 1. Check for spam / non-real-estate
   if (prop.is_active === 1) {
@@ -156,6 +114,37 @@ export function enrichPropertyRecord(prop: PropertyRecord): EnrichmentResult {
         patch: { is_active: 0 },
       };
     }
+
+    // 1b. Check for high Khmer character ratio (>10%)
+    if (isExcessiveKhmer(text, 0.10)) {
+      deactivated = true;
+      deactivateReason = 'Скрыт из-за кхмерского языка (>10% Khmer characters)';
+      changes.is_active = { oldVal: 1, newVal: 0 };
+      patch.is_active = 0;
+    }
+  }
+
+  // 1c. Sanitize photos array through cleanPhotoUrls
+  let rawPhotos: string[] = [];
+  try {
+    rawPhotos = JSON.parse(prop.photos || '[]');
+    if (!Array.isArray(rawPhotos)) rawPhotos = [];
+  } catch {
+    rawPhotos = [];
+  }
+  const cleanedPhotos = cleanPhotoUrls(rawPhotos);
+  const cleanedPhotosJson = JSON.stringify(cleanedPhotos);
+  if (cleanedPhotosJson !== (prop.photos || '[]')) {
+    changes.photos = { oldVal: prop.photos, newVal: cleanedPhotosJson };
+    patch.photos = cleanedPhotosJson;
+  }
+
+  // If no photos left after sanitization, deactivate and quarantine for admin review
+  if (cleanedPhotos.length === 0 && prop.is_active === 1) {
+    deactivated = true;
+    deactivateReason = 'No valid photos remaining after cleanup (requires review)';
+    changes.is_active = { oldVal: 1, newVal: 0 };
+    patch.is_active = 0;
   }
 
   // 2. Category recovery
@@ -405,18 +394,21 @@ export function enrichPropertyRecord(prop: PropertyRecord): EnrichmentResult {
   }
 
   const updated = Object.keys(changes).length > 0;
-  return { updated, deactivated: false, changes, patch };
+  return { updated, deactivated, deactivateReason, changes, patch };
 }
 
 // ─── Database Batch Runner ───────────────────────────────────────────────────
 
-export function runEnrichment(customDbPath?: string): EnrichmentStats {
+export function runEnrichment(customDbPath?: string, alertService?: AlertService): EnrichmentStats {
   const db = createDatabase(customDbPath);
   runMigrations(db);
 
   const stats: EnrichmentStats = {
     totalScanned: 0,
     deactivatedSpam: 0,
+    deactivatedNoPhotos: 0,
+    deactivatedKhmer: 0,
+    sanitizedPhotos: 0,
     recoveredBedrooms: 0,
     recoveredBathrooms: 0,
     recoveredPool: 0,
@@ -448,12 +440,23 @@ export function runEnrichment(customDbPath?: string): EnrichmentStats {
     stats.totalUpdated++;
 
     if (res.deactivated) {
-      stats.deactivatedSpam++;
-      db.prepare('UPDATE properties SET is_active = 0 WHERE id = ?').run(prop.id);
-      console.log(`  🚫 Deactivated spam listing #${prop.id} ("${prop.title.slice(0, 40)}..."): ${res.deactivateReason}`);
-      continue;
+      if (res.deactivateReason?.includes('No valid photos')) {
+        stats.deactivatedNoPhotos++;
+        if (alertService) {
+          alertService.warn(`<b>Требует ревью (нет фото):</b>\n${prop.title}\n<a href="${prop.original_url}">Оригинал поста</a>`).catch(() => {});
+        }
+      } else if (res.deactivateReason?.includes('Скрыт из-за кхмерского языка')) {
+        stats.deactivatedKhmer++;
+        if (alertService) {
+          alertService.warn(`<b>Скрыт из-за кхмерского языка:</b>\n${prop.title}\n<a href="${prop.original_url}">Оригинал поста</a>`).catch(() => {});
+        }
+      } else {
+        stats.deactivatedSpam++;
+      }
+      console.log(`  🚫 Deactivated listing #${prop.id} ("${prop.title.slice(0, 40)}..."): ${res.deactivateReason}`);
     }
 
+    if (res.changes.photos) stats.sanitizedPhotos++;
     if (res.changes.bedrooms) stats.recoveredBedrooms++;
     if (res.changes.bathrooms) stats.recoveredBathrooms++;
     if (res.changes.has_pool) stats.recoveredPool++;
@@ -488,8 +491,11 @@ export function runEnrichment(customDbPath?: string): EnrichmentStats {
   console.log(`\n═══════════════════════════════════════════════════════════════`);
   console.log(`📊 Enrichment Summary Results:`);
   console.log(`  • Total listings scanned:       ${stats.totalScanned}`);
-  console.log(`  • Total listings enriched:      ${stats.totalUpdated}`);
+  console.log(`  • Total listings updated:       ${stats.totalUpdated}`);
+  console.log(`  • Photos sanitized:             ${stats.sanitizedPhotos}`);
   console.log(`  • Spam / Non-real-estate culled:${stats.deactivatedSpam}`);
+  console.log(`  • Quarantined (no photos):      ${stats.deactivatedNoPhotos}`);
+  console.log(`  • Hidden (Khmer text >10%):     ${stats.deactivatedKhmer}`);
   console.log(`  • Bedrooms recovered:           ${stats.recoveredBedrooms}`);
   console.log(`  • Bathrooms recovered:          ${stats.recoveredBathrooms}`);
   console.log(`  • Swimming pool recovered:      ${stats.recoveredPool}`);
@@ -509,5 +515,10 @@ export function runEnrichment(customDbPath?: string): EnrichmentStats {
 
 // CLI Execution
 if (require.main === module) {
-  runEnrichment();
+  try {
+    const container = createContainer();
+    runEnrichment(undefined, container.alertService);
+  } catch {
+    runEnrichment();
+  }
 }

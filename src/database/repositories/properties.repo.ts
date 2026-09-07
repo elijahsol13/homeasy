@@ -212,15 +212,17 @@ export class PropertiesRepository {
       }
     }
 
+    const isActiveVal = input.is_active !== undefined ? input.is_active : 1;
+
     const result = this.db
       .prepare(
         `INSERT INTO properties
            (hash, title, description, price, currency, type, category,
             bedrooms, bathrooms, deposit, min_lease, has_pool, location, city,
             maps_url, source_url, photos, image_phash, image_phashes, direct_contact, original_url, posted_at, updated_at,
-            electricity, water, cleaning, restrictions, pet_friendly, primary_landmark, landmarks, latitude, longitude)
+            electricity, water, cleaning, restrictions, pet_friendly, primary_landmark, landmarks, latitude, longitude, is_active)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%SZ', 'now'),
-                 ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                 ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         input.hash,
@@ -254,6 +256,7 @@ export class PropertiesRepository {
         landmarksJson,
         lat,
         lng,
+        isActiveVal,
       );
 
     const row = this.db
@@ -285,6 +288,10 @@ export class PropertiesRepository {
       .prepare('SELECT * FROM properties WHERE id = ?')
       .get(id) as unknown as PropertyRow | undefined;
     return row ? rowToProperty(row) : undefined;
+  }
+
+  findById(id: number): Property | undefined {
+    return this.getPropertyById(id);
   }
 
   deactivateProperty(id: number): boolean {

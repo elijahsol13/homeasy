@@ -15,8 +15,18 @@ export const PropertyCard: React.FC<PropertyCardProps> = ({
   onSelect,
   onToggleFavorite,
 }) => {
+  const carouselRef = React.useRef<HTMLDivElement>(null);
   const [photoIndex, setPhotoIndex] = useState(0);
   const photos = property.photos && property.photos.length > 0 ? property.photos : [];
+
+  const handleScroll = (e: React.UIEvent<HTMLDivElement>) => {
+    const el = e.currentTarget;
+    if (!el.clientWidth) return;
+    const newIdx = Math.round(el.scrollLeft / el.clientWidth);
+    if (newIdx !== photoIndex && newIdx >= 0 && newIdx < photos.length) {
+      setPhotoIndex(newIdx);
+    }
+  };
 
   const handleFavoriteClick = (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -60,12 +70,21 @@ export const PropertyCard: React.FC<PropertyCardProps> = ({
       {/* Photo Carousel */}
       <div className="relative aspect-[16/10] w-full bg-zinc-100 dark:bg-zinc-900 overflow-hidden">
         {photos.length > 0 ? (
-          <img
-            src={photos[photoIndex]}
-            alt={property.title}
-            className="w-full h-full object-cover select-none pointer-events-none"
-            loading="lazy"
-          />
+          <div
+            ref={carouselRef}
+            onScroll={handleScroll}
+            className="flex overflow-x-auto snap-x snap-mandatory touch-pan-x scrollbar-hide w-full h-full"
+          >
+            {photos.map((photoUrl, idx) => (
+              <img
+                key={idx}
+                src={photoUrl}
+                alt={`${property.title} - photo ${idx + 1}`}
+                className="snap-center shrink-0 w-full h-full object-cover select-none pointer-events-none"
+                loading={idx === 0 ? 'eager' : 'lazy'}
+              />
+            ))}
+          </div>
         ) : (
           <div className="w-full h-full flex items-center justify-center text-zinc-400 text-xs">
             No Photos Available
@@ -89,13 +108,13 @@ export const PropertyCard: React.FC<PropertyCardProps> = ({
         </button>
 
         {/* Property Type Badge */}
-        <div className="absolute top-3 left-3 bg-black/60 backdrop-blur-md text-white px-2.5 py-1 rounded-lg text-xs font-semibold tracking-wide">
+        <div className="absolute top-3 left-3 bg-black/60 backdrop-blur-md text-white px-2.5 py-1 rounded-lg text-xs font-semibold tracking-wide pointer-events-none">
           {property.propertyType}
         </div>
 
         {/* Photo Indicators / Dots */}
         {photos.length > 1 && (
-          <div className="absolute bottom-2.5 left-1/2 -translate-x-1/2 flex items-center gap-1.5 bg-black/40 backdrop-blur-md px-2 py-1 rounded-full">
+          <div className="absolute bottom-2.5 left-1/2 -translate-x-1/2 flex items-center gap-1.5 bg-black/40 backdrop-blur-md px-2 py-1 rounded-full z-10">
             {photos.slice(0, 5).map((_, idx) => (
               <button
                 key={idx}
@@ -103,6 +122,12 @@ export const PropertyCard: React.FC<PropertyCardProps> = ({
                 onClick={(e) => {
                   e.stopPropagation();
                   setPhotoIndex(idx);
+                  if (carouselRef.current) {
+                    carouselRef.current.scrollTo({
+                      left: idx * carouselRef.current.clientWidth,
+                      behavior: 'smooth',
+                    });
+                  }
                 }}
                 className={`w-1.5 h-1.5 rounded-full transition-all ${
                   photoIndex === idx ? 'bg-white w-3' : 'bg-white/50'

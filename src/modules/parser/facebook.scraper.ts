@@ -42,17 +42,35 @@ import {
   extractDeposit,
   extractHasPool,
   extractListingWithLLM,
+  extractListingsBatchWithLLM,
   extractLocation,
   extractMapsUrl,
   extractMinLease,
   extractPrice,
   extractType,
+  isExcessiveKhmer,
+  type LLMExtractedListing,
 } from './extractor';
+import { cleanPhotoUrls } from './normalizer';
+import { isNonRealEstateSpam } from './spam-detector';
 
 // Apply stealth plugin
 chromium.use(stealthPlugin());
 
 export const FB_SESSION_PATH = path.join(process.cwd(), 'data', 'fb_session.json');
+
+/** In-Memory translation retry queue for posts with low-quality translation (>10% Khmer) */
+export interface TranslationRetryItem {
+  id: string;
+  text: string;
+  retries: number;
+  target?: FBGroupTarget;
+  postUrl?: string;
+  photos?: string[];
+  rawDate?: string;
+}
+
+export const translationRetryQueue: TranslationRetryItem[] = [];
 
 export class FacebookSessionExpiredError extends Error {
   constructor(message = 'Facebook session expired or blocked') {
@@ -182,14 +200,27 @@ export async function parseFacebookPostText(
   postUrl: string,
   photos: string[] = [],
   rawDate?: string,
+  precomputedLlm?: LLMExtractedListing | null,
 ): Promise<RawListing | null> {
-  // 1. Try LLM extraction first (Gemini / OpenAI)
-  const llm = await extractListingWithLLM(text);
+  // 0. Pre-filter spam before calling LLM (saves AI quotas)
+  const spamCheck = isNonRealEstateSpam(text.slice(0, 100), text);
+  if (spamCheck.isSpam) {
+    console.log(`  ⏩ [Skipped - Spam] ${spamCheck.reason}`);
+    return null;
+  }
+
+  // 1. Try LLM extraction (use precomputed from batch or call single LLM)
+  const llm = precomputedLlm !== undefined ? precomputedLlm : await extractListingWithLLM(text);
 
   // Ingestion Gateway Filter:
   // If LLM determines this is NOT real estate (e.g. second-hand items, vehicles) OR category is 'land', silently drop/ignore!
   if (llm) {
     if (llm.is_real_estate === false || llm.category === 'land') {
+      return null;
+    }
+    // Translation quality check: discard if >10% Khmer characters in English description
+    if (isExcessiveKhmer(llm.description_en)) {
+      console.log(`  ⏩ [Skipped - Low Translation Quality] Post description has >10% Khmer`);
       return null;
     }
   }
@@ -283,7 +314,7 @@ export async function parseFacebookPostText(
     maps_url: mapsUrl,
     source_url: cleanedUrl,
     url: cleanedUrl,
-    photos,
+    photos: cleanPhotoUrls(photos),
     phone,
     posted_at: parseFacebookRelativeDate(rawDate),
   };
@@ -815,62 +846,153 @@ export async function scrapeFacebookGroup(
     const maxScrolls = 8;
     let processedIndex = 0;
 
-    // Helper to process captured GraphQL posts
+    // Helper to process captured GraphQL posts with Intelligent Batching & Translation Retry Queue
     const processInterceptedPosts = async () => {
-      while (processedIndex < interceptedPosts.length && listings.length < maxPosts) {
-        const post = interceptedPosts[processedIndex++];
-        if (!post) continue;
+      while (
+        (processedIndex < interceptedPosts.length || translationRetryQueue.length > 0) &&
+        listings.length < maxPosts
+      ) {
+        const batchItems: Array<{
+          id: string;
+          text: string;
+          retries: number;
+          target: FBGroupTarget;
+          postUrl: string;
+          photos: string[];
+          rawDate?: string;
+        }> = [];
 
-        const cleanedUrl =
-          cleanFacebookUrl(post.postUrl) ||
-          `https://facebook.com/groups/post-${listings.length + 1}`;
-
-        if (seenUrls.has(cleanedUrl)) continue;
-        seenUrls.add(cleanedUrl);
-
-        // Pre-Filtering (Save AI Tokens): check if source_url already exists in DB
-        if (container && cleanedUrl && !cleanedUrl.includes('post-')) {
-          const existingInDb = container.propertiesRepo.findBySourceUrl(cleanedUrl);
-          if (existingInDb) {
-            const createdAtMs = new Date(existingInDb.created_at).getTime();
-            const FORTY_FIVE_DAYS_MS = 45 * 24 * 60 * 60 * 1000;
-            const isOlderThan45Days =
-              !isNaN(createdAtMs) && Date.now() - createdAtMs >= FORTY_FIVE_DAYS_MS;
-
-            if (isOlderThan45Days) {
-              console.log(
-                `  🔄 [Re-listing >45 days old] Post #${existingInDb.id} (${existingInDb.created_at}): ${cleanedUrl}`,
-              );
-            } else {
-              console.log(`  ⏩ [Skipped - Already in DB] Post #${existingInDb.id}: ${cleanedUrl}`);
-              continue;
-            }
-          }
+        // 1. First, mix in pending translation retries from translationRetryQueue (up to 2 per batch)
+        while (translationRetryQueue.length > 0 && batchItems.length < 2) {
+          const retryItem = translationRetryQueue.shift()!;
+          batchItems.push({
+            id: retryItem.id,
+            text: retryItem.text,
+            retries: retryItem.retries,
+            target: retryItem.target ?? target,
+            postUrl: retryItem.postUrl ?? retryItem.id,
+            photos: retryItem.photos ?? [],
+            rawDate: retryItem.rawDate,
+          });
         }
 
-        try {
-          const rawListing = await parseFacebookPostText(
-            post.text,
-            target,
-            cleanedUrl,
-            post.photos,
-            post.rawDate,
-          );
+        // 2. Fill batch with new candidate posts from interceptedPosts (up to 6 items per batch)
+        while (processedIndex < interceptedPosts.length && batchItems.length < 6) {
+          const post = interceptedPosts[processedIndex++];
+          if (!post) continue;
 
-          if (!rawListing) {
-            console.log(`  ⏩ [Skipped] Post identified as non-residential / land sale / irrelevant`);
+          const cleanedUrl =
+            cleanFacebookUrl(post.postUrl) ||
+            `https://facebook.com/groups/post-${listings.length + batchItems.length + 1}`;
+
+          if (seenUrls.has(cleanedUrl)) continue;
+          seenUrls.add(cleanedUrl);
+
+          // Pre-Filtering: check if source_url already exists in DB
+          if (container && cleanedUrl && !cleanedUrl.includes('post-')) {
+            const existingInDb = container.propertiesRepo.findBySourceUrl(cleanedUrl);
+            if (existingInDb) {
+              const createdAtMs = new Date(existingInDb.created_at).getTime();
+              const FORTY_FIVE_DAYS_MS = 45 * 24 * 60 * 60 * 1000;
+              const isOlderThan45Days =
+                !isNaN(createdAtMs) && Date.now() - createdAtMs >= FORTY_FIVE_DAYS_MS;
+
+              if (isOlderThan45Days) {
+                console.log(
+                  `  🔄 [Re-listing >45 days old] Post #${existingInDb.id} (${existingInDb.created_at}): ${cleanedUrl}`,
+                );
+              } else {
+                console.log(`  ⏩ [Skipped - Already in DB] Post #${existingInDb.id}: ${cleanedUrl}`);
+                continue;
+              }
+            }
+          }
+
+          // Spam defense BEFORE submitting to LLM
+          const spamCheck = isNonRealEstateSpam(post.text.slice(0, 100), post.text);
+          if (spamCheck.isSpam) {
+            console.log(`  ⏩ [Skipped - Spam] Post ${cleanedUrl}: ${spamCheck.reason}`);
             continue;
           }
 
-          listings.push(rawListing);
-          console.log(
-            `  📄 [GraphQL Post #${listings.length}] "${rawListing.title?.slice(0, 45)}" | ` +
-              `💰 $${rawListing.price ?? '?'} | 📍 ${rawListing.location} | 🖼️ ${rawListing.photos.length} photos`,
+          batchItems.push({
+            id: cleanedUrl,
+            text: post.text,
+            retries: 0,
+            target,
+            postUrl: cleanedUrl,
+            photos: post.photos ?? [],
+            rawDate: post.rawDate,
+          });
+        }
+
+        if (batchItems.length === 0) break;
+
+        // 3. Batch extract with LLM (saves 80%+ quotas and latency)
+        let batchResults = new Map<string | number, LLMExtractedListing>();
+        try {
+          batchResults = await extractListingsBatchWithLLM(
+            batchItems.map((b) => ({ id: b.id, text: b.text })),
           );
-        } catch (err: unknown) {
-          console.warn(
-            `  ⚠️ Failed to parse GraphQL post: ${err instanceof Error ? err.message : String(err)}`,
-          );
+        } catch (llmErr) {
+          console.warn('⚠️ Batch LLM extraction error, falling back to per-item extraction:', llmErr);
+        }
+
+        // 4. Process each item in batch
+        for (const item of batchItems) {
+          if (listings.length >= maxPosts) break;
+
+          const aiResult = batchResults.get(item.id);
+
+          // Translation quality verification (Regex /[\u1780-\u17FF]/g)
+          if (aiResult?.description_en && isExcessiveKhmer(aiResult.description_en)) {
+            console.warn(
+              `  ⚠️ [Translation Quality] Post ${item.id} description_en has >10% Khmer characters.`,
+            );
+            // 1. Do NOT save to DB
+            // 2. If retries < 2, return to translationRetryQueue (retries++)
+            if (item.retries < 2) {
+              console.log(
+                `  🔄 [Translation Retry] Re-queueing post ${item.id} for next AI batch (attempt ${item.retries + 1}/3)...`,
+              );
+              translationRetryQueue.push({
+                ...item,
+                retries: item.retries + 1,
+              });
+            } else {
+              // 3. If retries >= 2 (third attempt), permanently discard
+              console.warn(
+                `  ❌ [Translation Discarded] Post ${item.id} failed translation after 3 attempts. Discarded from memory.`,
+              );
+            }
+            continue;
+          }
+
+          try {
+            const rawListing = await parseFacebookPostText(
+              item.text,
+              item.target,
+              item.postUrl,
+              item.photos,
+              item.rawDate,
+              aiResult ?? null,
+            );
+
+            if (!rawListing) {
+              console.log(`  ⏩ [Skipped] Post identified as non-residential / land sale / irrelevant`);
+              continue;
+            }
+
+            listings.push(rawListing);
+            console.log(
+              `  📄 [GraphQL Post #${listings.length}] "${rawListing.title?.slice(0, 45)}" | ` +
+                `💰 $${rawListing.price ?? '?'} | 📍 ${rawListing.location} | 🖼️ ${rawListing.photos.length} photos`,
+            );
+          } catch (err: unknown) {
+            console.warn(
+              `  ⚠️ Failed to parse GraphQL post: ${err instanceof Error ? err.message : String(err)}`,
+            );
+          }
         }
       }
     };

@@ -18,7 +18,7 @@ export function mainMenuKeyboard(options?: boolean | MainMenuOptions): InlineKey
 
   const kb = new InlineKeyboard();
 
-  const webUrl = opts.webappUrl || env.WEBAPP_URL;
+  const webUrl = opts.webappUrl !== undefined ? opts.webappUrl : env.WEBAPP_URL;
   if (webUrl && (webUrl.startsWith('https://') || webUrl.startsWith('http://'))) {
     // If https, can open as WebApp; otherwise url link
     if (webUrl.startsWith('https://')) {
