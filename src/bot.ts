@@ -23,7 +23,6 @@ export async function runBot(): Promise<void> {
   container.notifierService.setApi(bot.api);
   container.alertService.setApi(bot.api);
 
-  // 4. Register bot command hints in Telegram UI
   await bot.api.setMyCommands([
     { command: 'start', description: 'Start HomEasy & open main menu' },
     { command: 'menu', description: 'Open main menu' },
@@ -33,6 +32,21 @@ export async function runBot(): Promise<void> {
     { command: 'ingest_json', description: '[Admin] Import a listing from JSON' },
     { command: 'stats', description: '[Admin] View bot statistics' },
   ]);
+
+  if (env.WEBAPP_URL && env.WEBAPP_URL.startsWith('https://')) {
+    try {
+      await bot.api.setChatMenuButton({
+        menu_button: {
+          type: 'web_app',
+          text: '📱 Open App',
+          web_app: { url: env.WEBAPP_URL },
+        },
+      });
+      console.log(`✅ Set Telegram chat menu button to: ${env.WEBAPP_URL}`);
+    } catch (err) {
+      console.warn('⚠️ Could not set chat menu button:', err);
+    }
+  }
 
   // 5. Graceful shutdown on SIGINT / SIGTERM
   const shutdown = async (signal: string) => {
