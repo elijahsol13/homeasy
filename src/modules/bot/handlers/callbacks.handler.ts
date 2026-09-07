@@ -15,11 +15,14 @@ import { env } from '../../../config/env';
 export function createCallbacksHandler(_container: AppContainer): Composer<MyContext> {
   const handler = new Composer<MyContext>();
 
-  handler.on('callback_query:data', async (ctx) => {
+  handler.on('callback_query:data', async (ctx, next) => {
     const data = ctx.callbackQuery.data;
 
     try {
-      await route(ctx, data);
+      const handled = await route(ctx, data);
+      if (!handled) {
+        return next();
+      }
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       // Ignore "message is not modified" — happens when double-clicking a button
@@ -37,7 +40,7 @@ export function createCallbacksHandler(_container: AppContainer): Composer<MyCon
 
 // ─── Router ───────────────────────────────────────────────────────────────────
 
-async function route(ctx: MyContext, data: string): Promise<void> {
+async function route(ctx: MyContext, data: string): Promise<boolean> {
 
   // ── Main menu ──────────────────────────────────────────────────────────────
 
@@ -50,7 +53,7 @@ async function route(ctx: MyContext, data: string): Promise<void> {
       reply_markup: mainMenuKeyboard({ alertsPaused: user?.alerts_paused === 1, isAdmin }),
     });
     await safeAnswer(ctx);
-    return;
+    return true;
   }
 
   if (data === 'cb:alerts:pause') {
@@ -63,7 +66,7 @@ async function route(ctx: MyContext, data: string): Promise<void> {
       reply_markup: mainMenuKeyboard({ alertsPaused: true, isAdmin }),
     });
     await safeAnswer(ctx, '⏸ Alerts paused');
-    return;
+    return true;
   }
 
   if (data === 'cb:alerts:resume') {
@@ -76,7 +79,7 @@ async function route(ctx: MyContext, data: string): Promise<void> {
       reply_markup: mainMenuKeyboard({ alertsPaused: false, isAdmin }),
     });
     await safeAnswer(ctx, '▶️ Alerts resumed');
-    return;
+    return true;
   }
 
   if (data === 'cb:menu:search') {
@@ -106,31 +109,31 @@ async function route(ctx: MyContext, data: string): Promise<void> {
       },
     );
     await safeAnswer(ctx);
-    return;
+    return true;
   }
 
   if (data === 'cb:filter:wizard:start') {
     await startFilterWizard(ctx);
     await safeAnswer(ctx);
-    return;
+    return true;
   }
 
   if (data === 'cb:menu:favorites') {
     await showFavorites(ctx);
     await safeAnswer(ctx);
-    return;
+    return true;
   }
 
-  if (data === 'cb:menu:filters') {
+  if (data === 'cb:menu:filters' || data === 'cb:menu:new_filter') {
     await showUserFilters(ctx);
     await safeAnswer(ctx);
-    return;
+    return true;
   }
 
   // ── Filter wizard callbacks ────────────────────────────────────────────────
   if (data.startsWith('cb:filter:')) {
     await handleFilterCallback(ctx, data);
-    return;
+    return true;
   }
 
   // ── Property actions ───────────────────────────────────────────────────────
@@ -138,7 +141,7 @@ async function route(ctx: MyContext, data: string): Promise<void> {
   if (data.startsWith('cb:prop:save:')) {
     const id = parseInt(data.replace('cb:prop:save:', ''), 10);
     if (!isNaN(id)) await handleSaveProperty(ctx, id);
-    return;
+    return true;
   }
 
   if (data.startsWith('cb:prop:hide:')) {
@@ -148,7 +151,7 @@ async function route(ctx: MyContext, data: string): Promise<void> {
       // Message may already be gone; silently ignore
     }
     await safeAnswer(ctx, '🙈 Listing hidden');
-    return;
+    return true;
   }
 
   if (data.startsWith('cb:prop:report:')) {
@@ -168,7 +171,7 @@ async function route(ctx: MyContext, data: string): Promise<void> {
     } else {
       await safeAnswer(ctx, '⚠️ Invalid property');
     }
-    return;
+    return true;
   }
 
   // ── Favorites ──────────────────────────────────────────────────────────────
@@ -176,23 +179,23 @@ async function route(ctx: MyContext, data: string): Promise<void> {
   if (data.startsWith('cb:fav:view:')) {
     const id = parseInt(data.replace('cb:fav:view:', ''), 10);
     if (!isNaN(id)) await handleViewFavorite(ctx, id);
-    return;
+    return true;
   }
 
   if (data.startsWith('cb:fav:remove:')) {
     const id = parseInt(data.replace('cb:fav:remove:', ''), 10);
     if (!isNaN(id)) await handleRemoveFavorite(ctx, id);
-    return;
+    return true;
   }
 
   if (data.startsWith('cb:fav:page:')) {
     const page = parseInt(data.replace('cb:fav:page:', ''), 10);
     if (!isNaN(page)) await handleFavoritesPage(ctx, page);
-    return;
+    return true;
   }
 
-  // Fallback
-  await safeAnswer(ctx, '⚠️ Unknown action');
+  // Unhandled by this router — let downstream middleware handle it
+  return false;
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────

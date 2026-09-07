@@ -70,8 +70,17 @@ export function createBot(container: AppContainer): Bot<MyContext> {
   bot.use(createTelegramAuthHandler(container));
   bot.use(createFiltersHandler(container));
   bot.use(createFavoritesHandler(container));
-  bot.use(createCallbacksHandler(container));
   bot.use(createNLSearchHandler(container));
+  bot.use(createCallbacksHandler(container));
+
+  // Global fallback for unhandled callback queries
+  bot.on('callback_query:data', async (ctx) => {
+    try {
+      await ctx.answerCallbackQuery('⚠️ Action no longer available');
+    } catch {
+      // Safe to ignore if already answered
+    }
+  });
 
   return bot;
 }

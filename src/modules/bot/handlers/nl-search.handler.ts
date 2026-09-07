@@ -1,5 +1,5 @@
 import { Composer, InlineKeyboard } from 'grammy';
-import type { MyContext } from '../session';
+import type { MyContext, FilterDraft } from '../session';
 import type { AppContainer } from '../../../container';
 import { env } from '../../../config/env';
 import { MAX_USER_FILTERS } from '../../../database/repositories/filters.repo';
@@ -7,6 +7,7 @@ import { sendListingCard } from '../../../services/notifier';
 import { formatBedroomsLabel } from '../keyboards/filter.keyboard';
 import { buildPriceRangeLabel } from './filters.handler';
 import type { NLSearchCriteria } from '../../../services/nl-search.service';
+import type { CityKey, PropertyCategory } from '../../../config/settings';
 
 // ─── Rate Limiter ─────────────────────────────────────────────────────────────
 // Max 4 queries / min, max 20 queries / day per Telegram user
@@ -241,7 +242,7 @@ export function createNLSearchHandler(container: AppContainer): Composer<MyConte
 
   // ── 3. Callbacks for AI Flow ────────────────────────────────────────────────
   handler.callbackQuery('cb:ai:show', async (ctx) => {
-    const draft = ctx.session.filterDraft;
+    const draft = getOrRecoverDraft(ctx);
     const from = ctx.from;
     if (!from || !draft) {
       await ctx.answerCallbackQuery('Session expired. Please submit a new query.');
@@ -261,6 +262,8 @@ export function createNLSearchHandler(container: AppContainer): Composer<MyConte
       maxPrice: maxPriceCents,
       bedrooms: draft.bedrooms ?? undefined,
       hasPool: draft.requires_pool || undefined,
+      locations: draft.locations?.length ? draft.locations : undefined,
+      primaryLandmark: draft.primary_landmark ?? undefined,
       limit: 3,
       offset: 0,
     });
@@ -308,7 +311,7 @@ export function createNLSearchHandler(container: AppContainer): Composer<MyConte
     if (!from) return;
 
     const offset = parseInt(ctx.match[1]!, 10);
-    const draft = ctx.session.filterDraft;
+    const draft = getOrRecoverDraft(ctx) || { city: 'siem_reap', type: 'rent', locations: [] };
 
     await ctx.answerCallbackQuery();
 
@@ -323,6 +326,8 @@ export function createNLSearchHandler(container: AppContainer): Composer<MyConte
       maxPrice: maxPriceCents,
       bedrooms: draft.bedrooms ?? undefined,
       hasPool: draft.requires_pool || undefined,
+      locations: draft.locations?.length ? draft.locations : undefined,
+      primaryLandmark: draft.primary_landmark ?? undefined,
       limit: 3,
       offset,
     });
@@ -365,7 +370,7 @@ export function createNLSearchHandler(container: AppContainer): Composer<MyConte
     const from = ctx.from;
     if (!from) return;
 
-    const draft = ctx.session.filterDraft;
+    const draft = getOrRecoverDraft(ctx);
     if (!draft || !draft.type || !draft.city) {
       await ctx.answerCallbackQuery('❌ Search parameters not found. Please try again.');
       return;
@@ -417,15 +422,15 @@ export function createNLSearchHandler(container: AppContainer): Composer<MyConte
   });
 
   handler.callbackQuery('cb:ai:edit', async (ctx) => {
+    const draft = getOrRecoverDraft(ctx);
     await ctx.answerCallbackQuery();
     // Move user into wizard to fine-tune budget or other fields
     ctx.session.wizardStep = 'filter:budget';
+    const currentMin = draft?.min_price ? draft.min_price * 100 : null;
+    const currentMax = draft?.max_price ? draft.max_price * 100 : null;
     await ctx.reply(
       `✏️ <b>Adjust Parameters</b>\n\n` +
-        `Current budget: <b>${buildPriceRangeLabel(
-          ctx.session.filterDraft.min_price ? ctx.session.filterDraft.min_price * 100 : null,
-          ctx.session.filterDraft.max_price ? ctx.session.filterDraft.max_price * 100 : null,
-        )}</b>\n\n` +
+        `Current budget: <b>${buildPriceRangeLabel(currentMin, currentMax)}</b>\n\n` +
         `Send a new amount or range (e.g. <code>250-450</code> or <code>300</code>):`,
       {
         parse_mode: 'HTML',
@@ -449,6 +454,84 @@ export function createNLSearchHandler(container: AppContainer): Composer<MyConte
   });
 
   return handler;
+}
+
+// ─── Draft Recovery Helper ──────────────────────────────────────────────────
+
+export function extractDraftFromCriteriaText(text: string): FilterDraft | null {
+  if (!text || !text.includes('Search Criteria Understood')) return null;
+  const clean = text.replace(/<[^>]+>/g, '');
+
+  const city: CityKey = clean.includes('Phnom Penh') ? 'phnom_penh' : 'siem_reap';
+  const type: 'rent' | 'sale' = clean.includes('For Sale') ? 'sale' : 'rent';
+
+  // Category
+  const catMatch = /\((apartment|condo|house|villa|land|room|hotel)\)/i.exec(clean);
+  const category = catMatch ? (catMatch[1]!.toLowerCase() as PropertyCategory) : null;
+
+  // Budget: e.g. "Up to $25,000", "$200 – $500", "From $300"
+  let min_price: number | undefined;
+  let max_price: number | undefined;
+  const budgetRangeMatch = /Budget:\s*.*?\$?(\d[\d,]*)\s*[–-]\s*\$?(\d[\d,]*)/i.exec(clean);
+  const budgetUpToMatch = /Budget:\s*.*?Up to \$?(\d[\d,]*)/i.exec(clean);
+  const budgetFromMatch = /Budget:\s*.*?From \$?(\d[\d,]*)/i.exec(clean);
+
+  if (budgetRangeMatch) {
+    min_price = parseInt(budgetRangeMatch[1]!.replace(/,/g, ''), 10);
+    max_price = parseInt(budgetRangeMatch[2]!.replace(/,/g, ''), 10);
+  } else if (budgetUpToMatch) {
+    max_price = parseInt(budgetUpToMatch[1]!.replace(/,/g, ''), 10);
+  } else if (budgetFromMatch) {
+    min_price = parseInt(budgetFromMatch[1]!.replace(/,/g, ''), 10);
+  }
+
+  // Bedrooms: e.g. "1 BR", "Studio", "1, 2 BR"
+  let bedrooms: number[] | null = null;
+  const bedsMatch = /Bedrooms:\s*([^\n]+)/i.exec(clean);
+  if (bedsMatch) {
+    const rawBeds = bedsMatch[1]!;
+    const collected: number[] = [];
+    if (rawBeds.includes('Studio')) collected.push(0);
+    const numMatches = rawBeds.matchAll(/(\d+)\s*BR/gi);
+    for (const m of numMatches) {
+      const n = parseInt(m[1]!, 10);
+      if (!isNaN(n) && !collected.includes(n)) collected.push(n);
+    }
+    if (collected.length > 0) {
+      bedrooms = collected;
+    }
+  }
+
+  // District / Location
+  const distMatch = /District:\s*(?:📍\s*)?([^\n]+)/i.exec(clean);
+  const locations: string[] = distMatch ? [distMatch[1]!.trim()] : [];
+
+  // Pool
+  const requires_pool = /Swimming Pool:\s*(?:🏊\s*)?Required/i.test(clean);
+
+  return {
+    city,
+    type,
+    category,
+    min_price,
+    max_price,
+    bedrooms,
+    requires_pool,
+    locations,
+  };
+}
+
+function getOrRecoverDraft(ctx: MyContext): FilterDraft | null {
+  if (ctx.session?.filterDraft?.city && ctx.session?.filterDraft?.type) {
+    return ctx.session.filterDraft;
+  }
+  const msgText = ctx.callbackQuery?.message?.text || (ctx.callbackQuery?.message as any)?.caption || '';
+  const recovered = extractDraftFromCriteriaText(msgText);
+  if (recovered) {
+    ctx.session.filterDraft = recovered;
+    return recovered;
+  }
+  return ctx.session?.filterDraft || null;
 }
 
 // ─── Helper: Handle Criteria Result ──────────────────────────────────────────
@@ -485,6 +568,7 @@ async function handleSearchCriteriaResult(ctx: MyContext, criteria: NLSearchCrit
     requires_pool: criteria.requires_pool ?? false,
     min_lease_preferred: criteria.min_lease_preferred ?? null,
     locations: criteria.location ? [criteria.location] : [],
+    primary_landmark: criteria.primary_landmark ?? null,
   };
 
   const minPriceCents = criteria.min_price ? criteria.min_price * 100 : undefined;

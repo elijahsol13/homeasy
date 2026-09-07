@@ -166,4 +166,61 @@ describe('Natural Language Search & Guardrails Engine', () => {
       expect(emptyRes.rejection_reason).toBeDefined();
     });
   });
+
+  describe('extractDraftFromCriteriaText (Session Recovery)', () => {
+    // Import helper dynamically or from nl-search.handler
+    const { extractDraftFromCriteriaText } = require('../src/modules/bot/handlers/nl-search.handler');
+
+    it('correctly recovers filter draft from rendered telegram message text', () => {
+      const messageText = `
+🎯 <b>Search Criteria Understood:</b>
+
+• <b>City:</b> 🌴 Siem Reap
+• <b>Type:</b> 🏠 For Rent (apartment)
+• <b>Budget:</b> Up to $25,000
+• <b>Bedrooms:</b> 1 BR
+• <b>District:</b> 📍 Wat Bo
+
+📦 <i>Available in database right now: <b>13</b> matching listing(s)</i>
+`.trim();
+
+      const draft = extractDraftFromCriteriaText(messageText);
+      expect(draft).not.toBeNull();
+      expect(draft?.city).toBe('siem_reap');
+      expect(draft?.type).toBe('rent');
+      expect(draft?.category).toBe('apartment');
+      expect(draft?.max_price).toBe(25000);
+      expect(draft?.bedrooms).toEqual([1]);
+      expect(draft?.locations).toEqual(['Wat Bo']);
+    });
+
+    it('recovers studio, pool requirement, price range, and Phnom Penh', () => {
+      const messageText = `
+🎯 <b>Search Criteria Understood:</b>
+
+• <b>City:</b> 🏙 Phnom Penh
+• <b>Type:</b> 🏷 For Sale (condo)
+• <b>Budget:</b> $50,000 – $120,000
+• <b>Bedrooms:</b> Studio, 2 BR
+• <b>District:</b> 📍 BKK1
+• <b>Swimming Pool:</b> 🏊 Required
+`.trim();
+
+      const draft = extractDraftFromCriteriaText(messageText);
+      expect(draft).not.toBeNull();
+      expect(draft?.city).toBe('phnom_penh');
+      expect(draft?.type).toBe('sale');
+      expect(draft?.category).toBe('condo');
+      expect(draft?.min_price).toBe(50000);
+      expect(draft?.max_price).toBe(120000);
+      expect(draft?.bedrooms).toEqual([0, 2]);
+      expect(draft?.locations).toEqual(['BKK1']);
+      expect(draft?.requires_pool).toBe(true);
+    });
+
+    it('returns null for unrelated text messages', () => {
+      expect(extractDraftFromCriteriaText('Hello there!')).toBeNull();
+      expect(extractDraftFromCriteriaText('')).toBeNull();
+    });
+  });
 });
