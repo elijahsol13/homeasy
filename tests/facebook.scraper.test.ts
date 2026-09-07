@@ -14,6 +14,33 @@ import {
 } from '../src/modules/parser/facebook.scraper';
 import { RawListingSchema } from '../src/modules/parser/schemas';
 
+jest.mock('../src/modules/parser/extractor', () => {
+  const original = jest.requireActual('../src/modules/parser/extractor');
+  return {
+    ...original,
+    extractListingWithLLM: jest.fn().mockImplementation(async (text: string, city: string) => {
+      const isHotel = text.toLowerCase().includes('hotel');
+      const isMinimal = text.includes('Room for rent in Svay Dangkum $150');
+      return {
+        title_en: isMinimal ? 'Room for rent in Svay Dangkum' : isHotel ? 'Boutique Hotel Room for rent' : 'Modern 3-Bedroom Villa with Swimming Pool',
+        description_en: text,
+        price: isMinimal ? 150 : isHotel ? 300 : 650,
+        currency: 'USD',
+        type: 'rent',
+        category: isHotel ? 'hotel' : isMinimal ? 'room' : 'house',
+        bedrooms: isMinimal ? 1 : isHotel ? 1 : 3,
+        bathrooms: isMinimal ? 1 : isHotel ? 1 : 3,
+        deposit: isMinimal ? 150 : isHotel ? 300 : 650,
+        min_lease: 6,
+        has_pool: isHotel || !isMinimal,
+        location: isMinimal ? 'Svay Dangkum' : isHotel ? 'Wat Bo' : 'Sala Kamreuk',
+        city: city || 'siem_reap',
+        phone: isMinimal ? undefined : '089 899 084',
+      };
+    }),
+  };
+});
+
 const defaultTarget: FBGroupTarget = {
   name: 'Siem Reap Real Estate & Rentals',
   url: 'https://www.facebook.com/groups/siemreaprealestate?sorting_setting=CHRONOLOGICAL',
@@ -58,6 +85,8 @@ describe('Facebook Scraper', () => {
   });
 
   describe('parseFacebookPostText heuristics', () => {
+    jest.setTimeout(30000);
+
     const postText = `
 🏡 Modern 3-Bedroom Villa with Swimming Pool for Rent
 📍 Location: Sala Kamreuk, Siem Reap

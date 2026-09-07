@@ -6,6 +6,7 @@ import { createStartHandler } from './handlers/start.handler';
 import { createFiltersHandler } from './handlers/filters.handler';
 import { createFavoritesHandler } from './handlers/favorites.handler';
 import { createAdminHandler } from './handlers/admin.handler';
+import { createTelegramAuthHandler } from './handlers/telegram-auth.handler';
 import { createCallbacksHandler } from './handlers/callbacks.handler';
 import { createNLSearchHandler } from './handlers/nl-search.handler';
 import { env } from '../../config/env';
@@ -66,6 +67,7 @@ export function createBot(container: AppContainer): Bot<MyContext> {
   // ── Handlers (order matters — first match wins) ───────────────────────────────
   bot.use(createStartHandler(container));
   bot.use(createAdminHandler(container));
+  bot.use(createTelegramAuthHandler(container));
   bot.use(createFiltersHandler(container));
   bot.use(createFavoritesHandler(container));
   bot.use(createCallbacksHandler(container));

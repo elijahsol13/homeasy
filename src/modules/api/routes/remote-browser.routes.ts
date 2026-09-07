@@ -242,10 +242,12 @@ export const remoteBrowserRoutes: FastifyPluginAsync<RemoteBrowserRoutesOptions>
   </header>
 
   <div class="quick-bar">
-    <span style="font-size: 11px; color: #8b949e; margin-right: 2px;">Quick focus:</span>
+    <span style="font-size: 11px; color: #8b949e; margin-right: 2px;">Quick:</span>
     <button class="btn" onclick="focusField('email')">👤 Username</button>
     <button class="btn" onclick="focusField('password')">🔑 Password</button>
     <button class="btn btn-primary" onclick="focusField('submit')">🚀 Sign In</button>
+    <button class="btn" onclick="focusField('2fa')">📲 2FA Code</button>
+    <button class="btn" onclick="requestScreenshot()">📸 Refresh</button>
   </div>
 
   <div id="viewport-container">
@@ -338,8 +340,13 @@ export const remoteBrowserRoutes: FastifyPluginAsync<RemoteBrowserRoutesOptions>
       sendAction({ type: 'reload' });
     }
 
+    function requestScreenshot() {
+      statusLabel.textContent = 'Refreshing frame...';
+      sendAction({ type: 'capture_screen' });
+    }
+
     function focusField(field) {
-      statusLabel.textContent = 'Focus: ' + (field === 'email' ? 'username' : field === 'password' ? 'password' : 'submit');
+      statusLabel.textContent = 'Focus: ' + (field === 'email' ? 'username' : field === 'password' ? 'password' : field === '2fa' ? '2FA code' : 'submit');
       sendAction({ type: 'focus_field', field });
       if (field !== 'submit') {
         inputText.focus();
