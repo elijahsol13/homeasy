@@ -333,7 +333,7 @@ export function runMigrations(db: DatabaseSync): void {
   // node:sqlite uses SQL transactions directly
   db.exec('BEGIN');
   try {
-    const insertMigration = db.prepare('INSERT INTO schema_migrations (version) VALUES (?)');
+    const insertMigration = db.prepare('INSERT OR IGNORE INTO schema_migrations (version) VALUES (?)');
     MIGRATIONS.forEach((sql, i) => {
       const version = i + 1;
       if (!appliedVersions.includes(version)) {
