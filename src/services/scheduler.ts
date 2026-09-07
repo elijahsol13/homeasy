@@ -51,7 +51,7 @@ export class ScraperWorker {
 
   constructor(
     private readonly container: AppContainer,
-    private readonly cyclePauseMs = (env.SCRAPER_CYCLE_PAUSE_MINUTES ?? 45) * 60 * 1000, // 45 minutes default for proxy conservation
+    private readonly cyclePauseMs = (env.SCRAPER_CYCLE_PAUSE_MINUTES ?? 110) * 60 * 1000, // 110 minutes default (~2 hours) for proxy conservation
   ) {}
 
   private triggerGc(taskName: string): void {
