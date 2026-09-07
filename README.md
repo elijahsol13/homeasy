@@ -54,15 +54,17 @@
 >
 > 1. **No Unfiltered Contexts**: Never initialize Chromium and navigate (`page.goto`) without active route interception (`page.route` / `attachTrafficGuard`).
 > 2. **100% Binary Media Blocking**: Photo URLs are parsed as strings from GraphQL/REST JSON or DOM attributes. The browser **must NEVER download binary images or videos** over the proxy (saving 85%–95% of bandwidth).
-> 3. **Block Fonts, Styles & Telemetry**: Stylesheets, web fonts, and tracking beacons (`facebook.com/ajax/bz`, `pixel`, analytics) must be aborted unconditionally.
-> 4. **Prefer Lightweight Endpoints**: Prioritize direct JSON API and mobile views (`m.facebook.com`, `mbasic`) over full desktop Chromium page loads.
-> 5. **Selective Proxying**: Only proxy domains that are geo-restricted. Internal services, AI models, and Telegram API never pass through paid proxies.
+> 3. **Block Fonts, Styles & Telemetry**: Stylesheets, web fonts, and tracking beacons (`facebook.com/ajax/bz`, `pixel`, analytics, falco, speed telemetry) must be aborted unconditionally.
+> 4. **Persistent Disk Cache**: Browser cache (`data/browser_cache/http_cache`) persists immutable CDN JS bundles across runs, reducing warm group visits to as little as ~350 KB.
+> 5. **Round-Robin Group Rotation**: Scrapes a sliding window of 5 groups per cycle (tracked via `data/scraper_state.json`) with an extended 110-minute inter-cycle pause (~12 cycles/day).
+> 6. **Intelligent Early Exit**: Chronologically halts pagination (`FB_EARLY_EXIT_THRESHOLD=3`) upon encountering consecutive posts already present in the database, with maximum 1 scroll per group (`FB_MAX_SCROLLS_PER_GROUP=1`).
+> 7. **Selective Proxying**: Only proxy domains that are geo-restricted (Facebook). Khmer24, internal services, AI models, and Telegram API never pass through paid proxies.
 
 ### 1. Trio-Container Architecture
 - **`homeasy-bot`**: Telegram Bot UI powered by `grammY`, natural language search (voice note / text query parsing with Gemini), interactive 8-step manual filter wizard, subscriptions, instant push alerts with multi-photo albums (up to 3 photos), and button-driven Admin Dashboard (`/admin`).
-- **`homeasy-scraper`**: Autonomous cyclic worker (12-minute heartbeat), Playwright Stealth with GraphQL network interception, session monitoring, circuit breakers, and automatic garbage collection (`--expose-gc`).
+- **`homeasy-scraper`**: Autonomous cyclic worker (~110-minute pause), Playwright Stealth with persistent disk cache, round-robin Facebook group batching, session monitoring, circuit breakers, and automatic garbage collection (`--expose-gc`).
 - **`homeasy-api`**: High-throughput Fastify HTTP/WebSocket server serving the Telegram Mini App (TMA), map markers, search endpoints, and remote browser streaming.
-- **SQLite WAL**: Single unified database `data/homeasy.db` running in Write-Ahead Logging mode, enabling non-blocking concurrent reads and atomic transactional writes.
+- **SQLite WAL**: Single unified database `data/homeasy.db` running in Write-Ahead Logging mode (14 automated migrations), enabling non-blocking concurrent reads and atomic transactional writes.
 
 ### 2. Facebook Scraping via GraphQL Relay Interception
 - **Immunity to CSS obfuscation**: Does not rely on fragile HTML selectors that Facebook rotates weekly.
@@ -81,22 +83,22 @@
   - Quick-focus buttons (`👤 Username`, `🔑 Password`, `🚀 Sign In`) for hassle-free entry from mobile virtual keyboards.
   - Session cookies persisted automatically to `data/fb_session.json` without container restarts.
 
-### 4. Two-Tier Property Extractor (Regex Heuristics + Gemini AI Cascade)
+### 4. Two-Tier Property Extractor (Regex Heuristics + 12-Model Gemini AI Cascade)
 - **Tier 1 (Instant Heuristics)**: Zero-cost instant regex extraction:
   - Cambodian utility rates: Electricity (EDC ~$0.20/kWh, fixed `$0.25/kWh`, `1000៛/kWh`), Water (state rate ~1000៛/m³, `$5/person`, included), cleaning services, deposits.
   - Property restrictions: No Pets, No Smoking, Quiet Hours, No Subleasing.
   - 3-Way Location Consensus: Cross-validates post text, GPS coordinates, and Sangkat landmarks (Pub Street, Old Market, BKK1, Russian Market / Toul Tom Poung).
-- **Tier 2 (AI Batching Cascade)**:
+- **Tier 2 (Resilient AI Model Cascade)**:
   - Micro-batching (5–8 properties per request) slashing token consumption by 85%.
-  - Cascade across Google AI Studio models:
-    1. `gemini-2.5-flash` / `gemini-2.5-flash-lite` (500 RPD, 15 RPM, 250K TPM) — primary workhorse.
-    2. `gemini-3.5-flash-lite` (500 RPD, 15 RPM) — backup tier.
+  - 12-model cascade ordered from smartest to lightest:
+    `gemini-3.8-flash` ➔ `gemini-3.7-flash` ➔ `gemini-3.6-flash` ➔ `gemini-3.5-flash` ➔ `gemini-3.5-flash-lite` ➔ `gemini-3.1-flash-lite` ➔ `gemini-3.1-flash-lite-preview` ➔ `gemini-3-flash-preview` ➔ `gemini-flash-lite-latest` ➔ `gemini-flash-latest` ➔ `gemini-pro-latest` ➔ `gemma-4-26b-a4b-it`.
+  - **Circuit Breaker Engine**: Automatically trips 30-minute cooldown on HTTP `503` (High Demand) and `429` (Quota Exceeded / Resource Exhausted), seamlessly falling over to the next tier model without delay or stalls.
   - Extraction of extended amenities (backup generators, bathtubs, washing machines, western kitchens, elevators, security).
 
 ### 5. Telegram Mini App (TMA) & Interactive Map
 - Single Page Application with seamless Telegram Dark/Light theme adaptation.
 - Interactive Leaflet map with clustering and coordinate Bounding Box filtering (+20% overscan buffer for smooth panning).
-- Full-screen photo gallery displaying all captured listing photos.
+- Full-screen photo gallery with native mobile touch-swipe carousel displaying all captured listing photos.
 - Granular search filters: city (Siem Reap / Phnom Penh), district, category (apartment, house, villa, room, hotel), budget range, swimming pool, and pet-friendly.
 - One-click agent contact actions (direct phone call, Telegram handle).
 
@@ -132,7 +134,7 @@ homeasy/
 │   ├── reparse-listings.ts  # Background reparser with AI enrichment
 │   └── pack-codebase.js     # Codebase repomix packager
 ├── webapp/                  # Telegram Mini App source (React + Vite + Tailwind CSS)
-├── tests/                   # Test suites (20 suites, 224 unit and integration tests)
+├── tests/                   # Test suites (23 suites, 267 unit and integration tests)
 ├── docker-compose.yml       # 3-container microservices definition with memory limits
 ├── package.json
 └── README.md
