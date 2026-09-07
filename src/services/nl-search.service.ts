@@ -123,7 +123,7 @@ const SEARCH_CRITERIA_SCHEMA = {
 
 export class NLSearchService {
   private genAI: GoogleGenAI | null = null;
-  private readonly fallbackModels = ['gemini-2.5-flash', 'gemini-2.5-flash-lite'] as const;
+  private readonly fallbackModels = ['gemini-3.7-flash', 'gemini-3.5-flash-lite', 'gemini-3.1-flash-lite'] as const;
 
   constructor(
     private readonly propertiesRepo: PropertiesRepository,
