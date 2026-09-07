@@ -25,12 +25,13 @@ export async function runBot(): Promise<void> {
 
   await bot.api.setMyCommands([
     { command: 'start', description: 'Start HomEasy & open main menu' },
-    { command: 'menu', description: 'Open main menu' },
+    { command: 'menu', description: 'Open main menu & search options' },
+    { command: 'app', description: '📱 Open interactive map & catalog' },
     { command: 'myfilters', description: 'View & manage your search alerts' },
     { command: 'favorites', description: 'View saved listings' },
     { command: 'stop', description: 'Pause notifications' },
-    { command: 'ingest_json', description: '[Admin] Import a listing from JSON' },
-    { command: 'stats', description: '[Admin] View bot statistics' },
+    { command: 'admin', description: '👑 [Admin] Admin Control Panel' },
+    { command: 'stats', description: '📊 [Admin] View bot statistics' },
   ]);
 
   if (env.WEBAPP_URL && env.WEBAPP_URL.startsWith('https://')) {

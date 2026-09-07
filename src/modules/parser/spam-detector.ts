@@ -56,3 +56,4 @@ export function isNonRealEstateSpam(
 
   return { isSpam: false };
 }
+
