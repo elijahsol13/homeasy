@@ -366,11 +366,17 @@ export function extractPropertyType(text: string, category?: PropertyCategory | 
 
 export const GEMINI_MODEL_CASCADE = [
   'gemini-3.8-flash',
+  'gemini-3.7-flash',
   'gemini-3.6-flash',
   'gemini-3.5-flash',
-  'gemini-3.1-flash-lite',
   'gemini-3.5-flash-lite',
+  'gemini-3.1-flash-lite',
+  'gemini-3.1-flash-lite-preview',
+  'gemini-3-flash-preview',
   'gemini-flash-lite-latest',
+  'gemini-flash-latest',
+  'gemini-pro-latest',
+  'gemma-4-26b-a4b-it',
 ] as const;
 
 interface CircuitBreakerState {
@@ -422,12 +428,21 @@ export function recordModelFailure(modelName: string, err: unknown): void {
     errMsg.includes('high demand') ||
     errMsg.includes('overloaded') ||
     errMsg.includes('Service Unavailable');
+  const isQuotaExceeded =
+    errMsg.includes('429') ||
+    errMsg.includes('Quota exceeded') ||
+    errMsg.includes('RESOURCE_EXHAUSTED');
 
-  if (is503OrOverloaded || breaker.consecutiveErrors >= MAX_CONSECUTIVE_ERRORS) {
+  if (is503OrOverloaded || isQuotaExceeded || breaker.consecutiveErrors >= MAX_CONSECUTIVE_ERRORS) {
     breaker.cooldownUntil = Date.now() + CIRCUIT_BREAKER_COOLDOWN_MS;
     const untilStr = new Date(breaker.cooldownUntil).toISOString();
+    const reason = isQuotaExceeded
+      ? '429 quota exceeded'
+      : is503OrOverloaded
+        ? '503 high demand'
+        : `${breaker.consecutiveErrors} consecutive errors`;
     console.warn(
-      `[Extractor] ⚠️ Circuit breaker TRIPPED for ${modelName} (${breaker.consecutiveErrors} consecutive errors${is503OrOverloaded ? ' / 503 high demand' : ''}). Cooling down for 30m until ${untilStr}. Cascading to next model.`,
+      `[Extractor] ⚠️ Circuit breaker TRIPPED for ${modelName} (${reason}). Cooling down for 30m until ${untilStr}. Cascading to next model.`,
     );
   } else {
     console.warn(`[Extractor] Gemini ${modelName} error (${breaker.consecutiveErrors}/${MAX_CONSECUTIVE_ERRORS}): ${errMsg}`);

@@ -155,6 +155,15 @@ describe('Extractor: Cambodian Utilities & Property Types', () => {
       expect(isModelAvailable('gemini-3.1-flash-lite')).toBe(true);
     });
 
+    test('trips circuit breaker immediately on 429 Quota Exceeded', () => {
+      expect(isModelAvailable('gemini-3.5-flash')).toBe(true);
+      recordModelFailure('gemini-3.5-flash', new Error('429 Too Many Requests: Quota exceeded for metric'));
+      expect(isModelAvailable('gemini-3.5-flash')).toBe(false);
+      // Other cascade models remain ready
+      expect(isModelAvailable('gemini-3.7-flash')).toBe(true);
+      expect(isModelAvailable('gemini-3.5-flash-lite')).toBe(true);
+    });
+
     test('trips circuit breaker after 5 consecutive errors', () => {
       for (let i = 0; i < 4; i++) {
         recordModelFailure('gemini-3.8-flash', new Error('Network timeout'));
