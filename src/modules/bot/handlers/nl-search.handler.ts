@@ -100,6 +100,35 @@ function renderCriteriaMessage(criteria: NLSearchCriteria, matchingCount: number
 export function createNLSearchHandler(container: AppContainer): Composer<MyContext> {
   const handler = new Composer<MyContext>();
 
+  // ── 0. Search & Find Commands ───────────────────────────────────────────────
+  handler.command(['search', 'find'], async (ctx) => {
+    const webUrl = env.WEBAPP_URL;
+    const kb = new InlineKeyboard()
+      .text('🛠 Step-by-Step Wizard', 'cb:filter:wizard:start')
+      .row();
+    if (webUrl && (webUrl.startsWith('https://') || webUrl.startsWith('http://'))) {
+      if (webUrl.startsWith('https://')) {
+        kb.webApp('📱 Open Map & Catalog', webUrl).row();
+      } else {
+        kb.url('📱 Open Map & Catalog', webUrl).row();
+      }
+    }
+    kb.text('🔙 Main Menu', 'cb:menu:main');
+
+    await ctx.reply(
+      '🎙️ <b>AI Voice & Text Search</b>\n\n' +
+        'Just send me a <b>voice message</b> (up to 30s) or <b>type in chat</b> what you are looking for:\n\n' +
+        '• <i>"Looking for a 1-bedroom apartment with pool in Siem Reap under $400"</i>\n' +
+        '• <i>"Сниму виллу с бассейном в Сиемреапе до 800$"</i>\n' +
+        '• <i>"Room for rent in Wat Bo under $200"</i>\n\n' +
+        '🤖 Gemini AI will understand your criteria, check matching listings in our database, and offer to save an alert!',
+      {
+        parse_mode: 'HTML',
+        reply_markup: kb,
+      },
+    );
+  });
+
   // ── 1. Voice Notes Handler ──────────────────────────────────────────────────
   handler.on('message:voice', async (ctx) => {
     const from = ctx.from;

@@ -40,6 +40,7 @@ async function main(): Promise<void> {
 
   await bot.api.setMyCommands([
     { command: 'start', description: 'Start HomEasy & open main menu' },
+    { command: 'search', description: '🎙️ / ✍️ AI Voice & Text Search' },
     { command: 'menu', description: 'Open main menu & search options' },
     { command: 'app', description: '📱 Open interactive map & catalog' },
     { command: 'myfilters', description: 'View & manage your search alerts' },
