@@ -62,7 +62,18 @@ export async function runBot(): Promise<void> {
   process.once('SIGINT', () => void shutdown('SIGINT'));
   process.once('SIGTERM', () => void shutdown('SIGTERM'));
 
-  // 6. Start long-polling
+  // 6. Clear lingering webhook if present to enable long polling without conflict
+  try {
+    const webhookInfo = await bot.api.getWebhookInfo();
+    if (webhookInfo.url) {
+      console.log(`ℹ️  Clearing active webhook (${webhookInfo.url}) to switch to long polling...`);
+      await bot.api.deleteWebhook({ drop_pending_updates: false });
+    }
+  } catch (err) {
+    console.warn('⚠️ Could not check/clear webhook before polling:', err);
+  }
+
+  // 7. Start long-polling
   console.log('🤖 Bot listening for Telegram updates in polling mode...');
   await bot.start({
     onStart: (info) => {

@@ -23,6 +23,9 @@
     "db:backup": "ts-node src/database/backup.ts",
     "reparse:listings": "ts-node scripts/reparse-listings.ts",
     "reparse": "node --max-old-space-size=400 dist/reparse-listings.js",
+    "webhook:info": "ts-node scripts/manage-webhook.ts info",
+    "webhook:set": "ts-node scripts/manage-webhook.ts set",
+    "webhook:delete": "ts-node scripts/manage-webhook.ts delete",
     "pack": "node scripts/pack-codebase.js",
     "test": "jest"
   },
