@@ -10,7 +10,7 @@ import {
 } from '../../services/notifier';
 import { findLandmarksInText, type LandmarkEntry } from '../../config/landmarks';
 import { extractCoordinatesFromMapsUrl, getFallbackCoordinates } from '../../config/locations';
-import { formatPhoneNumber } from '../parser/normalizer';
+import { formatDomesticPhone, formatPhoneNumber, normalizePhoneNumber } from '../parser/normalizer';
 
 export interface PropertyDTO {
   id: number;
@@ -50,6 +50,8 @@ export interface PropertyDTO {
     phoneLink?: string;
     telegram?: string;
     telegramLink?: string;
+    whatsapp?: string;
+    whatsappLink?: string;
   };
   isFavorite?: boolean;
 }
@@ -102,19 +104,42 @@ export function toPropertyDTO(property: Property, isFavorite?: boolean): Propert
   // Build clean contact links
   const contact: PropertyDTO['contact'] = {};
   if (property.direct_contact.phone) {
-    contact.phone = property.direct_contact.phone;
-    contact.phoneFormatted = formatPhoneNumber(property.direct_contact.phone) ?? property.direct_contact.phone;
-    contact.phoneLink = `tel:${property.direct_contact.phone}`;
+    const formatted = formatDomesticPhone(property.direct_contact.phone) ?? property.direct_contact.phone;
+    contact.phone = formatted;
+    contact.phoneFormatted = formatted;
+    const firstPhone = property.direct_contact.phone.split(/[/,|\n]+/)[0]?.trim();
+    contact.phoneLink = `tel:${firstPhone ? firstPhone.replace(/\s+/g, '') : property.direct_contact.phone}`;
   }
 
   if (property.direct_contact.telegram) {
-    const handle = property.direct_contact.telegram.replace(/^@/, '');
-    contact.telegram = `@${handle}`;
-    contact.telegramLink = `https://t.me/${handle}`;
+    const rawTg = property.direct_contact.telegram.trim();
+    if (rawTg.startsWith('http')) {
+      contact.telegram = rawTg.replace(/^https?:\/\/t\.me\//, '@');
+      contact.telegramLink = rawTg;
+    } else if (rawTg.startsWith('@')) {
+      contact.telegram = rawTg;
+      contact.telegramLink = `https://t.me/${rawTg.slice(1)}`;
+    } else {
+      const dom = formatDomesticPhone(rawTg) ?? rawTg;
+      const digits = normalizePhoneNumber(rawTg);
+      contact.telegram = dom;
+      contact.telegramLink = digits ? `https://t.me/+${digits}` : `https://t.me/${rawTg}`;
+    }
   } else if (property.direct_contact.phone) {
-    const digits = property.direct_contact.phone.replace(/\D/g, '');
-    if (digits.length >= 8) {
+    const firstPhone = property.direct_contact.phone.split(/[/,|\n]+/)[0]?.trim() || '';
+    const digits = normalizePhoneNumber(firstPhone);
+    if (digits && digits.length >= 8) {
       contact.telegramLink = `https://t.me/+${digits}`;
+    }
+  }
+
+  if (property.direct_contact.whatsapp) {
+    const rawWa = property.direct_contact.whatsapp.trim();
+    const dom = formatDomesticPhone(rawWa) ?? rawWa;
+    const digits = normalizePhoneNumber(rawWa);
+    contact.whatsapp = dom;
+    if (digits) {
+      contact.whatsappLink = `https://wa.me/${digits}`;
     }
   }
 

@@ -51,7 +51,7 @@ import {
   isExcessiveKhmer,
   type LLMExtractedListing,
 } from './extractor';
-import { cleanPhotoUrls } from './normalizer';
+import { cleanPhotoUrls, extractDirectContacts, formatDomesticPhone } from './normalizer';
 import { isNonRealEstateSpam } from './spam-detector';
 
 // Apply stealth plugin
@@ -267,11 +267,13 @@ export async function parseFacebookPostText(
   const city = locationResult?.city ?? target.city;
   const type = extractType(text) ?? 'rent';
   const mapsUrl = llm?.maps_url || extractMapsUrl(text) || undefined;
-  const regexPhone = extractPhoneFromText(text);
-  const aiPhones = llm?.phone_numbers ?? [];
-  const allPhones = [...aiPhones, regexPhone].filter(Boolean) as string[];
+  const directContacts = extractDirectContacts(text);
+  const regexPhone = directContacts.phone;
+  const aiPhones = (llm?.phone_numbers ?? []).map((p) => formatDomesticPhone(p)).filter(Boolean) as string[];
+  const allPhones = [...(regexPhone ? [regexPhone] : []), ...aiPhones];
   const uniquePhones = Array.from(new Set(allPhones));
   const phone = uniquePhones.length > 0 ? uniquePhones.join(' / ') : undefined;
+  const telegram_contact = directContacts.telegram;
 
   const description = llm?.description_en || text;
 
@@ -316,6 +318,7 @@ export async function parseFacebookPostText(
     url: cleanedUrl,
     photos: cleanPhotoUrls(photos),
     phone,
+    telegram_contact,
     posted_at: parseFacebookRelativeDate(rawDate),
   };
 }

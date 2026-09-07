@@ -2,7 +2,7 @@ import { Api, type InlineKeyboard } from 'grammy';
 import type { Property } from '../database/repositories/properties.repo';
 import { CITIES, KHR_TO_USD_RATE, RATE_LIMIT } from '../config/settings';
 import { listingActionKeyboard, getTelegramContactLink } from '../modules/bot/keyboards/listing.keyboard';
-import { formatPhoneNumber } from '../modules/parser/normalizer';
+import { formatPhoneNumber, formatDomesticPhone, formatInternationalPhone } from '../modules/parser/normalizer';
 import {
   crossValidateLocation,
   extractCoordinatesFromMapsUrl,
@@ -357,29 +357,61 @@ export function formatListingCard(property: Property): string {
   // 9. Processing timestamp (placed right above contact section)
   const timestampText = `\n\n${formatListingTimestamp(property.created_at || property.parsed_at)}`;
 
-  // 10. Direct contact details (formatted with standardized phone mask)
+  // 10. Direct contact details (formatted with domestic & international phone masks, no Contact header)
   const contactLines: string[] = [];
   if (property.direct_contact.phone) {
-    const formattedPhone =
-      formatPhoneNumber(property.direct_contact.phone) ?? property.direct_contact.phone;
-    contactLines.push(`📞 Phone: <code>${escapeHtml(formattedPhone)}</code>`);
+    const parts = property.direct_contact.phone.split(/[/,|\n]+/).map((p) => p.trim()).filter(Boolean);
+    const formattedParts = parts.map((p) => {
+      const dom = formatDomesticPhone(p);
+      const intl = formatInternationalPhone(p);
+      if (dom && intl) {
+        return `<code>${escapeHtml(dom)}</code> (<code>${escapeHtml(intl)}</code>)`;
+      }
+      const fallback = dom || intl || p;
+      return `<code>${escapeHtml(fallback)}</code>`;
+    });
+    if (formattedParts.length > 0) {
+      contactLines.push(`📞 Phone: ${formattedParts.join(' / ')}`);
+    }
   }
+
   if (property.direct_contact.telegram) {
-    const tgUsername = property.direct_contact.telegram.replace(/^@/, '');
-    contactLines.push(`💬 Telegram: <a href="https://t.me/${escapeHtml(tgUsername)}">@${escapeHtml(tgUsername)}</a>`);
+    const rawTg = property.direct_contact.telegram.trim();
+    if (rawTg.startsWith('http://') || rawTg.startsWith('https://')) {
+      const display = rawTg.replace(/^https?:\/\/t\.me\//, '@');
+      contactLines.push(`💬 Telegram: <a href="${escapeHtml(rawTg)}">${escapeHtml(display)} ↗</a>`);
+    } else if (rawTg.startsWith('@')) {
+      const cleanHandle = rawTg.slice(1);
+      contactLines.push(`💬 Telegram: <a href="https://t.me/${escapeHtml(cleanHandle)}">@${escapeHtml(cleanHandle)} ↗</a>`);
+    } else {
+      const dom = formatDomesticPhone(rawTg) || rawTg;
+      const digits = rawTg.replace(/\D/g, '');
+      const intl = digits.startsWith('855') ? digits : (digits.startsWith('0') ? `855${digits.slice(1)}` : `855${digits}`);
+      contactLines.push(`💬 Telegram: <a href="https://t.me/+${escapeHtml(intl)}">${escapeHtml(dom)} ↗</a>`);
+    }
   } else {
     const tgLink = getTelegramContactLink(property.direct_contact);
     if (tgLink) {
       contactLines.push(`💬 Telegram: <a href="${escapeHtml(tgLink)}">DM via Phone ↗</a>`);
     }
   }
+
+  if (property.direct_contact.whatsapp) {
+    const rawWa = property.direct_contact.whatsapp.trim();
+    const dom = formatDomesticPhone(rawWa) || rawWa;
+    const digits = rawWa.replace(/\D/g, '');
+    const intl = digits.startsWith('855') ? digits : (digits.startsWith('0') ? `855${digits.slice(1)}` : `855${digits}`);
+    contactLines.push(`🟢 WhatsApp: <a href="https://wa.me/${escapeHtml(intl)}">${escapeHtml(dom)} ↗</a>`);
+  }
+
   const source = property.source_url || property.original_url;
   if (source && (source.startsWith('http://') || source.startsWith('https://'))) {
     const cleanSource = source.replace('web.facebook.com', 'www.facebook.com');
     contactLines.push(`🔗 Source: <a href="${escapeHtml(cleanSource)}">View Link</a>`);
   }
+
   const contactSection =
-    contactLines.length > 0 ? `\n\n👤 <b>Contact:</b>\n${contactLines.join('\n')}` : '';
+    contactLines.length > 0 ? `\n\n${contactLines.join('\n')}` : '';
 
   const catLine = catLabel ? ` · <i>${catLabel}</i>` : '';
 

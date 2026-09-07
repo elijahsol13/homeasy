@@ -1,6 +1,6 @@
 import crypto from 'crypto';
 import { BulkImportSchema, RawListingSchema, type BulkIngestResult, type CleanProperty, type IngestResult } from './schemas';
-import { cleanPhotoUrls, normalizeText } from './normalizer';
+import { cleanPhotoUrls, extractDirectContacts, formatDomesticPhone, normalizeText } from './normalizer';
 import {
   extractBathrooms,
   extractBedrooms,
@@ -172,10 +172,15 @@ export function normalizeRawToClean(
   const hasPool =
     raw.has_pool !== undefined ? Boolean(raw.has_pool) : extractHasPool(combinedText);
 
-  // Direct contact: phone and telegram username
+  // Direct contact: phone, telegram, whatsapp with disambiguation and domestic mask
+  const contacts = extractDirectContacts(combinedText, {
+    rawPhone: raw.phone,
+    rawTelegram: raw.telegram_contact,
+  });
   const directContact: CleanProperty['direct_contact'] = {};
-  if (raw.phone) directContact.phone = normalizeText(raw.phone);
-  if (raw.telegram_contact) directContact.telegram = normalizeText(raw.telegram_contact);
+  if (contacts.phone) directContact.phone = contacts.phone;
+  if (contacts.telegram) directContact.telegram = contacts.telegram;
+  if (contacts.whatsapp) directContact.whatsapp = contacts.whatsapp;
 
   // ── Utilities, Restrictions, Landmarks & Pet-Friendly ──────────────────────
   const electricity = extractElectricity(combinedText);

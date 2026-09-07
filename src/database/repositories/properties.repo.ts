@@ -7,6 +7,7 @@ import { extractCoordinatesFromMapsUrl, getSangkatCentroid } from '../../config/
 export interface DirectContact {
   phone?: string;
   telegram?: string;
+  whatsapp?: string;
 }
 
 export interface Property {

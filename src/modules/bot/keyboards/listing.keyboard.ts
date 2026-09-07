@@ -5,11 +5,22 @@ import { normalizePhoneNumber } from '../../parser/normalizer';
 /**
  * Returns a direct Telegram link (username or international phone protocol) if available.
  */
-export function getTelegramContactLink(directContact?: { phone?: string; telegram?: string }): string | null {
+export function getTelegramContactLink(directContact?: { phone?: string; telegram?: string; whatsapp?: string }): string | null {
   if (!directContact) return null;
 
   if (directContact.telegram) {
-    const username = directContact.telegram.replace(/^@/, '').trim();
+    const raw = directContact.telegram.trim();
+    if (raw.startsWith('http://') || raw.startsWith('https://')) {
+      return raw;
+    }
+    if (raw.startsWith('@')) {
+      return `https://t.me/${raw.slice(1)}`;
+    }
+    const digits = normalizePhoneNumber(raw);
+    if (digits && digits.length >= 8) {
+      return `https://t.me/+${digits}`;
+    }
+    const username = raw.replace(/^@/, '').trim();
     if (username.length > 0) {
       return `https://t.me/${username}`;
     }
@@ -31,10 +42,22 @@ export function getTelegramContactLink(directContact?: { phone?: string; telegra
 export function listingActionKeyboard(property: Property): InlineKeyboard {
   const kb = new InlineKeyboard();
 
-  // 1. Direct Message on Telegram (via username or verified phone protocol)
+  // 1. Direct Message on Telegram / WhatsApp
   const tgLink = getTelegramContactLink(property.direct_contact);
+  let hasDirectChat = false;
   if (tgLink) {
-    kb.url('💬 DM on Telegram', tgLink).row();
+    kb.url('💬 DM on Telegram', tgLink);
+    hasDirectChat = true;
+  }
+  if (property.direct_contact.whatsapp) {
+    const digits = normalizePhoneNumber(property.direct_contact.whatsapp);
+    if (digits) {
+      kb.url('🟢 WhatsApp', `https://wa.me/${digits}`);
+      hasDirectChat = true;
+    }
+  }
+  if (hasDirectChat) {
+    kb.row();
   }
 
   kb.text('⭐ Save', `cb:prop:save:${property.id}`).text(
