@@ -118,7 +118,7 @@ export function enrichPropertyRecord(prop: PropertyRecord): EnrichmentResult {
     // 1b. Check for high Khmer character ratio (>10%)
     if (isExcessiveKhmer(text, 0.10)) {
       deactivated = true;
-      deactivateReason = 'Скрыт из-за кхмерского языка (>10% Khmer characters)';
+      deactivateReason = 'Hidden due to excessive Khmer language (>10% Khmer characters)';
       changes.is_active = { oldVal: 1, newVal: 0 };
       patch.is_active = 0;
     }

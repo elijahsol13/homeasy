@@ -49,14 +49,14 @@ describe('AlertService', () => {
     const adminIds = [999];
 
     const alertService = new AlertService(mockApi, adminIds);
-    await alertService.warn('<b>Zero Yield:</b> Скрапер FB отработал, но не нашел ни одного поста.');
+    await alertService.warn('<b>Zero Yield:</b> FB Scraper completed with 0 listings found.');
 
     expect(consoleWarnSpy).toHaveBeenCalledWith(
-      '⚠️ [WARN] <b>Zero Yield:</b> Скрапер FB отработал, но не нашел ни одного поста.',
+      '⚠️ [WARN] <b>Zero Yield:</b> FB Scraper completed with 0 listings found.',
     );
     expect(sendMessageMock).toHaveBeenCalledWith(
       999,
-      '⚠️ [WARN] <b>Zero Yield:</b> Скрапер FB отработал, но не нашел ни одного поста.',
+      '⚠️ [WARN] <b>Zero Yield:</b> FB Scraper completed with 0 listings found.',
       { parse_mode: 'HTML' },
     );
   });
@@ -67,14 +67,14 @@ describe('AlertService', () => {
     const adminIds = [999];
 
     const alertService = new AlertService(mockApi, adminIds);
-    await alertService.critical('<b>Facebook Checkpoint!</b> Скрапер остановлен.');
+    await alertService.critical('<b>Facebook Checkpoint!</b> Scraper halted.');
 
     expect(consoleErrorSpy).toHaveBeenCalledWith(
-      '🚨 [CRITICAL] <b>Facebook Checkpoint!</b> Скрапер остановлен.',
+      '🚨 [CRITICAL] <b>Facebook Checkpoint!</b> Scraper halted.',
     );
     expect(sendMessageMock).toHaveBeenCalledWith(
       999,
-      '🚨 [CRITICAL] <b>Facebook Checkpoint!</b> Скрапер остановлен.',
+      '🚨 [CRITICAL] <b>Facebook Checkpoint!</b> Scraper halted.',
       { parse_mode: 'HTML' },
     );
   });
