@@ -35,6 +35,9 @@ const EnvSchema = z.object({
   POSTHOG_HOST: z.string().default('https://eu.i.posthog.com'),
   TELEGRAM_WEBHOOK_URL: z.string().optional(),
   TELEGRAM_WEBHOOK_SECRET: z.string().optional(),
+  SCRAPER_CYCLE_PAUSE_MINUTES: z.coerce.number().default(45),
+  FB_GROUPS_PER_CYCLE: z.coerce.number().default(5),
+  FB_EARLY_EXIT_THRESHOLD: z.coerce.number().default(3),
 });
 
 const result = EnvSchema.safeParse(process.env);

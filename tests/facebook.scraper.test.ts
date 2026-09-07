@@ -11,7 +11,13 @@ import {
   FB_GROUP_TARGETS,
   type FBGroupTarget,
   type FbGraphQLStoryNode,
+  getNextGroupBatch,
+  loadScraperState,
+  saveScraperState,
+  SCRAPER_STATE_PATH,
+  BROWSER_CACHE_DIR,
 } from '../src/modules/parser/facebook.scraper';
+import fs from 'fs';
 import { RawListingSchema } from '../src/modules/parser/schemas';
 
 jest.mock('../src/modules/parser/extractor', () => {
@@ -316,5 +322,62 @@ describe('Facebook Scraper', () => {
       expect(text).toContain('Cozy wooden bungalow');
     });
   });
+
+  describe('Round-Robin Group Batching & State Management', () => {
+    const backupState = fs.existsSync(SCRAPER_STATE_PATH)
+      ? fs.readFileSync(SCRAPER_STATE_PATH, 'utf-8')
+      : null;
+
+    afterAll(() => {
+      if (backupState !== null) {
+        fs.writeFileSync(SCRAPER_STATE_PATH, backupState, 'utf-8');
+      } else if (fs.existsSync(SCRAPER_STATE_PATH)) {
+        fs.unlinkSync(SCRAPER_STATE_PATH);
+      }
+    });
+
+    test('saveScraperState and loadScraperState correctly persist cursor', () => {
+      saveScraperState({ fbGroupCursor: 42, lastCycleAt: '2026-09-07T12:00:00Z' });
+      const loaded = loadScraperState();
+      expect(loaded.fbGroupCursor).toBe(42);
+      expect(loaded.lastCycleAt).toBe('2026-09-07T12:00:00Z');
+    });
+
+    test('getNextGroupBatch returns batches of specified size and advances cursor through wrap-around', () => {
+      const mockTargets: FBGroupTarget[] = [
+        { name: 'Group 0', url: 'https://fb.com/0', city: 'siem_reap' },
+        { name: 'Group 1', url: 'https://fb.com/1', city: 'siem_reap' },
+        { name: 'Group 2', url: 'https://fb.com/2', city: 'siem_reap' },
+        { name: 'Group 3', url: 'https://fb.com/3', city: 'siem_reap' },
+        { name: 'Group 4', url: 'https://fb.com/4', city: 'siem_reap' },
+        { name: 'Group 5', url: 'https://fb.com/5', city: 'siem_reap' },
+        { name: 'Group 6', url: 'https://fb.com/6', city: 'siem_reap' },
+      ];
+
+      // Reset to 0
+      saveScraperState({ fbGroupCursor: 0 });
+
+      // Cycle 1: batch of 3 (0, 1, 2)
+      const res1 = getNextGroupBatch(mockTargets, 3);
+      expect(res1.batch.map((t) => t.name)).toEqual(['Group 0', 'Group 1', 'Group 2']);
+      expect(res1.nextCursor).toBe(3);
+
+      // Cycle 2: batch of 3 (3, 4, 5)
+      const res2 = getNextGroupBatch(mockTargets, 3);
+      expect(res2.batch.map((t) => t.name)).toEqual(['Group 3', 'Group 4', 'Group 5']);
+      expect(res2.nextCursor).toBe(6);
+
+      // Cycle 3: batch of 3 (6, 0, 1) -> wraps around
+      const res3 = getNextGroupBatch(mockTargets, 3);
+      expect(res3.batch.map((t) => t.name)).toEqual(['Group 6', 'Group 0', 'Group 1']);
+      expect(res3.nextCursor).toBe(2);
+    });
+
+    test('BROWSER_CACHE_DIR points to data/browser_cache', () => {
+      expect(BROWSER_CACHE_DIR).toContain('browser_cache');
+      expect(BROWSER_CACHE_DIR).toContain('data');
+    });
+  });
 });
+
 

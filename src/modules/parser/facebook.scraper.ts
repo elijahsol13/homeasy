@@ -58,6 +58,63 @@ import { isNonRealEstateSpam } from './spam-detector';
 chromium.use(stealthPlugin());
 
 export const FB_SESSION_PATH = path.join(process.cwd(), 'data', 'fb_session.json');
+export const BROWSER_CACHE_DIR = path.join(process.cwd(), 'data', 'browser_cache');
+export const SCRAPER_STATE_PATH = path.join(process.cwd(), 'data', 'scraper_state.json');
+
+export interface ScraperState {
+  fbGroupCursor: number;
+  lastCycleAt?: string;
+}
+
+export function loadScraperState(): ScraperState {
+  try {
+    if (fs.existsSync(SCRAPER_STATE_PATH)) {
+      const data = JSON.parse(fs.readFileSync(SCRAPER_STATE_PATH, 'utf-8'));
+      if (typeof data.fbGroupCursor === 'number') {
+        return data;
+      }
+    }
+  } catch (err) {
+    console.warn('⚠️ Failed to read scraper_state.json, starting from cursor 0:', err);
+  }
+  return { fbGroupCursor: 0 };
+}
+
+export function saveScraperState(state: ScraperState): void {
+  try {
+    const dir = path.dirname(SCRAPER_STATE_PATH);
+    if (!fs.existsSync(dir)) {
+      fs.mkdirSync(dir, { recursive: true });
+    }
+    fs.writeFileSync(SCRAPER_STATE_PATH, JSON.stringify(state, null, 2), 'utf-8');
+  } catch (err) {
+    console.warn('⚠️ Failed to save scraper_state.json:', err);
+  }
+}
+
+export function getNextGroupBatch(
+  allTargets: readonly FBGroupTarget[],
+  batchSize: number = env.FB_GROUPS_PER_CYCLE ?? 5,
+): { batch: FBGroupTarget[]; nextCursor: number } {
+  if (allTargets.length === 0) return { batch: [], nextCursor: 0 };
+  const state = loadScraperState();
+  const cursor = ((state.fbGroupCursor % allTargets.length) + allTargets.length) % allTargets.length;
+  const batch: FBGroupTarget[] = [];
+
+  const count = Math.min(batchSize, allTargets.length);
+  for (let i = 0; i < count; i++) {
+    const idx = (cursor + i) % allTargets.length;
+    batch.push(allTargets[idx]!);
+  }
+
+  const nextCursor = (cursor + count) % allTargets.length;
+  saveScraperState({
+    fbGroupCursor: nextCursor,
+    lastCycleAt: new Date().toISOString(),
+  });
+
+  return { batch, nextCursor };
+}
 
 /** In-Memory translation retry queue for posts with low-quality translation (>10% Khmer) */
 export interface TranslationRetryItem {
@@ -737,6 +794,7 @@ export async function scrapeFacebookGroup(
   target: FBGroupTarget,
   maxPosts = 15,
   container?: AppContainer,
+  maxScrolls = 4,
 ): Promise<RawListing[]> {
   console.log(`\n🔎 Scraping Facebook Group: [${target.name}]`);
   console.log(`🔗 URL: ${target.url}`);
@@ -846,14 +904,17 @@ export async function scrapeFacebookGroup(
     }
 
     let scrollAttempts = 0;
-    const maxScrolls = 8;
     let processedIndex = 0;
+    let consecutiveAlreadyInDb = 0;
+    let earlyExitTriggered = false;
+    const earlyExitThreshold = env.FB_EARLY_EXIT_THRESHOLD ?? 3;
 
     // Helper to process captured GraphQL posts with Intelligent Batching & Translation Retry Queue
     const processInterceptedPosts = async () => {
       while (
         (processedIndex < interceptedPosts.length || translationRetryQueue.length > 0) &&
-        listings.length < maxPosts
+        listings.length < maxPosts &&
+        !earlyExitTriggered
       ) {
         const batchItems: Array<{
           id: string;
@@ -904,10 +965,18 @@ export async function scrapeFacebookGroup(
                 console.log(
                   `  🔄 [Re-listing >45 days old] Post #${existingInDb.id} (${existingInDb.created_at}): ${cleanedUrl}`,
                 );
+                consecutiveAlreadyInDb = 0;
               } else {
                 console.log(`  ⏩ [Skipped - Already in DB] Post #${existingInDb.id}: ${cleanedUrl}`);
+                consecutiveAlreadyInDb++;
+                if (consecutiveAlreadyInDb >= earlyExitThreshold) {
+                  earlyExitTriggered = true;
+                  break;
+                }
                 continue;
               }
+            } else {
+              consecutiveAlreadyInDb = 0;
             }
           }
 
@@ -927,6 +996,13 @@ export async function scrapeFacebookGroup(
             photos: post.photos ?? [],
             rawDate: post.rawDate,
           });
+        }
+
+        if (earlyExitTriggered) {
+          console.log(
+            `  ⚡ [Early Exit] Encountered ${consecutiveAlreadyInDb} consecutive posts already in DB. Group feed is up to date, halting pagination early!`,
+          );
+          break;
         }
 
         if (batchItems.length === 0) break;
@@ -1001,13 +1077,15 @@ export async function scrapeFacebookGroup(
     };
 
     while (listings.length < maxPosts && scrollAttempts < maxScrolls) {
+      if (earlyExitTriggered) break;
+
       // Natural human mouse movement across the viewport
       await simulateHumanMouseMove(page);
 
       // Process GraphQL posts intercepted so far
       await processInterceptedPosts();
 
-      if (listings.length >= maxPosts) break;
+      if (listings.length >= maxPosts || earlyExitTriggered) break;
 
       // Variable human scroll with occasional slight upward backtrack (triggers next GraphQL pagination query)
       await simulateHumanScroll(page);
@@ -1019,6 +1097,8 @@ export async function scrapeFacebookGroup(
       // Process posts received after scroll
       await processInterceptedPosts();
 
+      if (earlyExitTriggered) break;
+
       // 12% probability of a longer human reading pause (6s - 11s)
       if (Math.random() < 0.12) {
         await sleepRandom(6000, 11000);
@@ -1026,7 +1106,9 @@ export async function scrapeFacebookGroup(
     }
 
     // Final drain of any GraphQL posts captured in the last network roundtrip
-    await processInterceptedPosts();
+    if (!earlyExitTriggered) {
+      await processInterceptedPosts();
+    }
   } catch (err: unknown) {
     if (err instanceof FacebookSessionExpiredError) {
       throw err;
@@ -1294,7 +1376,13 @@ export async function reparseFacebookViaGroupFeed(
 
 // ─── Main Runner ──────────────────────────────────────────────────────────────
 
-export async function runFacebookScraper(containerInstance?: AppContainer): Promise<{
+export async function runFacebookScraper(
+  containerInstance?: AppContainer,
+  options: {
+    targets?: FBGroupTarget[];
+    maxScrollsPerGroup?: number;
+  } = {},
+): Promise<{
   totalScraped: number;
   inserted: number;
   duplicates: number;
@@ -1330,16 +1418,27 @@ export async function runFacebookScraper(containerInstance?: AppContainer): Prom
   let totalInserted = 0;
   let totalDuplicates = 0;
   let totalErrors = 0;
-  let browser: Browser | null = null;
   let context: BrowserContext | null = null;
 
   try {
     console.log(`🌐 Proxy enabled: ${proxyResult.masked}`);
 
-    console.log('🌐 Launching headless browser with saved session...');
-    browser = await chromium.launch({
+    const chosenViewport = VIEWPORT_PRESETS[Math.floor(Math.random() * VIEWPORT_PRESETS.length)]!;
+    const chosenUserAgent = USER_AGENTS[Math.floor(Math.random() * USER_AGENTS.length)]!;
+
+    // 🛡️ CONSERVATION: Use persistent context with disk cache to prevent re-downloading static JS bundles
+    if (!fs.existsSync(BROWSER_CACHE_DIR)) {
+      fs.mkdirSync(BROWSER_CACHE_DIR, { recursive: true });
+    }
+
+    console.log(`💾 Launching persistent browser context with disk cache: ${BROWSER_CACHE_DIR}`);
+    context = await chromium.launchPersistentContext(BROWSER_CACHE_DIR, {
       headless: true,
       proxy: proxyResult.config,
+      userAgent: chosenUserAgent,
+      viewport: chosenViewport,
+      locale: 'en-US',
+      extraHTTPHeaders: { 'Accept-Language': 'en-US,en;q=0.9' },
       args: [
         '--no-sandbox',
         '--disable-setuid-sandbox',
@@ -1353,29 +1452,42 @@ export async function runFacebookScraper(containerInstance?: AppContainer): Prom
         '--disable-blink-features=AutomationControlled',
         '--disable-infobars',
         '--js-flags=--max-old-space-size=128',
+        `--disk-cache-dir=${path.join(BROWSER_CACHE_DIR, 'http_cache')}`,
       ],
     });
 
-    const chosenViewport = VIEWPORT_PRESETS[Math.floor(Math.random() * VIEWPORT_PRESETS.length)]!;
-    const chosenUserAgent = USER_AGENTS[Math.floor(Math.random() * USER_AGENTS.length)]!;
+    // Populate saved session cookies if available
+    if (fs.existsSync(FB_SESSION_PATH)) {
+      try {
+        const sessionData = JSON.parse(fs.readFileSync(FB_SESSION_PATH, 'utf-8'));
+        if (Array.isArray(sessionData.cookies) && sessionData.cookies.length > 0) {
+          await context.addCookies(sessionData.cookies);
+        }
+      } catch (cookieErr) {
+        console.warn('⚠️ Could not load session cookies into persistent context:', cookieErr);
+      }
+    }
 
-    context = await browser.newContext({
-      storageState: FB_SESSION_PATH,
-      userAgent: chosenUserAgent,
-      viewport: chosenViewport,
-      locale: 'en-US',
-      extraHTTPHeaders: { 'Accept-Language': 'en-US,en;q=0.9' },
-    });
+    // Determine targets: custom targets (if specified) or round-robin batch
+    let targets: FBGroupTarget[];
+    if (options.targets && options.targets.length > 0) {
+      targets = options.targets;
+      console.log(`📋 [Custom Targets] Scanning ${targets.length} specified groups.`);
+    } else {
+      const { batch, nextCursor } = getNextGroupBatch(FB_GROUP_TARGETS, env.FB_GROUPS_PER_CYCLE);
+      targets = batch;
+      console.log(
+        `🔄 [Round-Robin] Selected batch of ${targets.length} groups (next cursor: ${nextCursor}/${FB_GROUP_TARGETS.length}).`,
+      );
+    }
 
-    // Shuffle groups to break predictable traversal patterns
-    const targets = shuffleArray(FB_GROUP_TARGETS);
-    console.log(`🎲 [Anti-Bot] Randomized group traversal order (${targets.length} groups, viewport ${chosenViewport.width}x${chosenViewport.height}).`);
+    const maxScrolls = options.maxScrollsPerGroup ?? 4;
 
     for (let i = 0; i < targets.length; i++) {
       const target = targets[i]!;
 
       try {
-        const listings = await scrapeFacebookGroup(context, target, 10, container);
+        const listings = await scrapeFacebookGroup(context, target, 10, container, maxScrolls);
         totalScraped += listings.length;
 
         console.log(`\n📥 Ingesting ${listings.length} listings from [${target.name}]...`);
@@ -1448,7 +1560,6 @@ export async function runFacebookScraper(containerInstance?: AppContainer): Prom
     totalErrors++;
   } finally {
     if (context) await context.close().catch(() => {});
-    if (browser) await browser.close().catch(() => {});
     await container.notifierService.flushNotificationQueue().catch((err) => console.error('[Notifier] Flush error:', err));
   }
 
