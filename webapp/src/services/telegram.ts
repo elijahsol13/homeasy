@@ -90,13 +90,52 @@ export function getTelegramInitData(): string {
   }
 }
 
-export function openExternalUrl(url: string): void {
+export function openExternalUrl(url: string | null | undefined, e?: React.SyntheticEvent): void {
+  if (!url) return;
   triggerHaptic('light');
-  if (url.startsWith('https://t.me/') && typeof window !== 'undefined' && window.Telegram?.WebApp?.openTelegramLink) {
-    WebApp.openTelegramLink(url);
-  } else if (typeof window !== 'undefined' && window.Telegram?.WebApp?.openLink) {
-    WebApp.openLink(url);
-  } else {
-    window.open(url, '_blank', 'noopener,noreferrer');
+
+  let targetUrl = url.trim();
+  if (!/^https?:\/\//i.test(targetUrl)) {
+    targetUrl = 'https://' + targetUrl;
+  }
+
+  // 1. Try Telegram WebApp openTelegramLink for t.me links
+  if (targetUrl.startsWith('https://t.me/')) {
+    try {
+      if (typeof window !== 'undefined' && window.Telegram?.WebApp?.openTelegramLink) {
+        window.Telegram.WebApp.openTelegramLink(targetUrl);
+        if (e) e.preventDefault();
+        return;
+      }
+    } catch (err) {
+      console.warn('[Telegram] openTelegramLink failed:', err);
+    }
+  }
+
+  // 2. Try Telegram WebApp openLink for external websites
+  try {
+    if (typeof window !== 'undefined' && window.Telegram?.WebApp?.openLink) {
+      window.Telegram.WebApp.openLink(targetUrl);
+      if (e) e.preventDefault();
+      return;
+    }
+  } catch (err) {
+    console.warn('[Telegram] openLink failed:', err);
+  }
+
+  // 3. Browser fallback
+  try {
+    const win = window.open(targetUrl, '_blank', 'noopener,noreferrer');
+    if (win) {
+      if (e) e.preventDefault();
+      return;
+    }
+  } catch {
+    // Popup was blocked
+  }
+
+  // 4. Ultimate fallback if window.open was blocked and event not prevented
+  if (!e) {
+    window.location.href = targetUrl;
   }
 }

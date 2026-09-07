@@ -34,6 +34,16 @@ export const PropertyDetailModal: React.FC<PropertyDetailModalProps> = ({
 
   const photos = property.photos && property.photos.length > 0 ? property.photos : [];
 
+  const effectiveMapsUrl =
+    property.mapsUrl ||
+    (property.coordinates
+      ? `https://www.google.com/maps/search/?api=1&query=${property.coordinates.lat},${property.coordinates.lng}`
+      : property.location
+        ? `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(
+            `${property.location}, ${property.city === 'phnom_penh' ? 'Phnom Penh' : 'Siem Reap'}, Cambodia`,
+          )}`
+        : null);
+
   return (
     <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex flex-col justify-end sm:justify-center sm:p-4 animate-in fade-in duration-200">
       <div className="bg-white dark:bg-zinc-900 w-full max-w-2xl max-h-[92vh] sm:rounded-3xl rounded-t-3xl overflow-hidden flex flex-col shadow-2xl">
@@ -145,15 +155,17 @@ export const PropertyDetailModal: React.FC<PropertyDetailModalProps> = ({
               <span>{property.location || property.city}, Cambodia</span>
             </div>
 
-            {property.mapsUrl && (
-              <button
-                type="button"
-                onClick={() => openExternalUrl(property.mapsUrl!)}
-                className="text-xs font-semibold text-sky-600 dark:text-sky-400 hover:underline flex items-center gap-1"
+            {effectiveMapsUrl && (
+              <a
+                href={effectiveMapsUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                onClick={(e) => openExternalUrl(effectiveMapsUrl, e)}
+                className="text-xs font-semibold text-sky-600 dark:text-sky-400 hover:underline flex items-center gap-1 cursor-pointer"
               >
                 <span>Maps</span>
                 <ExternalLink className="w-3 h-3" />
-              </button>
+              </a>
             )}
           </div>
 
@@ -282,15 +294,18 @@ export const PropertyDetailModal: React.FC<PropertyDetailModalProps> = ({
 
           {/* Original Source Link */}
           {property.originalUrl && (
-            <div className="pt-2 border-t border-zinc-100 dark:border-zinc-800 text-xs text-zinc-400">
-              <span>Source: </span>
-              <button
-                type="button"
-                onClick={() => openExternalUrl(property.originalUrl)}
-                className="text-sky-500 hover:underline"
+            <div className="pt-2 border-t border-zinc-100 dark:border-zinc-800 text-xs text-zinc-400 flex items-center gap-1.5">
+              <span>Source:</span>
+              <a
+                href={property.originalUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                onClick={(e) => openExternalUrl(property.originalUrl!, e)}
+                className="text-sky-500 hover:underline font-medium flex items-center gap-1 cursor-pointer"
               >
-                View Original Listing
-              </button>
+                <span>View Original Listing</span>
+                <ExternalLink className="w-3 h-3" />
+              </a>
             </div>
           )}
         </div>
@@ -314,13 +329,15 @@ export const PropertyDetailModal: React.FC<PropertyDetailModalProps> = ({
               <span>Chat in Telegram</span>
             </button>
           ) : property.originalUrl ? (
-            <button
-              type="button"
-              onClick={() => openExternalUrl(property.originalUrl)}
-              className="flex-1 bg-zinc-100 dark:bg-zinc-800 hover:bg-zinc-200 dark:hover:bg-zinc-700 text-zinc-800 dark:text-zinc-200 font-bold py-3 px-4 rounded-xl flex items-center justify-center gap-2 active:scale-98 transition-all"
+            <a
+              href={property.originalUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              onClick={(e) => openExternalUrl(property.originalUrl!, e)}
+              className="flex-1 bg-zinc-100 dark:bg-zinc-800 hover:bg-zinc-200 dark:hover:bg-zinc-700 text-zinc-800 dark:text-zinc-200 font-bold py-3 px-4 rounded-xl flex items-center justify-center gap-2 active:scale-98 transition-all text-sm cursor-pointer"
             >
               <span>View Original Listing ↗</span>
-            </button>
+            </a>
           ) : null}
 
           {property.contact.phone && (
@@ -342,15 +359,17 @@ export const PropertyDetailModal: React.FC<PropertyDetailModalProps> = ({
             </button>
           )}
 
-          {property.mapsUrl && (
-            <button
-              type="button"
-              onClick={() => openExternalUrl(property.mapsUrl!)}
-              className="p-3 bg-zinc-100 dark:bg-zinc-800 hover:bg-zinc-200 text-zinc-700 dark:text-zinc-300 rounded-xl active:scale-95 transition-all flex items-center justify-center"
+          {effectiveMapsUrl && (
+            <a
+              href={effectiveMapsUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              onClick={(e) => openExternalUrl(effectiveMapsUrl, e)}
+              className="p-3 bg-zinc-100 dark:bg-zinc-800 hover:bg-zinc-200 text-zinc-700 dark:text-zinc-300 rounded-xl active:scale-95 transition-all flex items-center justify-center cursor-pointer"
               aria-label="Google Maps"
             >
               <Map className="w-5 h-5 text-sky-500" />
-            </button>
+            </a>
           )}
         </div>
       </div>

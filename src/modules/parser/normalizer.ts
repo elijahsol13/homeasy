@@ -132,23 +132,29 @@ function formatSinglePhoneNumber(phone: string): string | null {
 // ─── Photo Sanitization ───────────────────────────────────────────────────────
 
 const JUNK_PHOTO_PATTERNS: RegExp[] = [
-  /\/p100x100\//i,
-  /\/p160x160\//i,
-  /\/s160x160\//i,
-  /\/c\d+\.\d+\.\d+\.\d+/i,
+  /\/t39\.30808-1\//i, // Facebook profile picture CDN indicator
+  /\/p(40|50|60|75|100|160)x\1\//i,
+  /\/s(40|50|60|75|100|160)x\1\//i,
+  /[?&]ctp=s(40|50|60|75|100|160)x\1/i,
+  /[?&]cstp=s(40|50|60|75|100|160)x\1/i,
+  /c\d+\.\d+\.\d+\.\d+/i,
   /profile/i,
+  /avatar/i,
   /emoji/i,
+  /static\.xx\.fbcdn\.net/i,
+  /rsrc\.php/i,
 ];
 
 /**
  * Sanitizes an array of photo URLs:
  * 1. Discards avatars, tiny thumbnails, profile icons, and emoji graphics.
- * 2. Eliminates duplicates while preserving insertion order.
+ * 2. Eliminates duplicates (including same photo with different resolution query params) while preserving insertion order.
  * 3. CRITICAL INVARIANT: The very first valid original post image remains at index 0 (Hero Image).
  */
 export function cleanPhotoUrls(urls: string[] | undefined | null): string[] {
   if (!Array.isArray(urls) || urls.length === 0) return [];
 
+  const seenPaths = new Set<string>();
   const filtered: string[] = [];
 
   for (const rawUrl of urls) {
@@ -157,12 +163,22 @@ export function cleanPhotoUrls(urls: string[] | undefined | null): string[] {
     if (!url.startsWith('http://') && !url.startsWith('https://')) continue;
 
     const isJunk = JUNK_PHOTO_PATTERNS.some((pattern) => pattern.test(url));
-    if (!isJunk) {
+    if (isJunk) continue;
+
+    let pathKey = url;
+    try {
+      const parsed = new URL(url);
+      pathKey = parsed.pathname;
+    } catch {
+      // If URL parsing fails, fallback to exact string
+    }
+
+    if (!seenPaths.has(pathKey)) {
+      seenPaths.add(pathKey);
       filtered.push(url);
     }
   }
 
-  // Set maintains insertion order in JavaScript/TypeScript (ES2015+)
-  return Array.from(new Set(filtered));
+  return filtered;
 }
 
