@@ -39,10 +39,10 @@ export function createTelegramAuthHandler(container: AppContainer): Composer<MyC
         '🔐 <b>Facebook Authorization (Residential Proxy)</b>\n\n' +
         `• <b>Status:</b> ${result.message}\n` +
         '• <b>Steps:</b>\n' +
-        '  1. Tap <b>[👤 Ввести логин]</b> and send your email/phone.\n' +
-        '  2. Tap <b>[🔑 Ввести пароль]</b> and send your password.\n' +
-        '  3. Tap <b>[🚀 Войти]</b> to authenticate.\n' +
-        '  4. If prompted for 2FA, tap <b>[📲 Ввести 2FA]</b>.\n\n' +
+        '  1. Tap <b>[👤 Enter Login]</b> and send your email/phone.\n' +
+        '  2. Tap <b>[🔑 Enter Password]</b> and send your password.\n' +
+        '  3. Tap <b>[🚀 Submit Login]</b> to authenticate.\n' +
+        '  4. If prompted for 2FA, tap <b>[📲 Enter 2FA]</b>.\n\n' +
         '<i>🛡️ All password messages are deleted immediately after entry.</i>';
 
       await ctx.replyWithPhoto(new InputFile(result.screenshot, 'fb_login.jpg'), {
@@ -88,7 +88,7 @@ export function createTelegramAuthHandler(container: AppContainer): Composer<MyC
     }
 
     container.telegramAuthService.setWaitingForInput(adminId, 'login');
-    await ctx.reply('👤 <b>Введите ваш логин / email от Facebook в ответном сообщении:</b>', {
+    await ctx.reply('👤 <b>Enter your Facebook login / email in a reply message:</b>', {
       parse_mode: 'HTML',
     });
   });
@@ -105,8 +105,8 @@ export function createTelegramAuthHandler(container: AppContainer): Composer<MyC
 
     container.telegramAuthService.setWaitingForInput(adminId, 'password');
     await ctx.reply(
-      '🔑 <b>Введите ваш пароль от Facebook:</b>\n\n' +
-        '<i>🛡️ Ваше сообщение с паролем будет автоматически удалено сразу после ввода.</i>',
+      '🔑 <b>Enter your Facebook password:</b>\n\n' +
+        '<i>🛡️ Your password message will be deleted automatically right after entry.</i>',
       { parse_mode: 'HTML' },
     );
   });
@@ -122,7 +122,7 @@ export function createTelegramAuthHandler(container: AppContainer): Composer<MyC
     }
 
     container.telegramAuthService.setWaitingForInput(adminId, '2fa');
-    await ctx.reply('📲 <b>Отправьте 6-значный код подтверждения (2FA / SMS / Authenticator):</b>', {
+    await ctx.reply('📲 <b>Send your 6-digit confirmation code (2FA / SMS / Authenticator):</b>', {
       parse_mode: 'HTML',
     });
   });
@@ -165,8 +165,8 @@ export function createTelegramAuthHandler(container: AppContainer): Composer<MyC
         `🔍 <b>Current Browser State</b>\n\n` +
         `• <b>Status:</b> ${result.message}\n` +
         (result.is2FA
-          ? `\n👉 <b>Please tap [📲 Ввести 2FA] to enter your confirmation code.</b>`
-          : `\n👉 If credentials failed, tap [👤 Ввести логин] or [🔑 Ввести пароль] again.`);
+          ? `\n👉 <b>Please tap [📲 Enter 2FA] to enter your confirmation code.</b>`
+          : `\n👉 If credentials failed, tap [👤 Enter Login] or [🔑 Enter Password] again.`);
 
       await ctx.replyWithPhoto(new InputFile(result.screenshot, 'fb_submit.jpg'), {
         caption,
@@ -317,7 +317,7 @@ export function createTelegramAuthHandler(container: AppContainer): Composer<MyC
         const screen = await container.telegramAuthService.enterLogin(adminId, text);
         await ctx.api.deleteMessage(ctx.chat.id, waitMsg.message_id).catch(() => {});
         await ctx.replyWithPhoto(new InputFile(screen, 'fb_login.jpg'), {
-          caption: '✅ <b>Login entered!</b> Now tap <b>[🔑 Ввести пароль]</b> or <b>[🚀 Войти]</b>.',
+          caption: '✅ <b>Login entered!</b> Now tap <b>[🔑 Enter Password]</b> or <b>[🚀 Submit Login]</b>.',
           parse_mode: 'HTML',
           reply_markup: authInChatKeyboard(),
         });
@@ -341,7 +341,7 @@ export function createTelegramAuthHandler(container: AppContainer): Composer<MyC
         const screen = await container.telegramAuthService.enterPassword(adminId, text);
         await ctx.api.deleteMessage(ctx.chat.id, waitMsg.message_id).catch(() => {});
         await ctx.replyWithPhoto(new InputFile(screen, 'fb_pass.jpg'), {
-          caption: '✅ <b>Password entered!</b> Tap <b>[🚀 Войти (Submit)]</b> to authenticate.',
+          caption: '✅ <b>Password entered!</b> Tap <b>[🚀 Submit Login]</b> to authenticate.',
           parse_mode: 'HTML',
           reply_markup: authInChatKeyboard(),
         });

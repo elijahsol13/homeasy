@@ -34,16 +34,16 @@ export function adminBackKeyboard(): InlineKeyboard {
  */
 export function authInChatKeyboard(options?: { is2FA?: boolean; isWaiting?: boolean }): InlineKeyboard {
   const kb = new InlineKeyboard();
-  kb.text('👤 Ввести логин', 'cb:auth:fb:login')
-    .text('🔑 Ввести пароль', 'cb:auth:fb:pass')
+  kb.text('👤 Enter Login', 'cb:auth:fb:login')
+    .text('🔑 Enter Password', 'cb:auth:fb:pass')
     .row();
-  kb.text('🚀 Войти (Submit)', 'cb:auth:fb:submit')
-    .text('📲 Ввести 2FA', 'cb:auth:fb:2fa')
+  kb.text('🚀 Submit Login', 'cb:auth:fb:submit')
+    .text('📲 Enter 2FA', 'cb:auth:fb:2fa')
     .row();
-  kb.text('🔄 Обновить снимок', 'cb:auth:fb:refresh')
-    .text('💾 Сохранить', 'cb:auth:fb:save')
+  kb.text('🔄 Refresh Screen', 'cb:auth:fb:refresh')
+    .text('💾 Save Session', 'cb:auth:fb:save')
     .row();
-  kb.text('❌ Закрыть сессию', 'cb:auth:fb:cancel');
+  kb.text('❌ Close Session', 'cb:auth:fb:cancel');
   return kb;
 }
 

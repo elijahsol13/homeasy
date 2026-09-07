@@ -1438,9 +1438,9 @@ export async function runFacebookScraper(
   if (!fs.existsSync(FB_SESSION_PATH)) {
     console.warn(`\n⚠️  Facebook session not found at: ${FB_SESSION_PATH}`);
     console.warn('👉 Use /auth_fb in Telegram or run "npm run fb:login".\n');
-    const authKb = new InlineKeyboard().text('🔑 Авторизоваться в Facebook', 'admin:auth:fb');
+    const authKb = new InlineKeyboard().text('🔑 Log in to Facebook', 'admin:auth:fb');
     await container.notifierService.notifyAdmins(
-      '⚠️ <b>Facebook session not found.</b>\nНажмите кнопку ниже, чтобы открыть интерактивное окно авторизации через резидентный прокси.',
+      '⚠️ <b>Facebook session not found.</b>\nClick the button below to open an interactive authorization window via residential proxy.',
       authKb,
     );
     return { totalScraped: 0, inserted: 0, duplicates: 0, errors: 1, wireBytesTransferred: 0 };
@@ -1449,7 +1449,7 @@ export async function runFacebookScraper(
   // Check proxy requirement (mandatory to prevent IP bans)
   const proxyResult = parseProxyConfig(env.FB_PROXY);
   if (!proxyResult) {
-    await container.alertService.critical('Отсутствует FB_PROXY. Скрапер Facebook не запущен.');
+    await container.alertService.critical('FB_PROXY is missing. Facebook scraper not started.');
     return { totalScraped: 0, inserted: 0, duplicates: 0, errors: 1, wireBytesTransferred: 0 };
   }
 
@@ -1566,10 +1566,10 @@ export async function runFacebookScraper(
           // Abort all remaining groups immediately to prevent further failures or unproxied leaks
           break;
         } else if (err instanceof FacebookSessionExpiredError) {
-          await container.alertService.critical('<b>Facebook Checkpoint!</b> Скрапер остановлен. Требуется ручная авторизация через /auth_fb');
-          const authKb = new InlineKeyboard().text('🔑 Авторизоваться в Facebook', 'admin:auth:fb');
+          await container.alertService.critical('<b>Facebook Checkpoint!</b> Scraper halted. Manual authorization required via /auth_fb');
+          const authKb = new InlineKeyboard().text('🔑 Log in to Facebook', 'admin:auth:fb');
           await container.notifierService.notifyAdmins(
-            '⚠️ <b>Facebook session expired or blocked.</b>\nНажмите кнопку ниже, чтобы открыть интерактивное окно авторизации через резидентный прокси.',
+            '⚠️ <b>Facebook session expired or blocked.</b>\nClick the button below to open an interactive authorization window via residential proxy.',
             authKb,
           );
           totalErrors++;

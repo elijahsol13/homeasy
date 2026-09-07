@@ -169,7 +169,7 @@ describe('Data Cleanup, Photo Sanitizer & Intelligent Parsing Pipeline', () => {
 
       // Verify alert was sent for admin review
       expect(warnSpy).toHaveBeenCalledWith(
-        expect.stringContaining('Требует ревью (нет фото)'),
+        expect.stringContaining('Needs Review (no photos)'),
       );
 
       warnSpy.mockRestore();
@@ -246,7 +246,7 @@ describe('Data Cleanup, Photo Sanitizer & Intelligent Parsing Pipeline', () => {
 
       expect(res.deactivated).toBe(true);
       expect(res.patch.is_active).toBe(0);
-      expect(res.deactivateReason).toContain('Скрыт из-за кхмерского языка');
+      expect(res.deactivateReason).toContain('Hidden due to excessive Khmer language');
     });
   });
 });

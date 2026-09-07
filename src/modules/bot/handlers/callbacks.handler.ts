@@ -97,7 +97,7 @@ async function route(ctx: MyContext, data: string): Promise<void> {
       '🔍 <b>Find Properties & Create Alerts</b>\n\n' +
         'HomEasy offers two ways to find listings and set alerts:\n\n' +
         '🎙️ <b>AI Voice & Text Search (Instant):</b>\n' +
-        'Simply send a <b>voice message</b> (up to 30s) or type in chat what you need (e.g. <i>"1BR apartment in Wat Bo under $350"</i> or <i>"Сниму виллу в Сиемреапе с бассейном"</i>). Gemini AI will parse your criteria instantly!\n\n' +
+        'Simply send a <b>voice message</b> (up to 30s) or type in chat what you need (e.g. <i>"1BR apartment in Wat Bo under $350"</i> or <i>"2-bedroom villa with private pool in Siem Reap under $800"</i>). Gemini AI will parse your criteria instantly!\n\n' +
         '🛠 <b>Manual Step-by-Step Wizard:</b>\n' +
         'Tap below to configure criteria manually step by step.',
       {

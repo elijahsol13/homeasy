@@ -119,7 +119,7 @@ export function createNLSearchHandler(container: AppContainer): Composer<MyConte
       '🎙️ <b>AI Voice & Text Search</b>\n\n' +
         'Just send me a <b>voice message</b> (up to 30s) or <b>type in chat</b> what you are looking for:\n\n' +
         '• <i>"Looking for a 1-bedroom apartment with pool in Siem Reap under $400"</i>\n' +
-        '• <i>"Сниму виллу с бассейном в Сиемреапе до 800$"</i>\n' +
+        '• <i>"Rent a villa with pool in Siem Reap under $800"</i>\n' +
         '• <i>"Room for rent in Wat Bo under $200"</i>\n\n' +
         '🤖 Gemini AI will understand your criteria, check matching listings in our database, and offer to save an alert!',
       {

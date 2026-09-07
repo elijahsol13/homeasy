@@ -359,7 +359,7 @@ export class IngestionService {
       );
       if (this.alertService) {
         await this.alertService.warn(
-          `<b>Требует ревью (нет фото):</b>\n${clean.title}\n<a href="${clean.original_url}">Оригинал поста</a>`,
+          `<b>Needs Review (no photos):</b>\n${clean.title}\n<a href="${clean.original_url}">Original post</a>`,
         );
       }
     } else {
