@@ -24,7 +24,7 @@ type FlatBtn = { text: string; callback_data?: string; url?: string };
 describe('Telegram Bot Keyboard Generators', () => {
   describe('Main Menu Keyboard', () => {
     test('renders minimal main menu with active alerts', () => {
-      const kb = mainMenuKeyboard(false);
+      const kb = mainMenuKeyboard({ alertsPaused: false, webappUrl: '' });
       const json = kb.inline_keyboard as FlatBtn[][];
 
       expect(json).toBeDefined();
@@ -46,11 +46,19 @@ describe('Telegram Bot Keyboard Generators', () => {
     });
 
     test('renders resume alerts button when alerts are paused', () => {
-      const kb = mainMenuKeyboard(true);
+      const kb = mainMenuKeyboard({ alertsPaused: true, webappUrl: '' });
       const json = kb.inline_keyboard as FlatBtn[][];
 
       expect(json[2][0].text).toBe('▶️ Resume Alerts');
       expect(json[2][0].callback_data).toBe('cb:alerts:resume');
+    });
+
+    test('renders webapp button row when webappUrl is provided', () => {
+      const kb = mainMenuKeyboard({ alertsPaused: false, webappUrl: 'https://homeasy-app.pages.dev' });
+      const json = kb.inline_keyboard as FlatBtn[][];
+
+      expect(json.length).toBe(4);
+      expect(json[0][0].text).toBe('📱 Open App (Map & Catalog)');
     });
   });
 

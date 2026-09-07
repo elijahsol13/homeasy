@@ -129,3 +129,40 @@ function formatSinglePhoneNumber(phone: string): string | null {
   return `+${norm}`;
 }
 
+// ─── Photo Sanitization ───────────────────────────────────────────────────────
+
+const JUNK_PHOTO_PATTERNS: RegExp[] = [
+  /\/p100x100\//i,
+  /\/p160x160\//i,
+  /\/s160x160\//i,
+  /\/c\d+\.\d+\.\d+\.\d+/i,
+  /profile/i,
+  /emoji/i,
+];
+
+/**
+ * Sanitizes an array of photo URLs:
+ * 1. Discards avatars, tiny thumbnails, profile icons, and emoji graphics.
+ * 2. Eliminates duplicates while preserving insertion order.
+ * 3. CRITICAL INVARIANT: The very first valid original post image remains at index 0 (Hero Image).
+ */
+export function cleanPhotoUrls(urls: string[] | undefined | null): string[] {
+  if (!Array.isArray(urls) || urls.length === 0) return [];
+
+  const filtered: string[] = [];
+
+  for (const rawUrl of urls) {
+    if (!rawUrl || typeof rawUrl !== 'string') continue;
+    const url = rawUrl.trim();
+    if (!url.startsWith('http://') && !url.startsWith('https://')) continue;
+
+    const isJunk = JUNK_PHOTO_PATTERNS.some((pattern) => pattern.test(url));
+    if (!isJunk) {
+      filtered.push(url);
+    }
+  }
+
+  // Set maintains insertion order in JavaScript/TypeScript (ES2015+)
+  return Array.from(new Set(filtered));
+}
+

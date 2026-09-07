@@ -127,7 +127,7 @@ export class ScraperWorker {
 
       // Step 2: Enrichment & spam filtering
       console.log('🔍 [Worker] Running database enrichment and spam filtering...');
-      const enrichStats = runEnrichment();
+      const enrichStats = runEnrichment(undefined, this.container.alertService);
       console.log(`✅ [Worker] Enrichment complete. Enriched: ${enrichStats.totalUpdated}, Spam culled: ${enrichStats.deactivatedSpam}`);
 
       // Step 3: Link Health Verification (auto-cull 404s & expired posts)

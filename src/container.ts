@@ -52,7 +52,7 @@ export function createContainer(options?: CreateContainerOptions): AppContainer 
   const notifierService = new NotifierService(options?.api);
   const alertService = new AlertService(options?.api);
   const matcherService = new MatcherService(filtersRepo, usersRepo, propertiesRepo, notifierService);
-  const ingestionService = new IngestionService(propertiesRepo, matcherService);
+  const ingestionService = new IngestionService(propertiesRepo, matcherService, alertService);
   const nlSearchService = new NLSearchService(propertiesRepo, analyticsRepo);
   const linkVerifierService = new LinkVerifierService(propertiesRepo, alertService);
 

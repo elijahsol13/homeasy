@@ -112,6 +112,10 @@ describe('Ingestion & Deduplication Engine', () => {
       deposit: 500,
       min_lease: 6,
       has_pool: true,
+      photos: [
+        `https://example.com/chreav-${uniqueSuffix}-1.jpg`,
+        `https://example.com/chreav-${uniqueSuffix}-2.jpg`,
+      ],
       phone: `+855 ${testPhone.slice(1, 3)} ${testPhone.slice(3, 6)} ${testPhone.slice(6)}`,
       telegram_contact: 'chreavhomes',
       url: `https://example.com/chreav-${uniqueSuffix}`,
@@ -130,6 +134,7 @@ describe('Ingestion & Deduplication Engine', () => {
       expect(saved?.min_lease).toBe(6);
       expect(saved?.deposit).toBe(50000);
       expect(saved?.location).toBe('Chreav');
+      expect(saved?.is_active).toBe(1);
     });
 
     test('flags duplicate when weighted similarity score >= 75 (same agent, near price, same category)', async () => {
@@ -143,6 +148,9 @@ describe('Ingestion & Deduplication Engine', () => {
         bathrooms: 2,
         location: testLocation,
         city: 'siem_reap',
+        photos: [
+          `https://example.com/chreav-${uniqueSuffix}-diff-angle.jpg`,
+        ],
         phone: testPhone, // Same agent phone (+20 pts) -> 90 pts total
         url: `https://example.com/chreav-repost-${uniqueSuffix}`,
       };
@@ -165,6 +173,9 @@ describe('Ingestion & Deduplication Engine', () => {
         bathrooms: 1,
         location: testLocation,
         city: 'siem_reap',
+        photos: [
+          `https://example.com/chreav-${uniqueSuffix}-different.jpg`,
+        ],
         phone: testPhone, // Same agent
         url: `https://example.com/chreav-diff-${uniqueSuffix}`,
       };
