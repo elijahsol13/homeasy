@@ -36,7 +36,7 @@ export function createAdminHandler(container: AppContainer): Composer<MyContext>
     });
   });
 
-  handler.callbackQuery('admin:menu', async (ctx) => {
+  handler.callbackQuery(['admin:menu', 'cb:admin:menu'], async (ctx) => {
     if (!isAdmin(ctx)) {
       await ctx.answerCallbackQuery({ text: '⛔ Admins only', show_alert: true });
       return;
@@ -144,7 +144,7 @@ export function createAdminHandler(container: AppContainer): Composer<MyContext>
     }
   });
 
-  handler.callbackQuery('admin:ingest_help', async (ctx) => {
+  handler.callbackQuery(['admin:ingest_help', 'cb:admin:ingest_help'], async (ctx) => {
     if (!isAdmin(ctx)) {
       await ctx.answerCallbackQuery({ text: '⛔ Admins only', show_alert: true });
       return;
@@ -203,7 +203,7 @@ export function createAdminHandler(container: AppContainer): Composer<MyContext>
     });
   });
 
-  handler.callbackQuery('admin:stats', async (ctx) => {
+  handler.callbackQuery(['admin:stats', 'cb:admin:stats'], async (ctx) => {
     if (!isAdmin(ctx)) {
       await ctx.answerCallbackQuery({ text: '⛔ Admins only', show_alert: true });
       return;
@@ -266,7 +266,7 @@ export function createAdminHandler(container: AppContainer): Composer<MyContext>
     await executeBackup(ctx, waitMsg);
   });
 
-  handler.callbackQuery('admin:backup', async (ctx) => {
+  handler.callbackQuery(['admin:backup', 'cb:admin:backup'], async (ctx) => {
     if (!isAdmin(ctx)) {
       await ctx.answerCallbackQuery({ text: '⛔ Admins only', show_alert: true });
       return;
@@ -338,7 +338,7 @@ export function createAdminHandler(container: AppContainer): Composer<MyContext>
     await executeEnrichment(ctx, waitMsg);
   });
 
-  handler.callbackQuery('admin:enrich', async (ctx) => {
+  handler.callbackQuery(['admin:enrich', 'cb:admin:enrich'], async (ctx) => {
     if (!isAdmin(ctx)) {
       await ctx.answerCallbackQuery({ text: '⛔ Admins only', show_alert: true });
       return;
@@ -425,7 +425,7 @@ export function createAdminHandler(container: AppContainer): Composer<MyContext>
     );
   });
 
-  handler.callbackQuery('admin:auth:fb', async (ctx) => {
+  handler.callbackQuery(['admin:auth:fb', 'cb:admin:auth:fb'], async (ctx) => {
     if (!isAdmin(ctx)) {
       await ctx.answerCallbackQuery({ text: '⛔ Admins only', show_alert: true });
       return;
@@ -448,7 +448,7 @@ export function createAdminHandler(container: AppContainer): Composer<MyContext>
     );
   });
 
-  handler.callbackQuery('admin:auth:k24', async (ctx) => {
+  handler.callbackQuery(['admin:auth:k24', 'cb:admin:auth:k24'], async (ctx) => {
     if (!isAdmin(ctx)) {
       await ctx.answerCallbackQuery({ text: '⛔ Admins only', show_alert: true });
       return;
