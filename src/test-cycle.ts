@@ -20,7 +20,7 @@ async function main() {
   const startTime = Date.now();
   const stats = await runFacebookScraper(container, {
     targets: cycle1Targets,
-    maxScrollsPerGroup: 4,
+    maxScrollsPerGroup: 1,
   });
   const durationSec = Math.round((Date.now() - startTime) / 1000);
 

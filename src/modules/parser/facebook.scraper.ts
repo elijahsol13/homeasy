@@ -801,7 +801,7 @@ export async function scrapeFacebookGroup(
   target: FBGroupTarget,
   maxPosts = 15,
   container?: AppContainer,
-  maxScrolls = 4,
+  maxScrolls = 1,
 ): Promise<ScrapeGroupResult> {
   console.log(`\n🔎 Scraping Facebook Group: [${target.name}]`);
   console.log(`🔗 URL: ${target.url}`);
@@ -1521,7 +1521,7 @@ export async function runFacebookScraper(
       );
     }
 
-    const maxScrolls = options.maxScrollsPerGroup ?? 4;
+    const maxScrolls = options.maxScrollsPerGroup ?? env.FB_MAX_SCROLLS_PER_GROUP ?? 1;
 
     for (let i = 0; i < targets.length; i++) {
       const target = targets[i]!;
