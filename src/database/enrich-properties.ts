@@ -14,7 +14,7 @@
 
 import { createDatabase } from './db';
 import { runMigrations } from './migrate';
-import { cleanPhotoUrls, normalizePhoneNumber } from '../modules/parser/normalizer';
+import { cleanPhotoUrls, extractDirectContacts, formatDomesticPhone, normalizePhoneNumber } from '../modules/parser/normalizer';
 import { extractElectricity, extractWater, isExcessiveKhmer } from '../modules/parser/extractor';
 import { extractCleaning, extractRestrictions } from '../services/notifier';
 import { findLandmarksInText } from '../config/landmarks';
@@ -253,41 +253,24 @@ export function enrichPropertyRecord(prop: PropertyRecord): EnrichmentResult {
     }
   }
 
-  // 7. Contacts recovery
-  let contacts: { phone?: string; telegram?: string } = {};
+  // 7. Contacts recovery & domestic mask normalization (preserving leading 0)
+  let existingContacts: { phone?: string; telegram?: string; whatsapp?: string } = {};
   try {
-    contacts = JSON.parse(prop.direct_contact || '{}');
+    existingContacts = JSON.parse(prop.direct_contact || '{}');
   } catch {
-    contacts = {};
+    existingContacts = {};
   }
 
-  let contactsModified = false;
-  if (!contacts.phone) {
-    const phoneMatch = /(?:\+855|0)\s*[1-9]\d{1,2}[\s.-]?\d{3}[\s.-]?\d{3,4}\b/.exec(text);
-    if (phoneMatch) {
-      const cleanPhone = normalizePhoneNumber(phoneMatch[0]);
-      if (cleanPhone) {
-        contacts.phone = cleanPhone;
-        contactsModified = true;
-      }
-    }
-  }
+  const enrichedContacts = extractDirectContacts(text, {
+    rawPhone: existingContacts.phone,
+    rawTelegram: existingContacts.telegram,
+    rawWhatsapp: existingContacts.whatsapp,
+  });
 
-  if (!contacts.telegram) {
-    const tgMatch = /(?:telegram|tg)\s*(?::|is|=|at)?\s*@?([a-zA-Z0-9_]{5,32})\b/i.exec(text)
-      || /@([a-zA-Z0-9_]{5,32})\b/.exec(text);
-    if (tgMatch?.[1]) {
-      const handle = tgMatch[1].toLowerCase();
-      // Skip common non-usernames
-      if (!['gmail', 'hotmail', 'yahoo', 'facebook', 'khmer24', 'channel'].includes(handle)) {
-        contacts.telegram = `@${tgMatch[1]}`;
-        contactsModified = true;
-      }
-    }
-  }
+  const newContactJson = JSON.stringify(enrichedContacts);
+  const oldContactJson = prop.direct_contact || '{}';
 
-  if (contactsModified) {
-    const newContactJson = JSON.stringify(contacts);
+  if (newContactJson !== oldContactJson) {
     changes.direct_contact = { oldVal: prop.direct_contact, newVal: newContactJson };
     patch.direct_contact = newContactJson;
   }

@@ -86,47 +86,274 @@ export function normalizePhoneNumber(phone: string | undefined | null): string |
 }
 
 /**
- * Formats a Cambodian phone number into a standardized, clean mask:
- * e.g. "85512345678"    -> "+855 12 345 678"
- *      "855969343456"   -> "+855 96 934 3456"
- *      "012345678 / 09693434" -> "+855 12 345 678 / +855 96 934 34"
+ * Extracts Cambodia subscriber digits (without leading 0 and without country code 855).
+ * E.g. "+855 12 345 678" -> "12345678"
+ *      "089 899 084"     -> "89899084"
+ *      "096 934 3456"    -> "969343456"
  */
-export function formatPhoneNumber(phone: string | null | undefined): string | null {
+export function getCambodiaSubscriberDigits(phone: string | null | undefined): string | null {
   if (!phone) return null;
+  let digits = phone.replace(/\D/g, '');
+  if (!digits || digits.length < 7) return null;
 
-  const parts = phone.split(/[/,|\n]+/).map((p) => p.trim()).filter(Boolean);
-  if (parts.length > 1) {
-    const formattedList = parts
-      .map((p) => formatSinglePhoneNumber(p))
-      .filter((p): p is string => Boolean(p));
-    return formattedList.length > 0 ? formattedList.join(' / ') : null;
+  if (digits.startsWith('855')) {
+    digits = digits.slice(3);
+  } else if (digits.startsWith('0')) {
+    digits = digits.slice(1);
   }
 
-  return formatSinglePhoneNumber(phone);
+  return digits.length >= 7 ? digits : null;
 }
 
-function formatSinglePhoneNumber(phone: string): string | null {
-  const norm = normalizePhoneNumber(phone);
-  if (!norm) return null;
+/**
+ * Formats a single Cambodian phone number into domestic format with leading 0:
+ * 9 digits total:  0XX XXX XXX  (e.g. 089 899 084)
+ * 10 digits total: 0XX XXX XXXX (e.g. 096 934 3456)
+ */
+export function formatDomesticSinglePhone(phone: string): string | null {
+  const sub = getCambodiaSubscriberDigits(phone);
+  if (!sub) return null;
 
-  const withoutCc = norm.startsWith('855') ? norm.slice(3) : norm;
+  if (sub.length === 8) {
+    // 8 subscriber digits -> 9 digits with 0: 0XX XXX XXX
+    return `0${sub.slice(0, 2)} ${sub.slice(2, 5)} ${sub.slice(5)}`;
+  }
+  if (sub.length === 9) {
+    // 9 subscriber digits -> 10 digits with 0: 0XX XXX XXXX
+    return `0${sub.slice(0, 2)} ${sub.slice(2, 5)} ${sub.slice(5)}`;
+  }
+  if (sub.length === 7) {
+    return `0${sub.slice(0, 2)} ${sub.slice(2, 5)} ${sub.slice(5)}`;
+  }
+  return `0${sub}`;
+}
 
-  if (withoutCc.length === 8) {
-    // Standard 8-digit mobile: e.g. 12 345 678
-    return `+855 ${withoutCc.slice(0, 2)} ${withoutCc.slice(2, 5)} ${withoutCc.slice(5)}`;
+/**
+ * Formats a single Cambodian phone number into international format:
+ * 9 digits total:  +855 XX XXX XXX  (e.g. +855 89 899 084)
+ * 10 digits total: +855 XX XXX XXXX (e.g. +855 96 934 3456)
+ */
+export function formatInternationalSinglePhone(phone: string): string | null {
+  const sub = getCambodiaSubscriberDigits(phone);
+  if (!sub) return null;
+
+  if (sub.length === 8) {
+    return `+855 ${sub.slice(0, 2)} ${sub.slice(2, 5)} ${sub.slice(5)}`;
+  }
+  if (sub.length === 9) {
+    return `+855 ${sub.slice(0, 2)} ${sub.slice(2, 5)} ${sub.slice(5)}`;
+  }
+  if (sub.length === 7) {
+    return `+855 ${sub.slice(0, 2)} ${sub.slice(2, 5)} ${sub.slice(5)}`;
+  }
+  return `+855 ${sub}`;
+}
+
+/**
+ * Formats Cambodian phone numbers into domestic format (e.g. 089 899 084 / 096 934 3456).
+ * Strictly preserves the leading 0 for 9- and 10-digit Cambodian numbers.
+ */
+export function formatDomesticPhone(phone: string | null | undefined): string | null {
+  if (!phone) return null;
+  const parts = phone.split(/[/,|\n]+/).map((p) => p.trim()).filter(Boolean);
+  if (parts.length > 1) {
+    const list = parts.map(formatDomesticSinglePhone).filter((p): p is string => Boolean(p));
+    return list.length > 0 ? list.join(' / ') : null;
+  }
+  return formatDomesticSinglePhone(phone);
+}
+
+/**
+ * Formats Cambodian phone numbers into international format (e.g. +855 89 899 084 / +855 96 934 3456).
+ */
+export function formatInternationalPhone(phone: string | null | undefined): string | null {
+  if (!phone) return null;
+  const parts = phone.split(/[/,|\n]+/).map((p) => p.trim()).filter(Boolean);
+  if (parts.length > 1) {
+    const list = parts.map(formatInternationalSinglePhone).filter((p): p is string => Boolean(p));
+    return list.length > 0 ? list.join(' / ') : null;
+  }
+  return formatInternationalSinglePhone(phone);
+}
+
+/**
+ * Formats a Cambodian phone number into a standardized mask:
+ * - 'domestic' (default): 0XX XXX XXX or 0XX XXX XXXX
+ * - 'international': +855 XX XXX XXX or +855 XX XXX XXXX
+ * - 'both': 0XX XXX XXX (+855 XX XXX XXX)
+ */
+export function formatPhoneNumber(
+  phone: string | null | undefined,
+  style: 'domestic' | 'international' | 'both' = 'domestic',
+): string | null {
+  if (!phone) return null;
+  if (style === 'international') {
+    return formatInternationalPhone(phone);
+  }
+  if (style === 'both') {
+    const parts = phone.split(/[/,|\n]+/).map((p) => p.trim()).filter(Boolean);
+    const formatted = parts
+      .map((p) => {
+        const dom = formatDomesticSinglePhone(p);
+        const intl = formatInternationalSinglePhone(p);
+        if (dom && intl) return `${dom} (${intl})`;
+        return dom || intl || p;
+      })
+      .filter(Boolean);
+    return formatted.length > 0 ? formatted.join(' / ') : null;
+  }
+  return formatDomesticPhone(phone);
+}
+
+export interface ExtractedContacts {
+  phone?: string;
+  telegram?: string;
+  whatsapp?: string;
+}
+
+/**
+ * Extracts, disambiguates and correlates contact channels (phone, telegram, whatsapp) from raw post text.
+ * - Disambiguates numbers designated for calls vs Telegram vs WhatsApp.
+ * - Formats all phone numbers in Cambodian domestic mask with leading 0 (0XX XXX XXX or 0XX XXX XXXX).
+ */
+export function extractDirectContacts(
+  text: string,
+  seed?: { rawPhone?: string; rawTelegram?: string; rawWhatsapp?: string },
+): ExtractedContacts {
+  const result: ExtractedContacts = {};
+  const cleanText = text || '';
+  const lines = cleanText.split(/\n+/).map((l) => l.trim()).filter(Boolean);
+
+  let extractedTelegram: string | undefined = undefined;
+  let extractedWhatsapp: string | undefined = undefined;
+  const callPhones: string[] = [];
+  const genericPhones: string[] = [];
+
+  // 1. Line-by-line & segment contextual parsing
+  for (const rawLine of lines) {
+    // Split on "/" or "|" when separating distinct labeled items (e.g. Call ... / Telegram ...)
+    const segments = rawLine
+      .split(/\s*[/|]\s*(?=[A-Za-z\u1780-\u17FF]+[:：]|\+?855|0\d)/)
+      .map((s) => s.trim())
+      .filter(Boolean);
+
+    for (const seg of segments) {
+      const isTg = /(?:telegram|tg)\b|តេឡេក្រាម/i.test(seg);
+      const isWa = /(?:whatsapp|whats\s*app|wa)\b/i.test(seg);
+      const isCall = /(?:tel|call|phone|mobile|cellcard|smart|metfone|contact)\b|ទូរស័ព្ទ|ទំនាក់ទំនង/i.test(seg);
+
+      const phoneMatches = seg.match(/(?:\+?855|0)[1-9]\d{1,2}[\s.-]?\d{3}[\s.-]?\d{3,4}\b/g) || [];
+      const tgLinkMatch = /https?:\/\/t\.me\/([a-zA-Z0-9_+]+)/i.exec(seg);
+      const tgAtMatch = /@([a-zA-Z0-9_]{4,32})\b/.exec(seg);
+      const waLinkMatch = /https?:\/\/wa\.me\/([0-9+]+)/i.exec(seg);
+
+      if (isTg) {
+        if (tgLinkMatch?.[1]) {
+          extractedTelegram = `@${tgLinkMatch[1]}`;
+        } else if (tgAtMatch?.[1] && !['gmail', 'yahoo', 'hotmail'].includes(tgAtMatch[1].toLowerCase())) {
+          extractedTelegram = `@${tgAtMatch[1]}`;
+        } else if (phoneMatches.length > 0) {
+          const dom = formatDomesticPhone(phoneMatches[0]);
+          if (dom) extractedTelegram = dom;
+        }
+      }
+
+      if (isWa) {
+        if (waLinkMatch?.[1]) {
+          const dom = formatDomesticPhone(waLinkMatch[1]);
+          if (dom) extractedWhatsapp = dom;
+        } else if (phoneMatches.length > 0) {
+          const dom = formatDomesticPhone(phoneMatches[0]);
+          if (dom) extractedWhatsapp = dom;
+        }
+      }
+
+      if (isCall) {
+        for (const p of phoneMatches) {
+          const dom = formatDomesticPhone(p);
+          if (dom && !callPhones.includes(dom)) {
+            callPhones.push(dom);
+          }
+        }
+      } else if (!isTg && !isWa) {
+        for (const p of phoneMatches) {
+          const dom = formatDomesticPhone(p);
+          if (dom && !genericPhones.includes(dom)) {
+            genericPhones.push(dom);
+          }
+        }
+      }
+    }
   }
 
-  if (withoutCc.length === 9) {
-    // 9-digit mobile: e.g. 96 934 3456
-    return `+855 ${withoutCc.slice(0, 2)} ${withoutCc.slice(2, 5)} ${withoutCc.slice(5)}`;
+  // 2. Inline suffix pattern check across whole text:
+  // e.g. "012 345 678 (Call) / 098 765 432 (Telegram)"
+  const suffixTgMatch = /((?:\+?855|0)[1-9]\d{1,2}[\s.-]?\d{3}[\s.-]?\d{3,4})\s*\((?:telegram|tg|t\.me)\)/i.exec(cleanText);
+  if (suffixTgMatch?.[1] && !extractedTelegram) {
+    const dom = formatDomesticPhone(suffixTgMatch[1]);
+    if (dom) extractedTelegram = dom;
   }
 
-  if (withoutCc.length === 7) {
-    // 7-digit landline: e.g. 23 888 999
-    return `+855 ${withoutCc.slice(0, 2)} ${withoutCc.slice(2, 5)} ${withoutCc.slice(5)}`;
+  const suffixWaMatch = /((?:\+?855|0)[1-9]\d{1,2}[\s.-]?\d{3}[\s.-]?\d{3,4})\s*\((?:whatsapp|wa)\)/i.exec(cleanText);
+  if (suffixWaMatch?.[1] && !extractedWhatsapp) {
+    const dom = formatDomesticPhone(suffixWaMatch[1]);
+    if (dom) extractedWhatsapp = dom;
   }
 
-  return `+${norm}`;
+  const suffixCallMatch = /((?:\+?855|0)[1-9]\d{1,2}[\s.-]?\d{3}[\s.-]?\d{3,4})\s*\((?:call|tel|phone|voice)\)/i.exec(cleanText);
+  if (suffixCallMatch?.[1]) {
+    const dom = formatDomesticPhone(suffixCallMatch[1]);
+    if (dom && !callPhones.includes(dom)) callPhones.push(dom);
+  }
+
+  // 3. Check for global @handle or t.me link if Telegram not yet found
+  if (!extractedTelegram) {
+    const globalTgLink = /https?:\/\/t\.me\/([a-zA-Z0-9_+]+)/i.exec(cleanText);
+    if (globalTgLink?.[1]) {
+      extractedTelegram = `@${globalTgLink[1]}`;
+    } else {
+      const globalTgAt = /@([a-zA-Z0-9_]{5,32})\b/.exec(cleanText);
+      if (globalTgAt?.[1] && !['gmail', 'hotmail', 'yahoo', 'facebook', 'khmer24', 'channel'].includes(globalTgAt[1].toLowerCase())) {
+        extractedTelegram = `@${globalTgAt[1]}`;
+      }
+    }
+  }
+
+  // 4. Resolve primary phone(s)
+  const candidatePhones = callPhones.length > 0 ? callPhones : genericPhones;
+
+  // Filter out numbers that are designated for Telegram or WhatsApp if other numbers exist
+  const nonChatPhones = candidatePhones.filter((p) => p !== extractedTelegram && p !== extractedWhatsapp);
+  let resolvedPhones = nonChatPhones.length > 0 ? nonChatPhones : candidatePhones;
+
+  // Incorporate seed if text did not yield phone/telegram/whatsapp
+  if (seed?.rawPhone) {
+    const domSeed = formatDomesticPhone(seed.rawPhone);
+    if (domSeed && !resolvedPhones.includes(domSeed)) {
+      if (resolvedPhones.length === 0) {
+        resolvedPhones.push(domSeed);
+      }
+    }
+  }
+
+  if (seed?.rawTelegram && !extractedTelegram) {
+    extractedTelegram = seed.rawTelegram;
+  }
+  if (seed?.rawWhatsapp && !extractedWhatsapp) {
+    extractedWhatsapp = seed.rawWhatsapp;
+  }
+
+  if (resolvedPhones.length > 0) {
+    result.phone = resolvedPhones.join(' / ');
+  }
+  if (extractedTelegram) {
+    result.telegram = extractedTelegram;
+  }
+  if (extractedWhatsapp) {
+    result.whatsapp = extractedWhatsapp;
+  }
+
+  return result;
 }
 
 // ─── Photo Sanitization ───────────────────────────────────────────────────────

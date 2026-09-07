@@ -121,7 +121,7 @@ describe('Database Enrichment & Backfill Engine', () => {
       const res = enrichPropertyRecord(prop);
       expect(res.patch.direct_contact).toBeDefined();
       const parsed = JSON.parse(res.patch.direct_contact as string);
-      expect(parsed.phone).toBe('85512888999');
+      expect(parsed.phone).toBe('012 888 999');
       expect(parsed.telegram).toBe('@sr_agent');
     });
 

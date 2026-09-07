@@ -1,5 +1,11 @@
 import { computeHammingDistance } from '../src/modules/parser/phash';
-import { normalizePhoneNumber, formatPhoneNumber } from '../src/modules/parser/normalizer';
+import {
+  normalizePhoneNumber,
+  formatPhoneNumber,
+  formatDomesticPhone,
+  formatInternationalPhone,
+  extractDirectContacts,
+} from '../src/modules/parser/normalizer';
 import { parseCustomBudgetInput } from '../src/modules/bot/handlers/filters.handler';
 import { createContainer, type AppContainer } from '../src/container';
 import { runMigrations } from '../src/database/migrate';
@@ -47,14 +53,90 @@ describe('Ingestion & Deduplication Engine', () => {
       expect(normalizePhoneNumber('123')).toBeNull();
     });
 
-    test('formats phone into clean Cambodian international mask', () => {
-      expect(formatPhoneNumber('85512345678')).toBe('+855 12 345 678');
-      expect(formatPhoneNumber('012-345-678')).toBe('+855 12 345 678');
-      expect(formatPhoneNumber('+855 96 934 3456')).toBe('+855 96 934 3456');
+    test('formats domestic phone mask preserving leading 0 (0XX XXX XXX and 0XX XXX XXXX)', () => {
+      // 9 digits (0XX XXX XXX)
+      expect(formatDomesticPhone('089899084')).toBe('089 899 084');
+      expect(formatDomesticPhone('089 899 084')).toBe('089 899 084');
+      expect(formatDomesticPhone('+855 89 899 084')).toBe('089 899 084');
+      expect(formatDomesticPhone('85589899084')).toBe('089 899 084');
+
+      // 10 digits (0XX XXX XXXX)
+      expect(formatDomesticPhone('0969343456')).toBe('096 934 3456');
+      expect(formatDomesticPhone('096 934 3456')).toBe('096 934 3456');
+      expect(formatDomesticPhone('+855 96 934 3456')).toBe('096 934 3456');
+      expect(formatDomesticPhone('855969343456')).toBe('096 934 3456');
+    });
+
+    test('formats international phone mask (+855 XX XXX XXX and +855 XX XXX XXXX)', () => {
+      // 9 digits (+855 XX XXX XXX)
+      expect(formatInternationalPhone('089899084')).toBe('+855 89 899 084');
+      expect(formatInternationalPhone('+855 89 899 084')).toBe('+855 89 899 084');
+      expect(formatInternationalPhone('85512345678')).toBe('+855 12 345 678');
+
+      // 10 digits (+855 XX XXX XXXX)
+      expect(formatInternationalPhone('0969343456')).toBe('+855 96 934 3456');
+      expect(formatInternationalPhone('+855 96 934 3456')).toBe('+855 96 934 3456');
+    });
+
+    test('formatPhoneNumber supports domestic, international, and both styles', () => {
+      expect(formatPhoneNumber('089899084', 'domestic')).toBe('089 899 084');
+      expect(formatPhoneNumber('089899084', 'international')).toBe('+855 89 899 084');
+      expect(formatPhoneNumber('089899084', 'both')).toBe('089 899 084 (+855 89 899 084)');
     });
 
     test('formats multiple phone numbers in one string', () => {
-      expect(formatPhoneNumber('012345678 / 0969343456')).toBe('+855 12 345 678 / +855 96 934 3456');
+      expect(formatDomesticPhone('012345678 / 0969343456')).toBe('012 345 678 / 096 934 3456');
+      expect(formatInternationalPhone('012345678 / 0969343456')).toBe('+855 12 345 678 / +855 96 934 3456');
+    });
+  });
+
+  describe('Contact Channel Disambiguation & Correlation', () => {
+    test('disambiguates distinct Call, Telegram and WhatsApp numbers', () => {
+      const text = `
+        1 Bedroom Apartment for rent
+        Price: $350/mo
+        Location: Toul Tom Poung
+        Tel: 012 345 678
+        Telegram: 098 765 432
+        WhatsApp: 098 765 432
+      `;
+      const contacts = extractDirectContacts(text);
+      expect(contacts.phone).toBe('012 345 678');
+      expect(contacts.telegram).toBe('098 765 432');
+      expect(contacts.whatsapp).toBe('098 765 432');
+    });
+
+    test('handles inline suffix format (Call) / (Telegram)', () => {
+      const text = 'Modern Villa $600/mo. Smart: 096 934 3456 (Call) / Cellcard: 012 888 999 (Telegram)';
+      const contacts = extractDirectContacts(text);
+      expect(contacts.phone).toBe('096 934 3456');
+      expect(contacts.telegram).toBe('012 888 999');
+    });
+
+    test('extracts Telegram @username and separates from phone', () => {
+      const text = 'Apartment in BKK1. Contact: 089 899 084, Telegram: @cambodia_realtor';
+      const contacts = extractDirectContacts(text);
+      expect(contacts.phone).toBe('089 899 084');
+      expect(contacts.telegram).toBe('@cambodia_realtor');
+    });
+
+    test('extracts Khmer labeled contact numbers', () => {
+      const text = `
+        ផ្ទះជួលស្អាត
+        តម្លៃ 250$
+        លេខទូរស័ព្ទ៖ 012 333 444
+        តេឡេក្រាម៖ 097 555 6666
+      `;
+      const contacts = extractDirectContacts(text);
+      expect(contacts.phone).toBe('012 333 444');
+      expect(contacts.telegram).toBe('097 555 6666');
+    });
+
+    test('extracts single unlabelled phone number into phone', () => {
+      const text = 'Cozy studio for rent $180/mo. 089 899 084';
+      const contacts = extractDirectContacts(text);
+      expect(contacts.phone).toBe('089 899 084');
+      expect(contacts.telegram).toBeUndefined();
     });
   });
 

@@ -55,9 +55,9 @@ describe('Dynamic Telegram Listing Card Formatter', () => {
     // Should contain essentials
     expect(card).toContain('🏠 <b>Modern House in Siem Reap</b>');
     expect(card).toContain('💰 <b>$350/mo</b>');
-    expect(card).toContain('📍 <b>Svay Dangkum</b>, Siem Reap');
-    expect(card).toContain('📞 Phone: <code>+855 89 899 084</code>');
+    expect(card).toContain('📞 Phone: <code>089 899 084</code> (<code>+855 89 899 084</code>)');
     expect(card).toContain('🔗 Source:');
+    expect(card).not.toContain('👤 <b>Contact:</b>');
   });
 
   test('dynamically includes only present features and terms', () => {
@@ -122,7 +122,7 @@ describe('Dynamic Telegram Listing Card Formatter', () => {
     expect(card).toContain('🕒 Added: Today at');
 
     const timestampIndex = card.indexOf('🕒 Added:');
-    const contactIndex = card.indexOf('👤 <b>Contact:</b>');
+    const contactIndex = card.indexOf('📞 Phone:');
     expect(timestampIndex).toBeGreaterThan(0);
     expect(contactIndex).toBeGreaterThan(timestampIndex);
 

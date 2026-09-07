@@ -61,6 +61,7 @@ export const CleanPropertySchema = z.object({
     .object({
       phone: z.string().optional(),
       telegram: z.string().optional(),
+      whatsapp: z.string().optional(),
     })
     .default({}),
   original_url: z.string().default(''),
