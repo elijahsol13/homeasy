@@ -57,6 +57,10 @@ export async function attachTrafficGuard(
       url.includes('pixel') ||
       url.includes('video') ||
       url.includes('audio') ||
+      url.includes('falco') ||
+      url.includes('browser/error') ||
+      url.includes('speed/') ||
+      url.includes('graph.facebook.com/logging') ||
       extraBlockedPatterns.some((pattern) => url.includes(pattern))
     ) {
       return route.abort();

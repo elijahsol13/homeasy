@@ -16,8 +16,8 @@ export async function runScraper(): Promise<void> {
   const container = createContainer();
   runMigrations(container.db);
 
-  // 2. Start sequential scraper worker (12 min cycle interval default)
-  startWorker(container, 12);
+  // 2. Start sequential scraper worker (default: 45 min for proxy conservation)
+  startWorker(container, env.SCRAPER_CYCLE_PAUSE_MINUTES);
 
   // 3. Graceful shutdown on SIGINT / SIGTERM
   const shutdown = (signal: string) => {

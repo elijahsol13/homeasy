@@ -51,7 +51,7 @@ export class ScraperWorker {
 
   constructor(
     private readonly container: AppContainer,
-    private readonly cyclePauseMs = 12 * 60 * 1000, // 12 minutes default
+    private readonly cyclePauseMs = (env.SCRAPER_CYCLE_PAUSE_MINUTES ?? 45) * 60 * 1000, // 45 minutes default for proxy conservation
   ) {}
 
   private triggerGc(taskName: string): void {
@@ -413,7 +413,7 @@ let activeWorkerInstance: ScraperWorker | null = null;
  * Starts the sequential scraper worker.
  * @param pauseMinutes Time in minutes to pause between scraping cycles (default: 12m).
  */
-export function startWorker(container: AppContainer, pauseMinutes = 12): ScraperWorker {
+export function startWorker(container: AppContainer, pauseMinutes = env.SCRAPER_CYCLE_PAUSE_MINUTES ?? 45): ScraperWorker {
   if (activeWorkerInstance) {
     console.log('⚠️ [Worker] Worker already running.');
     return activeWorkerInstance;
