@@ -14,6 +14,7 @@ export interface FilterDraft {
   bedrooms?: number[] | null;
   requires_pool?: boolean;
   min_lease_preferred?: number | null;
+  primary_landmark?: string | null;
 }
 
 // ─── Wizard steps ─────────────────────────────────────────────────────────────
