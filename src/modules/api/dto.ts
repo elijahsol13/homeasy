@@ -67,6 +67,10 @@ export interface MapMarkerDTO {
   thumbnail: string | null;
   coordinates: { lat: number; lng: number } | null;
   mapsUrl: string | null;
+  isExact: boolean;
+  count?: number;
+  minPriceUsd?: number;
+  maxPriceUsd?: number;
 }
 
 /**
@@ -93,10 +97,6 @@ export function toPropertyDTO(property: Property, isFavorite?: boolean): Propert
     if (rawCoords) {
       coords = { lat: rawCoords.latitude, lng: rawCoords.longitude };
     }
-  }
-
-  if (!coords) {
-    coords = getFallbackCoordinates(property.location, property.city, property.id);
   }
 
   // Build clean contact links
@@ -172,13 +172,9 @@ export function toMapMarkerDTO(property: Property): MapMarkerDTO {
     }
   }
 
-  if (!coords) {
-    coords = getFallbackCoordinates(property.location, property.city, property.id);
-  }
-
   return {
     id: property.id,
-    title: property.title || `${propertyType} in ${property.location}`,
+    title: property.title || `${propertyType} in ${property.location || property.city}`,
     priceUsd: Math.round(property.price / 100),
     category: property.category,
     propertyType,
@@ -189,5 +185,41 @@ export function toMapMarkerDTO(property: Property): MapMarkerDTO {
     thumbnail: property.photos && property.photos.length > 0 ? property.photos[0] : null,
     coordinates: coords,
     mapsUrl: property.maps_url,
+    isExact: coords !== null,
+  };
+}
+
+/**
+ * Transforms an aggregated Sangkat cluster into a MapMarkerDTO with count and price range.
+ */
+export function toSangkatClusterDTO(
+  cluster: {
+    location: string;
+    count: number;
+    minPriceUsd: number;
+    maxPriceUsd: number;
+    lat: number;
+    lng: number;
+  },
+  city: string,
+  index: number,
+): MapMarkerDTO {
+  return {
+    id: -(index + 1),
+    title: cluster.location,
+    priceUsd: cluster.minPriceUsd,
+    category: null,
+    propertyType: 'Neighborhood Cluster',
+    bedrooms: null,
+    location: cluster.location,
+    city,
+    hasPool: false,
+    thumbnail: null,
+    coordinates: { lat: cluster.lat, lng: cluster.lng },
+    mapsUrl: null,
+    isExact: false,
+    count: cluster.count,
+    minPriceUsd: cluster.minPriceUsd,
+    maxPriceUsd: cluster.maxPriceUsd,
   };
 }

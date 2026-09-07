@@ -1,6 +1,6 @@
 import type { DatabaseSync } from 'node:sqlite';
 import type { CityKey, PropertyCategory } from '../../config/settings';
-import { extractCoordinatesFromMapsUrl } from '../../config/locations';
+import { extractCoordinatesFromMapsUrl, getSangkatCentroid } from '../../config/locations';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -202,6 +202,16 @@ export class PropertiesRepository {
         : '[]';
     const petFriendlyVal = input.pet_friendly ? 1 : 0;
 
+    let lat = input.latitude ?? null;
+    let lng = input.longitude ?? null;
+    if ((lat === null || lng === null) && input.maps_url) {
+      const coords = extractCoordinatesFromMapsUrl(input.maps_url);
+      if (coords) {
+        lat = coords.latitude;
+        lng = coords.longitude;
+      }
+    }
+
     const result = this.db
       .prepare(
         `INSERT INTO properties
@@ -242,8 +252,8 @@ export class PropertiesRepository {
         petFriendlyVal,
         input.primary_landmark ?? null,
         landmarksJson,
-        input.latitude ?? null,
-        input.longitude ?? null,
+        lat,
+        lng,
       );
 
     const row = this.db
@@ -584,7 +594,7 @@ export class PropertiesRepository {
       bounds?: MapBoundingBox;
     } = {},
   ): Property[] {
-    const whereClauses: string[] = ['is_active = 1', 'city = ?'];
+    const whereClauses: string[] = ['is_active = 1', 'city = ?', 'latitude IS NOT NULL', 'longitude IS NOT NULL'];
     const params: Array<string | number> = [city];
 
     if (options.category) {
@@ -607,8 +617,6 @@ export class PropertiesRepository {
       const queryMaxLng = Math.max(minLng, maxLng) + lngDelta;
 
       whereClauses.push(
-        'latitude IS NOT NULL',
-        'longitude IS NOT NULL',
         'latitude >= ?',
         'latitude <= ?',
         'longitude >= ?',
@@ -621,6 +629,102 @@ export class PropertiesRepository {
     const sql = `SELECT * FROM properties WHERE ${whereClauses.join(' AND ')} ORDER BY COALESCE(posted_at, created_at) DESC LIMIT ?`;
     const rows = this.db.prepare(sql).all(...params, limit) as unknown as PropertyRow[];
     return rows.map(rowToProperty);
+  }
+
+  /**
+   * Aggregates listings without exact GPS pins by Sangkat / neighborhood,
+   * returning clean centroids with listing counts and price ranges.
+   */
+  getSangkatClustersForMap(
+    city: CityKey,
+    options: {
+      category?: string;
+      type?: 'rent' | 'sale';
+      bounds?: MapBoundingBox;
+    } = {},
+  ): Array<{
+    location: string;
+    count: number;
+    minPriceUsd: number;
+    maxPriceUsd: number;
+    lat: number;
+    lng: number;
+  }> {
+    const whereClauses: string[] = ['is_active = 1', 'city = ?', '(latitude IS NULL OR longitude IS NULL)', "location != ''"];
+    const params: Array<string | number> = [city];
+
+    if (options.category) {
+      whereClauses.push('category = ?');
+      params.push(options.category);
+    }
+    if (options.type) {
+      whereClauses.push('type = ?');
+      params.push(options.type);
+    }
+
+    const sql = `
+      SELECT location, COUNT(*) as count, MIN(price) as min_price, MAX(price) as max_price
+      FROM properties
+      WHERE ${whereClauses.join(' AND ')}
+      GROUP BY location
+      ORDER BY count DESC
+    `;
+
+    const rows = this.db.prepare(sql).all(...params) as Array<{
+      location: string;
+      count: number;
+      min_price: number;
+      max_price: number;
+    }>;
+
+    let queryMinLat = -90;
+    let queryMaxLat = 90;
+    let queryMinLng = -180;
+    let queryMaxLng = 180;
+
+    if (options.bounds) {
+      const { minLat, maxLat, minLng, maxLng, paddingRatio = 0.2 } = options.bounds;
+      const latDelta = Math.abs(maxLat - minLat) * paddingRatio;
+      const lngDelta = Math.abs(maxLng - minLng) * paddingRatio;
+      queryMinLat = Math.min(minLat, maxLat) - latDelta;
+      queryMaxLat = Math.max(minLat, maxLat) + latDelta;
+      queryMinLng = Math.min(minLng, maxLng) - lngDelta;
+      queryMaxLng = Math.max(minLng, maxLng) + lngDelta;
+    }
+
+    const clusters: Array<{
+      location: string;
+      count: number;
+      minPriceUsd: number;
+      maxPriceUsd: number;
+      lat: number;
+      lng: number;
+    }> = [];
+
+    for (const r of rows) {
+      const centroid = getSangkatCentroid(r.location, city);
+      if (options.bounds) {
+        if (
+          centroid.lat < queryMinLat ||
+          centroid.lat > queryMaxLat ||
+          centroid.lng < queryMinLng ||
+          centroid.lng > queryMaxLng
+        ) {
+          continue;
+        }
+      }
+
+      clusters.push({
+        location: r.location,
+        count: r.count,
+        minPriceUsd: Math.round(r.min_price / 100),
+        maxPriceUsd: Math.round(r.max_price / 100),
+        lat: centroid.lat,
+        lng: centroid.lng,
+      });
+    }
+
+    return clusters;
   }
 
   /**
