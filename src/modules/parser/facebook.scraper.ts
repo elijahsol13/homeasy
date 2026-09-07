@@ -789,13 +789,20 @@ export function extractPostsFromFbGraphQL(
 
 // ─── Group Scraper ────────────────────────────────────────────────────────────
 
+export interface ScrapeGroupResult {
+  listings: RawListing[];
+  wireBytes: number;
+  cachedHits: number;
+  networkHits: number;
+}
+
 export async function scrapeFacebookGroup(
   context: BrowserContext,
   target: FBGroupTarget,
   maxPosts = 15,
   container?: AppContainer,
   maxScrolls = 4,
-): Promise<RawListing[]> {
+): Promise<ScrapeGroupResult> {
   console.log(`\n🔎 Scraping Facebook Group: [${target.name}]`);
   console.log(`🔗 URL: ${target.url}`);
 
@@ -804,6 +811,26 @@ export async function scrapeFacebookGroup(
   const seenUrls = new Set<string>();
   const seenPostIds = new Set<string>();
   const interceptedPosts: ParsedFbGraphQLPost[] = [];
+
+  let groupWireBytes = 0;
+  let cachedHits = 0;
+  let networkHits = 0;
+
+  try {
+    const cdp = await context.newCDPSession(page);
+    await cdp.send('Network.enable');
+    cdp.on('Network.loadingFinished', (params: { encodedDataLength?: number }) => {
+      const bytes = params.encodedDataLength || 0;
+      groupWireBytes += bytes;
+      if (bytes === 0) {
+        cachedHits++;
+      } else {
+        networkHits++;
+      }
+    });
+  } catch {
+    // CDP fallback
+  }
 
   try {
     // 🛡️ IRONCLAD RULE: Block all heavy media, images, stylesheets, and telemetry over proxy
@@ -1121,8 +1148,19 @@ export async function scrapeFacebookGroup(
     await page.close().catch(() => {});
   }
 
+  const groupKb = Math.round(groupWireBytes / 1024);
+  const groupMb = (groupWireBytes / 1024 / 1024).toFixed(2);
   console.log(`  ✅ Extracted ${listings.length} posts from [${target.name}]`);
-  return listings;
+  console.log(
+    `  📊 [Proxy Traffic] [${target.name}]: ${groupMb} MB (${groupKb} KB) wire data (${networkHits} net requests, ${cachedHits} from disk cache)`,
+  );
+
+  return {
+    listings,
+    wireBytes: groupWireBytes,
+    cachedHits,
+    networkHits,
+  };
 }
 
 /**
@@ -1387,6 +1425,7 @@ export async function runFacebookScraper(
   inserted: number;
   duplicates: number;
   errors: number;
+  wireBytesTransferred: number;
 }> {
   console.log('═══════════════════════════════════════════════════════════════');
   console.log('🤖 Facebook Groups Real Estate Scraper — HomEasy');
@@ -1404,20 +1443,21 @@ export async function runFacebookScraper(
       '⚠️ <b>Facebook session not found.</b>\nНажмите кнопку ниже, чтобы открыть интерактивное окно авторизации через резидентный прокси.',
       authKb,
     );
-    return { totalScraped: 0, inserted: 0, duplicates: 0, errors: 1 };
+    return { totalScraped: 0, inserted: 0, duplicates: 0, errors: 1, wireBytesTransferred: 0 };
   }
 
   // Check proxy requirement (mandatory to prevent IP bans)
   const proxyResult = parseProxyConfig(env.FB_PROXY);
   if (!proxyResult) {
     await container.alertService.critical('Отсутствует FB_PROXY. Скрапер Facebook не запущен.');
-    return { totalScraped: 0, inserted: 0, duplicates: 0, errors: 1 };
+    return { totalScraped: 0, inserted: 0, duplicates: 0, errors: 1, wireBytesTransferred: 0 };
   }
 
   let totalScraped = 0;
   let totalInserted = 0;
   let totalDuplicates = 0;
   let totalErrors = 0;
+  let totalWireBytes = 0;
   let context: BrowserContext | null = null;
 
   try {
@@ -1487,7 +1527,9 @@ export async function runFacebookScraper(
       const target = targets[i]!;
 
       try {
-        const listings = await scrapeFacebookGroup(context, target, 10, container, maxScrolls);
+        const groupResult = await scrapeFacebookGroup(context, target, 10, container, maxScrolls);
+        const listings = groupResult.listings;
+        totalWireBytes += groupResult.wireBytes;
         totalScraped += listings.length;
 
         console.log(`\n📥 Ingesting ${listings.length} listings from [${target.name}]...`);
@@ -1563,12 +1605,16 @@ export async function runFacebookScraper(
     await container.notifierService.flushNotificationQueue().catch((err) => console.error('[Notifier] Flush error:', err));
   }
 
+  const totalMb = (totalWireBytes / 1024 / 1024).toFixed(2);
+  const totalKb = Math.round(totalWireBytes / 1024);
+
   console.log('\n═══════════════════════════════════════════════════════════════');
   console.log('📊 Facebook Scraper Summary:');
-  console.log(`   Total Scraped : ${totalScraped}`);
-  console.log(`   ✅ Inserted   : ${totalInserted}`);
-  console.log(`   🔁 Duplicates : ${totalDuplicates}`);
-  console.log(`   ❌ Errors     : ${totalErrors}`);
+  console.log(`   Total Scraped      : ${totalScraped}`);
+  console.log(`   ✅ Inserted        : ${totalInserted}`);
+  console.log(`   🔁 Duplicates      : ${totalDuplicates}`);
+  console.log(`   ❌ Errors          : ${totalErrors}`);
+  console.log(`   🌐 Proxy Wire Data : ${totalMb} MB (${totalKb} KB)`);
   console.log('═══════════════════════════════════════════════════════════════\n');
 
   return {
@@ -1576,6 +1622,7 @@ export async function runFacebookScraper(
     inserted: totalInserted,
     duplicates: totalDuplicates,
     errors: totalErrors,
+    wireBytesTransferred: totalWireBytes,
   };
 }
 
