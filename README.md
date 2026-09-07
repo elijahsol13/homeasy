@@ -163,6 +163,11 @@ npm run reparse:listings -- --khmer24    # Update Khmer24 listings with all full
 # Local manual Facebook login through residential proxy
 npm run fb:login
 
+# Telegram Webhook Management (with secret_token protection)
+npm run webhook:info                     # Check current webhook URL, error state & pending updates
+npm run webhook:set -- <url> [secret]    # Register webhook with X-Telegram-Bot-Api-Secret-Token
+npm run webhook:delete                  # Clear webhook and revert to long-polling mode
+
 # Start all services with Docker Compose
 docker compose up -d --build
 ```
@@ -173,3 +178,4 @@ docker compose up -d --build
 1. **Token Authentication**: Remote browser session tokens are cryptographically signed using HMAC-SHA256 with the bot token secret and have a strict 15-minute validity window.
 2. **RAM Guardrails**: `docker-compose.yml` enforces strict memory constraints (API: 150M, Bot: 200M, Scraper: 750M) to guarantee stability on 1 GB RAM servers (such as AWS t3.micro).
 3. **Scraper Safety**: Upon detecting checkpoints, CAPTCHA challenges, or session invalidation, the scraper halts execution immediately and delivers an actionable alert to administrators.
+4. **Webhook `secret_token` Invariant**: When running in webhook mode, the endpoint (`/api/v1/telegram/webhook`) enforces timing-safe verification of the `X-Telegram-Bot-Api-Secret-Token` header configured during `setWebhook`. Any request lacking this header or carrying an invalid token is aborted with `401 Unauthorized` before body parsing or bot handler execution, neutralizing spoofed JSON payloads.

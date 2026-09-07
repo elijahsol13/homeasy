@@ -33,6 +33,8 @@ const EnvSchema = z.object({
   FB_PROXY: z.string().optional(),
   POSTHOG_API_KEY: z.string().optional(),
   POSTHOG_HOST: z.string().default('https://eu.i.posthog.com'),
+  TELEGRAM_WEBHOOK_URL: z.string().optional(),
+  TELEGRAM_WEBHOOK_SECRET: z.string().optional(),
 });
 
 const result = EnvSchema.safeParse(process.env);

@@ -9,6 +9,7 @@ import { propertiesRoutes } from './routes/properties.routes';
 import { filtersRoutes } from './routes/filters.routes';
 import { favoritesRoutes } from './routes/favorites.routes';
 import { remoteBrowserRoutes } from './routes/remote-browser.routes';
+import { webhookRoutes } from './routes/webhook.routes';
 
 export interface BuildServerOptions {
   container: AppContainer;
@@ -72,6 +73,7 @@ export async function buildApiServer(options: BuildServerOptions): Promise<Fasti
   await app.register(filtersRoutes, { container });
   await app.register(favoritesRoutes, { container });
   await app.register(remoteBrowserRoutes, { container });
+  await app.register(webhookRoutes, { container });
 
   // Custom 404 handler
   app.setNotFoundHandler((request, reply) => {
