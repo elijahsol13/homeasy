@@ -12,6 +12,7 @@ import { AlertService } from './services/alert.service';
 import { MatcherService } from './modules/matcher/matcher';
 import { IngestionService } from './modules/parser/ingestor';
 import { RemoteBrowserService } from './services/remote-browser.service';
+import { TelegramAuthService } from './services/telegram-auth.service';
 import { NLSearchService } from './services/nl-search.service';
 import { LinkVerifierService } from './services/link-verifier.service';
 
@@ -27,6 +28,7 @@ export interface AppContainer {
   matcherService: MatcherService;
   ingestionService: IngestionService;
   remoteBrowserService: RemoteBrowserService;
+  telegramAuthService: TelegramAuthService;
   alertService: AlertService;
   nlSearchService: NLSearchService;
   linkVerifierService: LinkVerifierService;
@@ -73,6 +75,7 @@ export function createContainer(options?: CreateContainerOptions): AppContainer 
   } as AppContainer;
 
   container.remoteBrowserService = new RemoteBrowserService(container);
+  container.telegramAuthService = new TelegramAuthService(container);
 
   return container;
 }

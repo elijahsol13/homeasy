@@ -384,18 +384,21 @@ export function createAdminHandler(container: AppContainer): Composer<MyContext>
     const fromId = ctx.from!.id;
     const url = getBrowserAuthUrl(fromId, 'facebook');
     const kb = new InlineKeyboard()
-      .url('🌐 Open Facebook Browser', url)
+      .text('💬 Auth in Telegram Chat (Recommended)', 'cb:admin:auth:fb_chat')
+      .row()
+      .url('🌐 Open Web Browser Stream', url)
+      .row()
+      .text('📥 Import fb_session.json', 'cb:admin:auth:fb_import')
       .row()
       .text('◀️ Admin Menu', 'cb:admin:menu');
 
     await ctx.reply(
-      '🔐 <b>Facebook Remote Authorization (via Residential Proxy)</b>\n\n' +
-        'Click the button below to launch an interactive browser session in your mobile browser:\n' +
-        '• Session runs securely on the server through the residential proxy (`FB_PROXY`).\n' +
-        '• Enter your credentials and complete 2FA if prompted.\n' +
-        '• Once logged in, session cookies are automatically persisted on the server.\n\n' +
-        `Direct Link:\n<code>${url}</code>\n\n` +
-        '<i>Link expires in 15 minutes.</i>',
+      '🔐 <b>Facebook Authorization Options (Residential Proxy)</b>\n\n' +
+        'Choose your preferred authorization method:\n\n' +
+        '1️⃣ <b>Telegram Chat (Recommended):</b> Step-by-step interactive login with real-time screenshots and auto-deleted passwords right here in chat.\n\n' +
+        '2️⃣ <b>Web Browser Stream:</b> Interactive streaming browser tab in mobile/desktop browser.\n\n' +
+        '3️⃣ <b>Import Session:</b> Send an existing <code>fb_session.json</code> file to the bot.\n\n' +
+        `<i>Web link (expires in 15m):</i>\n<code>${url}</code>`,
       { parse_mode: 'HTML', reply_markup: kb },
     );
   });
@@ -435,15 +438,21 @@ export function createAdminHandler(container: AppContainer): Composer<MyContext>
     const fromId = ctx.from.id;
     const url = getBrowserAuthUrl(fromId, 'facebook');
     const kb = new InlineKeyboard()
-      .url('🌐 Open Facebook Browser', url)
+      .text('💬 Auth in Telegram Chat (Recommended)', 'cb:admin:auth:fb_chat')
+      .row()
+      .url('🌐 Open Web Browser Stream', url)
+      .row()
+      .text('📥 Import fb_session.json', 'cb:admin:auth:fb_import')
       .row()
       .text('◀️ Admin Menu', 'cb:admin:menu');
 
     await ctx.reply(
-      '🔐 <b>Facebook Authorization Session Ready</b>\n\n' +
-        'Tap the button below to authenticate via residential proxy:\n' +
-        `<code>${url}</code>\n\n` +
-        '<i>Link expires in 15 minutes.</i>',
+      '🔐 <b>Facebook Authorization Options (Residential Proxy)</b>\n\n' +
+        'Choose your preferred authorization method:\n\n' +
+        '1️⃣ <b>Telegram Chat (Recommended):</b> Step-by-step interactive login with real-time screenshots and auto-deleted passwords right here in chat.\n\n' +
+        '2️⃣ <b>Web Browser Stream:</b> Interactive streaming browser tab in mobile/desktop browser.\n\n' +
+        '3️⃣ <b>Import Session:</b> Send an existing <code>fb_session.json</code> file to the bot.\n\n' +
+        `<i>Web link (expires in 15m):</i>\n<code>${url}</code>`,
       { parse_mode: 'HTML', reply_markup: kb },
     );
   });

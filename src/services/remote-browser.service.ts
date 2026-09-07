@@ -213,18 +213,56 @@ export class RemoteBrowserService {
 
       const wsRaw = socket as any;
       cdp.on('Page.screencastFrame', async ({ data, sessionId }) => {
+        // 🛡️ CRITICAL: Always ACK the frame immediately so CDP never freezes stream pipeline
+        try {
+          await cdp?.send('Page.screencastFrameAck', { sessionId });
+        } catch {
+          // ignore
+        }
+
         if (socket.readyState === 1 /* OPEN */) {
-          // If WebSocket has backlog buffer, drop frame to eliminate lag
-          if (wsRaw.bufferedAmount && wsRaw.bufferedAmount > 48 * 1024) {
-            try { await cdp?.send('Page.screencastFrameAck', { sessionId }); } catch {}
+          // If WebSocket has high backlog buffer, skip sending frame to avoid lag
+          if (wsRaw.bufferedAmount && wsRaw.bufferedAmount > 64 * 1024) {
             return;
           }
-          socket.send(JSON.stringify({ type: 'frame', data }));
           try {
-            await cdp?.send('Page.screencastFrameAck', { sessionId });
+            socket.send(JSON.stringify({ type: 'frame', data }));
           } catch {
             // ignore
           }
+        }
+      });
+
+      const dismissCookieBanners = async () => {
+        const cookieSelectors = [
+          'button[data-cookiebanner="accept_button"]',
+          'button[title*="Allow all"]',
+          'button[title*="Accept all"]',
+          'button:has-text("Allow all cookies")',
+          'button:has-text("Accept all")',
+          'button:has-text("Принять все")',
+          'button:has-text("Разрешить все cookie")',
+          '[aria-label="Allow all cookies"]',
+          '[aria-label="Decline optional cookies"]',
+        ];
+        for (const sel of cookieSelectors) {
+          try {
+            const btn = page?.locator(sel).first();
+            if (btn && (await btn.count()) > 0 && (await btn.isVisible().catch(() => false))) {
+              await btn.click().catch(() => {});
+              await page?.waitForTimeout(500);
+              break;
+            }
+          } catch {
+            // ignore
+          }
+        }
+      };
+
+      page.on('framenavigated', async () => {
+        await dismissCookieBanners().catch(() => {});
+        if (socket.readyState === 1) {
+          socket.send(JSON.stringify({ type: 'status', text: 'Page updated...' }));
         }
       });
 
@@ -235,6 +273,7 @@ export class RemoteBrowserService {
 
       socket.send(JSON.stringify({ type: 'status', text: `Navigating to ${service}...` }));
       await page.goto(initialUrl, { waitUntil: 'domcontentloaded', timeout: 45000 });
+      await dismissCookieBanners();
       socket.send(JSON.stringify({ type: 'status', text: 'Ready! Interact on the screen below.' }));
 
       // Handle user actions from client
@@ -260,11 +299,42 @@ export class RemoteBrowserService {
               break;
             case 'focus_field':
               if (msg.field === 'email') {
-                await page.locator('input[type="text"], input[type="email"], input[name="email"], #m_login_email').first().focus().catch(() => {});
+                await page.locator('input[type="text"], input[type="email"], input[name="email"], #m_login_email, #email').first().focus().catch(() => {});
               } else if (msg.field === 'password') {
-                await page.locator('input[type="password"], input[name="pass"], #m_login_password').first().focus().catch(() => {});
+                await page.locator('input[type="password"], input[name="pass"], #m_login_password, #pass').first().focus().catch(() => {});
+              } else if (msg.field === '2fa') {
+                await page.locator('input[name="approvals_code"], input[id*="approvals_code"], input[autocomplete="one-time-code"], input[type="number"], input[type="text"]').first().focus().catch(() => {});
               } else if (msg.field === 'submit') {
-                await page.locator('button[type="submit"], button[name="login"], input[type="submit"]').first().click().catch(() => {});
+                const submitSelectors = [
+                  'button[name="login"]',
+                  'div[role="button"][data-sigil*="m_login_button"]',
+                  '[data-sigil="m_login_button"]',
+                  'button[type="submit"]',
+                  'input[type="submit"]',
+                  '#loginbutton',
+                  'button[value="Log In"]',
+                  'div[role="button"]:has-text("Log In")',
+                  'div[role="button"]:has-text("Войти")',
+                  'div[role="button"]:has-text("Вход")',
+                  '#checkpointSubmitButton',
+                  'button[id*="checkpoint"]',
+                  'button:has-text("Continue")',
+                  'button:has-text("Продолжить")',
+                ];
+                let clicked = false;
+                for (const sel of submitSelectors) {
+                  const btn = page.locator(sel).first();
+                  if ((await btn.count()) > 0 && (await btn.isVisible().catch(() => false))) {
+                    await btn.click().catch(() => {});
+                    clicked = true;
+                    break;
+                  }
+                }
+                if (!clicked) {
+                  await page.keyboard.press('Enter').catch(() => {});
+                }
+                await page.waitForTimeout(2000);
+                await dismissCookieBanners();
               }
               break;
             case 'scroll':
@@ -275,8 +345,16 @@ export class RemoteBrowserService {
             case 'reload':
               socket.send(JSON.stringify({ type: 'status', text: 'Reloading page...' }));
               await page.reload({ waitUntil: 'domcontentloaded' }).catch(() => {});
+              await dismissCookieBanners();
               socket.send(JSON.stringify({ type: 'status', text: 'Ready for input' }));
               break;
+            case 'capture_screen': {
+              const buffer = await page.screenshot({ type: 'jpeg', quality: 65 }).catch(() => null);
+              if (buffer && socket.readyState === 1) {
+                socket.send(JSON.stringify({ type: 'frame', data: buffer.toString('base64') }));
+              }
+              break;
+            }
             case 'save_manual':
               await checkAndSaveSession(true);
               break;
