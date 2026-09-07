@@ -309,7 +309,14 @@ export const App: React.FC = () => {
 
         {/* Map Tab */}
         {activeTab === 'map' && (
-          <MapView city={filters.city} onSelectProperty={setSelectedProperty} />
+          <MapView
+            city={filters.city}
+            onSelectProperty={setSelectedProperty}
+            onSelectLocation={(locationName) => {
+              setFilters((prev) => ({ ...prev, locations: [locationName] }));
+              setActiveTab('feed');
+            }}
+          />
         )}
 
         {/* Saved / Favorites Tab */}

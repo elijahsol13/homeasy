@@ -3,7 +3,7 @@ import type { AppContainer } from '../../../container';
 import type { CityKey } from '../../../config/settings';
 import type { MapBoundingBox } from '../../../database/repositories/properties.repo';
 import { optionalTelegramAuth } from '../auth';
-import { toPropertyDTO, toMapMarkerDTO } from '../dto';
+import { toPropertyDTO, toMapMarkerDTO, toSangkatClusterDTO } from '../dto';
 
 export const propertiesRoutes: FastifyPluginAsync<{ container: AppContainer }> = async (fastify, opts) => {
   const { container } = opts;
@@ -160,19 +160,28 @@ export const propertiesRoutes: FastifyPluginAsync<{ container: AppContainer }> =
       }
     }
 
-    const properties = container.propertiesRepo.getPropertiesForMap(city, {
+    const exactProperties = container.propertiesRepo.getPropertiesForMap(city, {
       category,
       type,
       limit,
       bounds,
     });
 
-    const markers = properties.map(toMapMarkerDTO);
+    const exactMarkers = exactProperties.map(toMapMarkerDTO);
+
+    const clusters = container.propertiesRepo.getSangkatClustersForMap(city, {
+      category,
+      type,
+      bounds,
+    });
+
+    const clusterMarkers = clusters.map((c, idx) => toSangkatClusterDTO(c, city, idx));
+    const allMarkers = [...exactMarkers, ...clusterMarkers];
 
     return reply.send({
       city,
-      count: markers.length,
-      markers,
+      count: allMarkers.length,
+      markers: allMarkers,
     });
   });
 

@@ -55,6 +55,10 @@ export interface MapMarkerDTO {
   thumbnail: string | null;
   coordinates: { lat: number; lng: number } | null;
   mapsUrl: string | null;
+  isExact?: boolean;
+  count?: number;
+  minPriceUsd?: number;
+  maxPriceUsd?: number;
 }
 
 export interface FilterMetadata {

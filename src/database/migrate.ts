@@ -296,6 +296,12 @@ const MIGRATIONS: string[] = [
   -- Backfill coordinates for all properties without GPS
   SELECT 1;
   `,
+
+  // ── v14: Strict GPS truthfulness (reset synthetic coords to NULL, keep only authentic pins) ──
+  `
+  -- Strict GPS truthfulness
+  SELECT 1;
+  `,
 ];
 
 export function runMigrations(db: DatabaseSync): void {
@@ -335,31 +341,24 @@ export function runMigrations(db: DatabaseSync): void {
         insertMigration.run(version);
         console.log(`  ✅ Applied migration v${version}`);
 
-        if (version === 12 || version === 13) {
+        if (version === 14) {
           try {
+            db.exec('UPDATE properties SET latitude = NULL, longitude = NULL');
             const rows = db
-              .prepare('SELECT id, location, city, maps_url FROM properties WHERE latitude IS NULL')
-              .all() as unknown as Array<{ id: number; location: string; city: CityKey; maps_url: string | null }>;
+              .prepare('SELECT id, maps_url FROM properties WHERE maps_url IS NOT NULL')
+              .all() as unknown as Array<{ id: number; maps_url: string }>;
             const updateStmt = db.prepare('UPDATE properties SET latitude = ?, longitude = ? WHERE id = ?');
+            let verifiedCount = 0;
             for (const r of rows) {
-              let lat: number | null = null;
-              let lng: number | null = null;
-              if (r.maps_url) {
-                const coords = extractCoordinatesFromMapsUrl(r.maps_url);
-                if (coords) {
-                  lat = coords.latitude;
-                  lng = coords.longitude;
-                }
+              const coords = extractCoordinatesFromMapsUrl(r.maps_url);
+              if (coords) {
+                updateStmt.run(coords.latitude, coords.longitude, r.id);
+                verifiedCount++;
               }
-              if (lat === null || lng === null) {
-                const fallback = getFallbackCoordinates(r.location, r.city, r.id);
-                lat = fallback.lat;
-                lng = fallback.lng;
-              }
-              updateStmt.run(lat, lng, r.id);
             }
+            console.log(`  📍 Populated ${verifiedCount} authentic GPS pins; all other listings kept as NULL`);
           } catch (e) {
-            console.warn('  ⚠️ Coordinate backfill notice:', e);
+            console.warn('  ⚠️ Coordinate reset notice:', e);
           }
         }
       }

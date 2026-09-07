@@ -319,6 +319,23 @@ describe('Telegram Mini App (TMA) Backend API', () => {
       expect(body.count).toBe(2);
       expect(body.markers[0]).toHaveProperty('coordinates');
       expect(body.markers[0]).toHaveProperty('priceUsd');
+      expect(body.markers[0].isExact).toBe(true);
+    });
+
+    it('returns Sangkat cluster markers for non-GPS properties', async () => {
+      const res = await app.inject({
+        method: 'GET',
+        url: '/api/v1/properties/map?city=phnom_penh',
+      });
+
+      expect(res.statusCode).toBe(200);
+      const body = res.json();
+      expect(body.city).toBe('phnom_penh');
+      // Property 3 in BKK1 has no maps_url / GPS coordinates, so it forms a Sangkat cluster
+      expect(body.count).toBe(1);
+      expect(body.markers[0].isExact).toBe(false);
+      expect(body.markers[0].count).toBe(1);
+      expect(body.markers[0].location).toBe('BKK1');
     });
   });
 

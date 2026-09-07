@@ -560,43 +560,34 @@ export const LOCATION_CENTROIDS: Record<string, { lat: number; lng: number }> = 
 };
 
 /**
- * Returns deterministic fallback GPS coordinates for a listing based on its
- * Sangkat/location name and city, with subtle micro-jitter so multiple properties
- * in the same neighborhood don't stack directly on the exact same coordinate.
+ * Returns the exact centroid GPS coordinates for a Sangkat/neighborhood
+ * without artificial jitter or distortion.
  */
-export function getFallbackCoordinates(
+export function getSangkatCentroid(
   location: string | null | undefined,
   city: CityKey,
-  propertyId: number = 0,
 ): { lat: number; lng: number } {
-  let base: { lat: number; lng: number } | undefined;
-
   if (location && location.trim().length > 0) {
     const locTrimmed = location.trim();
     if (LOCATION_CENTROIDS[locTrimmed]) {
-      base = LOCATION_CENTROIDS[locTrimmed];
-    } else {
-      const canonical = findCanonicalLocation(locTrimmed, city);
-      if (canonical && LOCATION_CENTROIDS[canonical.canonicalName]) {
-        base = LOCATION_CENTROIDS[canonical.canonicalName];
-      }
+      return LOCATION_CENTROIDS[locTrimmed];
+    }
+    const canonical = findCanonicalLocation(locTrimmed, city);
+    if (canonical && LOCATION_CENTROIDS[canonical.canonicalName]) {
+      return LOCATION_CENTROIDS[canonical.canonicalName];
     }
   }
 
-  if (!base) {
-    const cityBounds = CITY_GEO_BOUNDS[city] || CITY_GEO_BOUNDS.siem_reap;
-    base = { lat: cityBounds.centerLat, lng: cityBounds.centerLng };
-  }
+  const cityBounds = CITY_GEO_BOUNDS[city] || CITY_GEO_BOUNDS.siem_reap;
+  return { lat: cityBounds.centerLat, lng: cityBounds.centerLng };
+}
 
-  // Deterministic micro-jitter (±200m to 400m) based on ID so markers don't overlap exactly
-  const seed = propertyId > 0 ? propertyId : 42;
-  const jitterLat = (((seed * 37) % 100) - 50) * 0.00007;
-  const jitterLng = (((seed * 53) % 100) - 50) * 0.00007;
-
-  return {
-    lat: Number((base.lat + jitterLat).toFixed(6)),
-    lng: Number((base.lng + jitterLng).toFixed(6)),
-  };
+export function getFallbackCoordinates(
+  location: string | null | undefined,
+  city: CityKey,
+  _propertyId: number = 0,
+): { lat: number; lng: number } {
+  return getSangkatCentroid(location, city);
 }
 
 export interface CrossValidatedLocation {
