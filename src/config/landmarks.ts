@@ -280,6 +280,40 @@ export const CAMBODIA_LANDMARKS: LandmarkEntry[] = [
     ],
     gmapsLink: 'https://www.google.com/maps/place/Hun+Sen+Blvd,+Phnom+Penh',
   },
+  
+  // ─── Sihanoukville Landmarks ───────────────────────────────────────────────
+  {
+    id: 'otres_beach',
+    canonicalName: 'Otres Beach',
+    khmerName: 'ឆ្នេរអូរត្រេះ',
+    city: 'sihanoukville',
+    aliases: ['otres beach', 'otres', 'отрес'],
+    gmapsLink: 'https://www.google.com/maps/place/Otres+Beach',
+  },
+  {
+    id: 'serendipity_beach',
+    canonicalName: 'Serendipity Beach',
+    khmerName: 'ឆ្នេរសេរីភាព',
+    city: 'sihanoukville',
+    aliases: ['serendipity beach', 'serendipity'],
+    gmapsLink: 'https://www.google.com/maps/place/Serendipity+Beach',
+  },
+  {
+    id: 'sihanoukville_autonomous_port',
+    canonicalName: 'Sihanoukville Port',
+    khmerName: 'កំពង់ផែស្វយ័តក្រុងព្រះសីហនុ',
+    city: 'sihanoukville',
+    aliases: ['autonomous port', 'sihanoukville port', 'sihanoukville autonomous port'],
+    gmapsLink: 'https://www.google.com/maps/place/Sihanoukville+Autonomous+Port',
+  },
+  {
+    id: 'independence_beach',
+    canonicalName: 'Independence Beach',
+    khmerName: 'ឆ្នេរឯករាជ្យ',
+    city: 'sihanoukville',
+    aliases: ['independence beach', 'independence'],
+    gmapsLink: 'https://www.google.com/maps/place/Independence+Beach',
+  },
 ];
 
 /**

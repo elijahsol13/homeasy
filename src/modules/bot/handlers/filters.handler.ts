@@ -129,7 +129,7 @@ export function formatFilterButtonLabel(f: SearchFilter, index: number): string 
   const bedsShort = formatBedroomsLabel(f.bedrooms);
   const priceShort = buildPriceRangeLabel(f.min_price, f.max_price);
   const poolIcon = f.requires_pool ? ' · 🏊' : '';
-  const city = f.city === 'siem_reap' ? 'SR' : 'PP';
+  const city = f.city === 'siem_reap' ? 'SR' : f.city === 'sihanoukville' ? 'SH' : 'PP';
 
   return `🗑 #${index + 1}: ${typeIcon} ${catShort} · ${bedsShort} · ${priceShort}${poolIcon} (${city})`;
 }
