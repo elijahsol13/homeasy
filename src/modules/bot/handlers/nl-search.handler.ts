@@ -462,7 +462,7 @@ export function extractDraftFromCriteriaText(text: string): FilterDraft | null {
   if (!text || !text.includes('Search Criteria Understood')) return null;
   const clean = text.replace(/<[^>]+>/g, '');
 
-  const city: CityKey = clean.includes('Phnom Penh') ? 'phnom_penh' : 'siem_reap';
+  const city: CityKey = clean.includes('Sihanoukville') ? 'sihanoukville' : clean.includes('Phnom Penh') ? 'phnom_penh' : 'siem_reap';
   const type: 'rent' | 'sale' = clean.includes('For Sale') ? 'sale' : 'rent';
 
   // Category

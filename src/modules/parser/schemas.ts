@@ -60,7 +60,7 @@ export const CleanPropertySchema = z.object({
   min_lease: z.number().nullable().default(null),
   has_pool: z.boolean().default(false),
   location: z.string(),
-  city: z.enum(['siem_reap', 'phnom_penh']),
+  city: z.enum(['siem_reap', 'phnom_penh', 'sihanoukville']),
   photos: z.array(z.string()),
   direct_contact: z.object({
     phone: z.string().optional(),

@@ -14,6 +14,7 @@ interface MapViewProps {
 const CITY_COORDS: Record<CityKey, [number, number]> = {
   siem_reap: [13.3611, 103.8596],
   phnom_penh: [11.5564, 104.9282],
+  sihanoukville: [10.6253, 103.5234],
 };
 
 export const MapView: React.FC<MapViewProps> = ({ city, onSelectProperty, onSelectLocation }) => {
