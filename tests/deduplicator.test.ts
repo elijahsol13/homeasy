@@ -38,6 +38,8 @@ function mockCleanProperty(overrides: Partial<CleanProperty> = {}): CleanPropert
     landmarks: [],
     latitude: null,
     longitude: null,
+    property_type: null,
+    amenities: [],
     ...overrides,
   };
 }

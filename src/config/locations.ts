@@ -585,9 +585,25 @@ export function getSangkatCentroid(
 export function getFallbackCoordinates(
   location: string | null | undefined,
   city: CityKey,
-  _propertyId: number = 0,
+  propertyId: number = 0,
 ): { lat: number; lng: number } {
-  return getSangkatCentroid(location, city);
+  const centroid = getSangkatCentroid(location, city);
+  
+  if (propertyId > 0) {
+    // 1 degree is ~111km. 0.003 degrees is ~330m.
+    const pseudoRandom1 = Math.sin(propertyId * 12.9898) * 43758.5453;
+    const pseudoRandom2 = Math.cos(propertyId * 78.233) * 43758.5453;
+    
+    const latOffset = (pseudoRandom1 - Math.floor(pseudoRandom1) - 0.5) * 0.006;
+    const lngOffset = (pseudoRandom2 - Math.floor(pseudoRandom2) - 0.5) * 0.006;
+    
+    return {
+      lat: centroid.lat + latOffset,
+      lng: centroid.lng + lngOffset
+    };
+  }
+  
+  return centroid;
 }
 
 export interface CrossValidatedLocation {

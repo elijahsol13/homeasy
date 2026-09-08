@@ -29,6 +29,7 @@ import { runMigrations } from '../../database/migrate';
 import type { AppContainer } from '../../container';
 import { createContainer } from '../../container';
 import type { PropertyCategory } from '../../config/settings';
+import { attachTrafficGuard } from './traffic-guard';
 
 export const K24_SESSION_PATH = path.join(process.cwd(), 'data', 'k24_session.json');
 
@@ -382,36 +383,8 @@ async function fetchFeedPage(
   let feedData: K24FeedResponse | null = null;
 
   try {
-    // Intercept and abort heavy assets & tracking to minimize Chromium memory
-    await page.route('**/*', (route) => {
-      const req = route.request();
-      const url = req.url().toLowerCase();
-      const type = req.resourceType();
-
-      // Block tracking & analytics
-      if (
-        url.includes('google-analytics') ||
-        url.includes('googletagmanager') ||
-        url.includes('doubleclick') ||
-        url.includes('connect.facebook') ||
-        url.includes('onesignal') ||
-        url.includes('pixel')
-      ) {
-        return route.abort();
-      }
-
-      // Block CSS, fonts, videos/audio, and other non-essential resources
-      if (['stylesheet', 'font', 'media', 'other'].includes(type)) {
-        return route.abort();
-      }
-
-      // 🛡️ IRONCLAD RULE: Block all images over residential proxy! We only need photo URL strings from feed JSON/HTML.
-      if (type === 'image') {
-        return route.abort();
-      }
-
-      return route.continue();
-    });
+    // 🛡️ IRONCLAD RULE: Block all heavy media, images, stylesheets, and telemetry over proxy
+    await attachTrafficGuard(page);
 
     // Intercept the API response fired by the page's own JS
     page.on('response', async (resp) => {
@@ -479,28 +452,8 @@ async function fetchPostPhone(ctx: BrowserContext, adId: string): Promise<string
   let phone: string | undefined;
 
   try {
-    // Block heavy media/fonts/images/css & tracking — we only need HTML text and API responses
-    await page.route('**/*', (route) => {
-      const req = route.request();
-      const url = req.url().toLowerCase();
-      const type = req.resourceType();
-
-      if (
-        url.includes('google-analytics') ||
-        url.includes('googletagmanager') ||
-        url.includes('doubleclick') ||
-        url.includes('connect.facebook') ||
-        url.includes('onesignal') ||
-        url.includes('pixel')
-      ) {
-        return route.abort();
-      }
-
-      if (['image', 'media', 'font', 'stylesheet', 'other'].includes(type)) {
-        return route.abort();
-      }
-      return route.continue();
-    });
+    // 🛡️ IRONCLAD RULE: Block all heavy media, images, stylesheets, and telemetry over proxy
+    await attachTrafficGuard(page);
 
     // Listen for any API response that might contain the phone number
     page.on('response', async (resp) => {

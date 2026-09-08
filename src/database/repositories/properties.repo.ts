@@ -1,6 +1,6 @@
 import type { DatabaseSync } from 'node:sqlite';
 import type { CityKey, PropertyCategory } from '../../config/settings';
-import { extractCoordinatesFromMapsUrl, getSangkatCentroid } from '../../config/locations';
+import { extractCoordinatesFromMapsUrl, getSangkatCentroid, getFallbackCoordinates } from '../../config/locations';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -51,6 +51,8 @@ export interface Property {
   landmarks?: string[];
   latitude?: number | null;
   longitude?: number | null;
+  property_type?: string | null;
+  amenities?: string[];
 }
 
 interface PropertyRow
@@ -69,6 +71,7 @@ interface PropertyRow
     | 'water'
     | 'cleaning'
     | 'primary_landmark'
+    | 'amenities'
   > {
   has_pool: 0 | 1;
   photos: string;
@@ -83,6 +86,8 @@ interface PropertyRow
   pet_friendly?: 0 | 1;
   primary_landmark?: string | null;
   landmarks?: string | null;
+  property_type?: string | null;
+  amenities?: string | null;
 }
 
 function rowToProperty(row: PropertyRow): Property {
@@ -115,6 +120,15 @@ function rowToProperty(row: PropertyRow): Property {
     parsedLandmarks = [];
   }
 
+  let parsedAmenities: string[] = [];
+  try {
+    if (row.amenities) {
+      parsedAmenities = JSON.parse(row.amenities) as string[];
+    }
+  } catch {
+    parsedAmenities = [];
+  }
+
   return {
     ...row,
     has_pool: Boolean(row.has_pool),
@@ -134,6 +148,8 @@ function rowToProperty(row: PropertyRow): Property {
     landmarks: parsedLandmarks,
     latitude: row.latitude !== undefined && row.latitude !== null ? Number(row.latitude) : null,
     longitude: row.longitude !== undefined && row.longitude !== null ? Number(row.longitude) : null,
+    property_type: row.property_type ?? null,
+    amenities: parsedAmenities,
   };
 }
 
@@ -169,6 +185,8 @@ export type CreatePropertyInput = Omit<
   pet_friendly?: boolean | number;
   primary_landmark?: string | null;
   landmarks?: string[] | string | null;
+  property_type?: string | null;
+  amenities?: string[];
 };
 
 export interface MapBoundingBox {
@@ -215,15 +233,20 @@ export class PropertiesRepository {
 
     const isActiveVal = input.is_active !== undefined ? input.is_active : 1;
 
+    const amenitiesJson = Array.isArray(input.amenities)
+      ? JSON.stringify(input.amenities)
+      : '[]';
+
     const result = this.db
       .prepare(
         `INSERT INTO properties
            (hash, title, description, price, currency, type, category,
             bedrooms, bathrooms, deposit, min_lease, has_pool, location, city,
             maps_url, source_url, photos, image_phash, image_phashes, direct_contact, original_url, posted_at, updated_at,
-            electricity, water, cleaning, restrictions, pet_friendly, primary_landmark, landmarks, latitude, longitude, is_active)
+            electricity, water, cleaning, restrictions, pet_friendly, primary_landmark, landmarks, latitude, longitude, is_active,
+            property_type, amenities)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%SZ', 'now'),
-                 ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                 ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         input.hash,
@@ -258,11 +281,22 @@ export class PropertiesRepository {
         lat,
         lng,
         isActiveVal,
+        input.property_type ?? null,
+        amenitiesJson,
       );
+
+    const newId = result.lastInsertRowid as number;
+
+    if (lat === null || lng === null) {
+      const fallback = getFallbackCoordinates(input.location, input.city, newId);
+      this.db
+        .prepare('UPDATE properties SET latitude = ?, longitude = ? WHERE id = ?')
+        .run(fallback.lat, fallback.lng, newId);
+    }
 
     const row = this.db
       .prepare('SELECT * FROM properties WHERE id = ?')
-      .get(result.lastInsertRowid) as unknown as PropertyRow;
+      .get(newId) as unknown as PropertyRow;
 
     return rowToProperty(row);
   }
@@ -281,6 +315,20 @@ export class PropertiesRepository {
         'SELECT * FROM properties WHERE source_url = ? OR original_url = ? ORDER BY created_at DESC LIMIT 1',
       )
       .get(sourceUrl, sourceUrl) as unknown as PropertyRow | undefined;
+    return row ? rowToProperty(row) : undefined;
+  }
+
+  /**
+   * Finds a property by numeric post ID embedded in source_url or original_url.
+   * Used by the Facebook feed re-parser to match existing records.
+   */
+  findByPostId(numericId: string): Property | undefined {
+    if (!numericId) return undefined;
+    const row = this.db
+      .prepare(
+        'SELECT * FROM properties WHERE source_url LIKE ? OR original_url LIKE ? ORDER BY created_at DESC LIMIT 1',
+      )
+      .get(`%${numericId}%`, `%${numericId}%`) as unknown as PropertyRow | undefined;
     return row ? rowToProperty(row) : undefined;
   }
 
@@ -378,6 +426,11 @@ export class PropertiesRepository {
         newLat = coords.latitude;
         newLng = coords.longitude;
       }
+    }
+    if (newLat === null || newLng === null) {
+      const fallback = getFallbackCoordinates(newLocation, existing.city, id);
+      newLat = fallback.lat;
+      newLng = fallback.lng;
     }
 
     let newPostedAt = existing.posted_at;

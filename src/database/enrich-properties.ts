@@ -21,6 +21,8 @@ import { findLandmarksInText } from '../config/landmarks';
 import type { PropertyCategory } from '../config/settings';
 import type { AlertService } from '../services/alert.service';
 import { createContainer } from '../container';
+import { isNonRealEstateSpam, SPAM_REGEXES } from '../modules/parser/spam-detector';
+import { translationRetryQueue } from '../modules/parser/facebook.scraper';
 
 export interface PropertyRecord {
   id: number;
@@ -64,6 +66,7 @@ export interface EnrichmentResult {
   updated: boolean;
   deactivated: boolean;
   deactivateReason?: string;
+  needsTranslation?: boolean;
   changes: Record<string, { oldVal: unknown; newVal: unknown }>;
   patch: Partial<PropertyRecord>;
 }
@@ -89,9 +92,6 @@ export interface EnrichmentStats {
   recoveredLandmarks: number;
   totalUpdated: number;
 }
-
-import { isNonRealEstateSpam, SPAM_REGEXES } from '../modules/parser/spam-detector';
-export { isNonRealEstateSpam, SPAM_REGEXES };
 
 // ─── Pure Enrichment Logic ───────────────────────────────────────────────────
 
@@ -121,6 +121,28 @@ export function enrichPropertyRecord(prop: PropertyRecord): EnrichmentResult {
       deactivateReason = 'Hidden due to excessive Khmer language (>10% Khmer characters)';
       changes.is_active = { oldVal: 1, newVal: 0 };
       patch.is_active = 0;
+    }
+    
+    // 1c. Check for daily rent
+    if (/\b(?:per night|\/night|មួយយប់|per day|\/day|មួយថ្ងៃ)\b/i.test(text) && prop.price !== null && prop.price < 5000) {
+      return {
+        updated: true,
+        deactivated: true,
+        deactivateReason: 'Daily rent rejected',
+        changes: { is_active: { oldVal: 1, newVal: 0 } },
+        patch: { is_active: 0 },
+      };
+    }
+
+    // 1d. Check for Khmer title
+    if (/[\u1780-\u17FF]/.test(prop.title)) {
+      return {
+        updated: true,
+        deactivated: false,
+        needsTranslation: true,
+        changes: {},
+        patch: {},
+      };
     }
   }
 
@@ -421,6 +443,18 @@ export function runEnrichment(customDbPath?: string, alertService?: AlertService
     if (!res.updated) continue;
 
     stats.totalUpdated++;
+    
+    if (res.needsTranslation && prop.source_url) {
+      console.log(`  🔄 Queued for translation (Khmer title): #${prop.id} - ${prop.title}`);
+      translationRetryQueue.push({
+        id: prop.id.toString(),
+        postUrl: prop.source_url,
+        text: `${prop.title}\n\n${prop.description}`,
+        photos: JSON.parse(prop.photos || '[]'),
+        rawDate: prop.posted_at || undefined,
+        retries: 0
+      });
+    }
 
     if (res.deactivated) {
       if (res.deactivateReason?.includes('No valid photos')) {

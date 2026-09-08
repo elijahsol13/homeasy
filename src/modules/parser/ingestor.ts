@@ -32,12 +32,16 @@ export function computeContentHash(fields: {
   price: number;
   location: string;
   type: string;
+  bedrooms?: number | null;
+  category?: string | null;
 }): string {
   const canonical = [
     fields.title.toLowerCase().trim(),
     fields.price,
     fields.location.toLowerCase().trim(),
     fields.type,
+    fields.bedrooms ?? '',
+    fields.category ?? '',
   ].join('|');
 
   return crypto.createHash('sha256').update(canonical, 'utf8').digest('hex');
@@ -59,7 +63,11 @@ export function normalizeRawToClean(
   let priceCents = 0;
   let currency: 'USD' | 'KHR' = 'USD';
 
-  if (raw.price !== undefined) {
+  // If price is a strict number, it likely came directly from the LLM or DB. Trust it completely.
+  if (typeof raw.price === 'number') {
+    currency = (raw.currency ?? 'USD').toUpperCase() === 'KHR' ? 'KHR' : 'USD';
+    priceCents = currency === 'KHR' ? Math.round((raw.price / 4_100) * 100) : Math.round(raw.price * 100);
+  } else if (raw.price !== undefined) {
     const priceStr = String(raw.price) + ' ' + (raw.currency ?? '');
     const extracted = extractPrice(priceStr);
 
@@ -183,15 +191,22 @@ export function normalizeRawToClean(
   if (contacts.whatsapp) directContact.whatsapp = contacts.whatsapp;
 
   // ── Utilities, Restrictions, Landmarks & Pet-Friendly ──────────────────────
-  const electricity = extractElectricity(combinedText);
-  const water = extractWater(combinedText);
-  const cleaning = extractCleaning(combinedText);
-  const restrictions = extractRestrictions(combinedText);
+  // Use LLM-passed values first, fall back to regex heuristics
+  const electricity = raw.electricity ?? extractElectricity(combinedText);
+  const water = raw.water ?? extractWater(combinedText);
+  const cleaning = raw.cleaning ?? extractCleaning(combinedText);
+  const restrictions = (raw.restrictions && raw.restrictions.length > 0)
+    ? raw.restrictions
+    : extractRestrictions(combinedText);
   const hasPetRestriction = restrictions.includes('🚫 No Pets');
-  const petFriendly = !hasPetRestriction && /\b(?:pet friendly|pets allowed)\b/i.test(combinedText);
+  const petFriendly = raw.pet_friendly !== undefined
+    ? raw.pet_friendly
+    : !hasPetRestriction && /\b(?:pet friendly|pets allowed)\b/i.test(combinedText);
   const landmarkEntries = findLandmarksInText(combinedText, city);
-  const primaryLandmark = landmarkEntries[0]?.canonicalName ?? null;
-  const landmarks = landmarkEntries.map((l) => l.canonicalName);
+  const baseLandmarks = landmarkEntries.map((l) => l.canonicalName);
+  const marketing = raw.marketing_landmarks || [];
+  const landmarks = Array.from(new Set([...baseLandmarks, ...marketing]));
+  const primaryLandmark = baseLandmarks[0] ?? null;
 
   const coords = mapsUrl ? extractCoordinatesFromMapsUrl(mapsUrl) : null;
   const rawLat = raw.latitude !== undefined && raw.latitude !== null ? parseFloat(String(raw.latitude)) : NaN;
@@ -230,6 +245,8 @@ export function normalizeRawToClean(
     landmarks,
     latitude,
     longitude,
+    property_type: raw.property_type ?? null,
+    amenities: raw.amenities ?? [],
   };
 }
 
@@ -318,6 +335,8 @@ export class IngestionService {
       price: clean.price,
       location: clean.location,
       type: clean.type,
+      bedrooms: clean.bedrooms,
+      category: clean.category,
     });
 
     const existingByHash = this.propertiesRepo.findByHash(hash);

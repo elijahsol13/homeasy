@@ -6,6 +6,7 @@ import { runEnrichment } from '../database/enrich-properties';
 import type { AppContainer } from '../container';
 import { env } from '../config/env';
 import { parseProxyConfig } from '../modules/parser/proxy';
+import { getScraperSettings } from './settings';
 
 export interface ScraperCategoryStats {
   scraped: number;
@@ -213,10 +214,14 @@ export class ScraperWorker {
         if (!this.isRunning) break;
 
         // ── 3. Facebook Scraper ─────────────────────────────────────────────
-        console.log(`\n⏰ [Worker] Starting Facebook scrape at ${new Date().toISOString()}...`);
-        const fbStart = Date.now();
-        try {
-          // Humanized jitter (5s - 15s)
+        const settings = getScraperSettings();
+        if (!settings.facebookEnabled) {
+          console.log(`\n⏰ [Worker] Skipping Facebook scrape (Disabled in settings).`);
+        } else {
+          console.log(`\n⏰ [Worker] Starting Facebook scrape at ${new Date().toISOString()}...`);
+          const fbStart = Date.now();
+          try {
+            // Humanized jitter (5s - 15s)
           const jitterMs = Math.floor(Math.random() * 10000) + 5000;
           console.log(`🎲 [Worker] Anti-bot jitter: waiting ${Math.round(jitterMs / 1000)}s...`);
           await this.sleep(jitterMs);
@@ -262,6 +267,7 @@ export class ScraperWorker {
         } finally {
           this.triggerGc('Facebook');
           console.log('🏁 [Worker] Facebook scrape finished.');
+        }
         }
 
         this.hourlyStats.cyclesCompleted++;

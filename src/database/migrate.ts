@@ -302,6 +302,15 @@ const MIGRATIONS: string[] = [
   -- Strict GPS truthfulness
   SELECT 1;
   `,
+
+  // ── v15: property_type and amenities ───────────────────────────────────────────
+  `
+ALTER TABLE properties ADD COLUMN property_type TEXT;
+ALTER TABLE properties ADD COLUMN amenities TEXT;
+
+CREATE INDEX IF NOT EXISTS idx_properties_property_type
+  ON properties(property_type);
+`,
 ];
 
 export function runMigrations(db: DatabaseSync): void {
