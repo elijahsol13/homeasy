@@ -8,7 +8,7 @@ import { env } from '../../config/env';
 
 export interface LLMExtractedListing {
   is_real_estate: boolean;
-  title: string;
+  title_en: string;
   price: number | null;
   currency: 'USD' | 'KHR';
   category: 'apartment' | 'house' | 'room' | 'hotel' | 'land' | null;
@@ -25,6 +25,7 @@ export interface LLMExtractedListing {
   pet_friendly?: boolean;
   landmarks?: string[];
   location: string | null;
+  marketing_landmarks?: string[];
   phone_numbers: string[]; // Extract all phone numbers found
   maps_url: string | null;
   description_en: string;
@@ -36,42 +37,55 @@ export const VALID_SANGKATS: readonly string[] = [
   ...DISTRICTS.phnom_penh,
 ];
 
-const SYSTEM_INSTRUCTIONS =
-  "You are a real estate data extraction API. Translate the input to English. Extract the data and return a JSON object exactly matching this schema:\n" +
-  "CRITICAL RULE: The output MUST be 100% in English. TRANSLATE all local languages.\n" +
-  "{\n" +
-  '  "is_real_estate": boolean,\n' +
-  '  "title": string,\n' +
-  '  "price": number,\n' +
-  '  "currency": "USD" | "KHR",\n' +
-  '  "category": "apartment" | "house" | "room" | "hotel" | "land",\n' +
-  '  "property_type": "Flat House" | "Private Villa" | "Private House" | "Condo" | "Apartment" | "Hotel Room" | "Room" | null,\n' +
-  '  "bedrooms": number | null,\n' +
-  '  "bathrooms": number | null,\n' +
-  '  "min_lease": number | null,\n' +
-  '  "has_pool": boolean,\n' +
-  '  "electricity": "Included" | "EDC (State Rate) ~$0.20/kWh" | string | null,\n' +
-  '  "water": "Included" | "State Rate (~1000៛/m³)" | string | null,\n' +
-  '  "landmarks": string[],\n' +
-  '  "location": string | null,\n' +
-  '  "phone_numbers": string[],\n' +
-  '  "maps_url": string | null,\n' +
-  '  "description_en": string\n' +
-  "}\n\n" +
-  "STRICT RULES:\n" +
-  "- `is_real_estate`: MUST be false if the post is selling second-hand goods, vehicles, electronics, furniture, food, or general non-property items.\n" +
-  "- `title`: Must be a short, catchy title (max 5 words, e.g., 'Modern 2BR Apartment'). Do NOT just copy the description.\n" +
-  "- `price`: The total price or monthly rent amount as a clean number without symbols (e.g. 350 for '$350/month', '$350' or '350$'). If not found, return null.\n" +
-  "- `min_lease`: Read the text carefully! If it mentions '6 months lease', '6 Months at lease', '6 months contract' or 'from 6 months', return 6. If '1 year' or '12 months', return 12. If 'long term', return 6. If 'short term' or 'monthly', return 1. If not mentioned, return null.\n" +
-  "- `electricity`: If free/included or all-inclusive, return 'Included'. If EDC or government/state rate or ភ្លើងរដ្ឋ, return 'EDC (State Rate) ~$0.20/kWh'. If a fixed rate is mentioned (e.g. $0.25/kWh, 0.25$, 1000r, 1200r), return formatted as 'Fixed Rate ($0.25/kWh)' or 'Fixed Rate (1000៛/kWh)'. Otherwise null.\n" +
-  "- `water`: If free/included, return 'Included'. If state/gov water or ទឹកដ្ឋ or ~1000r/m3, return 'State Rate (~1000៛/m³)'. If fixed per person (e.g. $5/person), return 'Fixed ($5/person)'. Otherwise null.\n" +
-  "- `property_type`: 'Flat House' (for flat house, shophouse, ផ្ទះល្វែង), 'Private Villa' (for villa, ផ្ទះវីឡា), 'Private House' (for house, detached house), 'Condo', 'Apartment', or 'Hotel Room'.\n" +
-  "- `phone_numbers`: Extract ALL phone numbers found (WhatsApp, Telegram, local, international). Strip non-numeric characters except leading '+'. Example: ['+85577448002', '089899084'].\n" +
-  "- `description_en`: DO NOT repeat the price, location, or title. Extract ONLY actual amenities (e.g. Fridge, Washing Machine, AC, Secure Parking, Balcony, WiFi) and lease conditions (e.g. Pet Friendly). Return strictly as 1-3 short bullet points.\n" +
-  `- \`location\`: Analyze the text and map the location to ONE of these exact values: [${VALID_SANGKATS.join(', ')}]. If the text mentions a location that matches or falls within one of these areas, return that specific area name. If NO location is mentioned, you MUST return null. Do not guess or invent a location.\n` +
-  "- `maps_url`: If the post contains a Google Maps link (goo.gl, google.com/maps, maps.app.goo.gl), extract it here. Otherwise, return null.\n" +
-  "- If the property is a hotel room, hotel suite, or boutique hotel room, return category: 'hotel'.\n" +
-  "- If the post is selling land, return category: 'land'.";
+const SYSTEM_INSTRUCTIONS = `
+You are a real estate data extraction API. Extract the data and return a JSON object exactly matching this schema:
+CRITICAL RULE: The output MUST be 100% in English. TRANSLATE all local languages. DO NOT use original local names.
+
+{
+  "is_real_estate": boolean,
+  "title_en": string,
+  "description_en": string,
+  "price": number,
+  "currency": "USD" | "KHR",
+  "category": "apartment" | "house" | "room" | "hotel" | null,
+  "property_type": string,
+  "bedrooms": number,
+  "bathrooms": number,
+  "deposit": number,
+  "min_lease": number,
+  "has_pool": boolean,
+  "location": string,
+  "marketing_landmarks": string[],
+  "maps_url": string,
+  "phone_numbers": string[],
+  "electricity": string,
+  "water": string,
+  "cleaning": string,
+  "restrictions": string[],
+  "pet_friendly": boolean,
+  "discovered_amenities": string[]
+}
+
+STRICT RULES:
+- \`is_real_estate\`: MUST be false if the post is selling second-hand goods, vehicles, clothes, electronics, furniture, food, visa services, or general non-property items. CRITICAL: Set \`is_real_estate: false\` IF the post is Commercial Real Estate (e.g., Warehouses, Restaurant spaces, Office spaces, Shops). We ONLY accept Residential real estate (apartments, houses, condos, rooms). CRITICAL: Set \`is_real_estate: false\` IF the post is a generic agency advertisement (e.g., 'We have many rooms from $50 to $500') without describing one specific property. STRICT RULE: This platform is for monthly rentals ONLY (min 1 month). If a post only advertises daily/nightly rates (e.g., '$35 per night') and provides NO monthly rate, you MUST set is_real_estate: false. If \`is_real_estate\` is false, you MUST set \`category: null\`, \`bedrooms: null\`, and \`price: null\`.
+- \`title_en\`: CRITICAL FOR TITLE: Do NOT copy the original text. Generate a clean, professional, English-only marketing title (max 6 words). Example: 'Modern 2BR Apartment in BKK1'.
+- \`price\`: CRITICAL FOR PRICE: Facebook/Khmer24 price fields are often fake clickbait (e.g. $1, $123). ALWAYS extract the real monthly price from the description text. Ignore the metadata price if the text explicitly states a monthly rent (e.g. '$350/month', 'តំលៃ 350$'). The total price or monthly rent amount as a clean number without symbols (e.g. 350). If not found, return null.
+- \`min_lease\`: Read the text carefully! If it mentions '6 months lease', '6 Months at lease', '6 months contract' or 'from 6 months', return 6. If '1 year' or '12 months', return 12. If 'long term', return 6. If 'short term' or 'monthly', return 1. If not mentioned, return null.
+- \`electricity\`: If free/included or all-inclusive, return 'Included'. If EDC or government/state rate or ភ្លើងរដ្ឋ, return 'EDC (State Rate) ~$0.20/kWh'. If a fixed rate is mentioned (e.g. $0.25/kWh, 0.25$, 1000r, 1200r), return formatted as 'Fixed Rate ($0.25/kWh)' or 'Fixed Rate (1000៛/kWh)'. Otherwise null.
+- \`water\`: If free/included, return 'Included'. If state/gov water or ទឹកដ្ឋ or ~1000r/m3, return 'State Rate (~1000៛/m³)'. If fixed per person (e.g. $5/person), return 'Fixed ($5/person)'. Otherwise null.
+- \`cleaning\`: If cleaning is included, return frequency (e.g. '1 time/week' or '2 times/month'). Otherwise null.
+- \`restrictions\`: Extract array of restrictions (e.g. ['No Pets', 'No Smoking', 'Quiet Hours']).
+- \`pet_friendly\`: true if pets allowed, false if not allowed, null if not mentioned.
+- \`discovered_amenities\`: Extract an array of all distinct amenities found (e.g. ['Fridge', 'Washing Machine', 'AC', 'Secure Parking', 'Balcony', 'WiFi', 'Gym', 'Elevator']).
+- \`property_type\`: 'Flat House' (for flat house, shophouse, ផ្ទះល្វែង), 'Private Villa' (for villa, ផ្ទះវីឡា), 'Private House' (for house, detached house), 'Condo', 'Apartment', or 'Hotel Room'.
+- \`phone_numbers\`: Extract ALL phone numbers found (WhatsApp, Telegram, local, international). Strip non-numeric characters except leading '+'. Example: ['+85577448002', '089899084'].
+- \`description_en\`: DO NOT repeat the price, location, or title. Extract ONLY the core details and overview. Return strictly as 1-3 short bullet points.
+- \`location\`: CRITICAL FOR LOCATION: Agents use 'borrowed prestige' (e.g., '5 mins to Pub Street', 'Near Aeon 3'). NEVER use relative distance/time markers as the actual location. Extract the ACTUAL physical district/sangkat into the \`location\` field (e.g. 'Choeung Ek', 'Boeng Trabaek', etc.), analyzing the text and mapping it to ONE of these exact values: [${VALID_SANGKATS.join(', ')}]. If NO location is mentioned, return null. Do not guess or invent a location.
+- \`marketing_landmarks\`: Extract ALL the promotional distance markers and 'near X' places strictly into the \`marketing_landmarks\` array.
+- \`maps_url\`: If the post contains a Google Maps link (goo.gl, google.com/maps, maps.app.goo.gl), extract it here. Otherwise, return null.
+- If the property is a hotel room, hotel suite, or boutique hotel room, return category: 'hotel'.
+- If the post is selling land, return category: 'land'.
+`.trim();
 
 /**
  * Checks if a text has more than `threshold` (default 10%) Khmer characters.
@@ -109,7 +123,7 @@ function sanitizeLlmResult(rawJson: string): LLMExtractedListing | null {
     const parsed = JSON.parse(cleanJson) as Partial<LLMExtractedListing>;
 
     const is_real_estate = parsed.is_real_estate !== false;
-    const title = typeof parsed.title === 'string' && parsed.title.trim().length > 0 ? parsed.title.trim() : '';
+    const title_en = typeof parsed.title_en === 'string' && parsed.title_en.trim().length > 0 ? parsed.title_en.trim() : '';
 
     const price: number | null = typeof parsed.price === 'number' && parsed.price > 0 ? parsed.price : null;
     const currency: 'USD' | 'KHR' = parsed.currency === 'KHR' ? 'KHR' : 'USD';
@@ -163,6 +177,9 @@ function sanitizeLlmResult(rawJson: string): LLMExtractedListing | null {
     const landmarks = Array.isArray(parsed.landmarks)
       ? parsed.landmarks.filter((l): l is string => typeof l === 'string')
       : [];
+    const marketing_landmarks = Array.isArray(parsed.marketing_landmarks)
+      ? parsed.marketing_landmarks.filter((l): l is string => typeof l === 'string')
+      : [];
     const cleaning = typeof parsed.cleaning === 'string' && parsed.cleaning.trim().length > 0
       ? parsed.cleaning.trim()
       : null;
@@ -179,7 +196,7 @@ function sanitizeLlmResult(rawJson: string): LLMExtractedListing | null {
 
     return {
       is_real_estate,
-      title,
+      title_en,
       price,
       currency,
       category,
@@ -195,6 +212,7 @@ function sanitizeLlmResult(rawJson: string): LLMExtractedListing | null {
       restrictions,
       pet_friendly,
       landmarks,
+      marketing_landmarks,
       location,
       phone_numbers,
       maps_url,
@@ -376,7 +394,7 @@ export const GEMINI_MODEL_CASCADE = [
   'gemini-flash-lite-latest',
   'gemini-flash-latest',
   'gemini-pro-latest',
-  'gemma-4-26b-a4b-it',
+  'gemma-4-26b-a4b-it'
 ] as const;
 
 interface CircuitBreakerState {

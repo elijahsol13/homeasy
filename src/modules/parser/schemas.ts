@@ -28,6 +28,15 @@ export const RawListingSchema = z.object({
   posted_at: z.string().optional(),
   latitude: z.union([z.string(), z.number()]).optional(),
   longitude: z.union([z.string(), z.number()]).optional(),
+  // LLM-extracted fields passed through from parseFacebookPostText
+  property_type: z.string().optional(),
+  electricity: z.string().optional(),
+  water: z.string().optional(),
+  cleaning: z.string().optional(),
+  restrictions: z.array(z.string()).optional(),
+  pet_friendly: z.boolean().optional(),
+  amenities: z.array(z.string()).optional(),
+  marketing_landmarks: z.array(z.string()).optional(),
 });
 
 export type RawListing = z.infer<typeof RawListingSchema>;
@@ -38,39 +47,38 @@ export const BulkImportSchema = z.union([RawListingSchema, z.array(RawListingSch
 // ─── Normalised / clean property ─────────────────────────────────────────────
 
 export const CleanPropertySchema = z.object({
-  title: z.string().min(1),
-  description: z.string().default(''),
-  /** Price in USD cents */
-  price: z.number().int().min(0),
+  title: z.string(),
+  description: z.string(),
+  price: z.number(),
   currency: z.enum(['USD', 'KHR']).default('USD'),
   type: z.enum(['rent', 'sale']),
   category: z.enum(['apartment', 'house', 'room', 'hotel']).nullable().default(null),
-  bedrooms: z.number().int().min(0).nullable().default(null),
-  bathrooms: z.number().int().min(0).nullable().default(null),
-  deposit: z.number().int().min(0).nullable().default(null), // in USD cents
-  min_lease: z.number().int().min(1).nullable().default(null), // in months
+  property_type: z.string().nullable().default(null),
+  bedrooms: z.number().nullable(),
+  bathrooms: z.number().nullable(),
+  deposit: z.number().nullable().default(null),
+  min_lease: z.number().nullable().default(null),
   has_pool: z.boolean().default(false),
-  location: z.string().default(''),
+  location: z.string(),
   city: z.enum(['siem_reap', 'phnom_penh']),
+  photos: z.array(z.string()),
+  direct_contact: z.object({
+    phone: z.string().optional(),
+    telegram: z.string().optional(),
+    whatsapp: z.string().optional(),
+  }),
   maps_url: z.string().nullable().default(null),
   source_url: z.string().nullable().default(null),
-  photos: z.array(z.string()).default([]),
+  original_url: z.string(),
+  posted_at: z.string().nullable().default(null),
   image_phash: z.string().nullable().default(null),
   image_phashes: z.array(z.string()).default([]),
-  direct_contact: z
-    .object({
-      phone: z.string().optional(),
-      telegram: z.string().optional(),
-      whatsapp: z.string().optional(),
-    })
-    .default({}),
-  original_url: z.string().default(''),
-  posted_at: z.string().nullable().default(null),
   electricity: z.string().nullable().default(null),
   water: z.string().nullable().default(null),
   cleaning: z.string().nullable().default(null),
   restrictions: z.array(z.string()).default([]),
   pet_friendly: z.boolean().default(false),
+  amenities: z.array(z.string()).default([]),
   primary_landmark: z.string().nullable().default(null),
   landmarks: z.array(z.string()).default([]),
   latitude: z.number().nullable().default(null),

@@ -26,6 +26,7 @@ import type { AppContainer } from '../../container';
 import { createContainer } from '../../container';
 import { InlineKeyboard } from 'grammy';
 import { env } from '../../config/env';
+import type { Property } from '../../database/repositories/properties.repo';
 import {
   parseProxyConfig,
   isProxyError,
@@ -127,6 +128,7 @@ export interface TranslationRetryItem {
   rawDate?: string;
 }
 
+export const MAX_TRANSLATION_RETRY_QUEUE_SIZE = 20;
 export const translationRetryQueue: TranslationRetryItem[] = [];
 
 export class FacebookSessionExpiredError extends Error {
@@ -184,9 +186,10 @@ const VIEWPORT_PRESETS = [
 ];
 
 const USER_AGENTS = [
-  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
-  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36',
+  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36',
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36',
+  'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36',
+  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Safari/537.36',
 ];
 
 async function simulateHumanMouseMove(page: Page): Promise<void> {
@@ -317,7 +320,9 @@ export async function parseFacebookPostText(
   const hasPool = llm?.has_pool != null ? llm.has_pool : extractHasPool(text);
   const minLease = llm?.min_lease ?? extractMinLease(text) ?? undefined;
   const depositCents = extractDeposit(text, priceResult?.amountCents);
-  const depositInDollars = depositCents ? depositCents / 100 : undefined;
+  const depositInDollars =
+    llm?.deposit != null ? llm.deposit  // LLM takes priority
+    : depositCents ? depositCents / 100 : undefined;
 
   const locationResult = extractLocation(text);
   const location = llm?.location || locationResult?.location || undefined;
@@ -335,7 +340,7 @@ export async function parseFacebookPostText(
   const description = llm?.description_en || text;
 
   // Title: use catchy LLM title (max 5 words) or clean fallback
-  let title = llm?.title?.trim() || '';
+  let title = llm?.title_en?.trim() || '';
   if (!title) {
     const firstLine = text.split('\n').map((l) => l.trim()).find((l) => l.length > 5);
     title = firstLine ? firstLine.slice(0, 80) : '';
@@ -377,6 +382,14 @@ export async function parseFacebookPostText(
     phone,
     telegram_contact,
     posted_at: parseFacebookRelativeDate(rawDate),
+    property_type: llm?.property_type ?? undefined,
+    electricity: llm?.electricity ?? undefined,
+    water: llm?.water ?? undefined,
+    cleaning: llm?.cleaning ?? undefined,
+    restrictions: llm?.restrictions ?? undefined,
+    pet_friendly: llm?.pet_friendly ?? undefined,
+    amenities: llm?.discovered_amenities ?? undefined,
+    marketing_landmarks: llm?.marketing_landmarks ?? undefined,
   };
 }
 
@@ -805,6 +818,11 @@ export async function scrapeFacebookGroup(
 ): Promise<ScrapeGroupResult> {
   console.log(`\n🔎 Scraping Facebook Group: [${target.name}]`);
   console.log(`🔗 URL: ${target.url}`);
+
+  // Cap the retry queue to prevent unbounded growth
+  while (translationRetryQueue.length > MAX_TRANSLATION_RETRY_QUEUE_SIZE) {
+    translationRetryQueue.shift();
+  }
 
   const page = await context.newPage();
   const listings: RawListing[] = [];
@@ -1309,16 +1327,9 @@ export async function reparseFacebookViaGroupFeed(
           const idMatch = (post.postUrl || '').match(/(?:posts|permalink)\/(\d+)/);
           const numericId = idMatch ? idMatch[1] : null;
 
-          let existingRow: any = null;
+          let existingRow: Property | undefined = undefined;
           if (numericId) {
-            existingRow = container.db
-              .prepare(
-                `SELECT id, source_url, original_url, title, description, photos
-                 FROM properties
-                 WHERE source_url LIKE ? OR original_url LIKE ?
-                 LIMIT 1`,
-              )
-              .get(`%${numericId}%`, `%${numericId}%`);
+            existingRow = container.propertiesRepo.findByPostId(numericId);
           }
           if (!existingRow && cleanedUrl) {
             existingRow = container.propertiesRepo.findBySourceUrl(cleanedUrl);
@@ -1335,12 +1346,7 @@ export async function reparseFacebookViaGroupFeed(
               currentDesc.length < 60;
             const isLonger = newText.length > currentDesc.length;
 
-            let existingPhotos: string[] = [];
-            try {
-              existingPhotos = JSON.parse(existingRow.photos || '[]');
-            } catch {
-              existingPhotos = [];
-            }
+            let existingPhotos: string[] = Array.isArray(existingRow.photos) ? existingRow.photos : [];
             const combinedPhotos = Array.from(new Set([...existingPhotos, ...post.photos]));
             const hasMorePhotos = combinedPhotos.length > existingPhotos.length;
 

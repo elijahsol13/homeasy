@@ -2,10 +2,9 @@
 
 export const SPAM_REGEXES: RegExp[] = [
   // Vehicles / scooters / cars
-  /\b(?:zoomer|scoopy|scooby|motorcycle|motorbike)\b/i,
-  /មានកាតគ្រី/, // "has registration card" (vehicle title in Cambodia)
-  /\b(?:prius|lexus rx|camry|highlander|corolla|tundra|tacoma|starex|alphard)\b/i,
-
+  /\b(?:zoomer|pcx|scoopy|scooby|honda dream|click|exciter|prius|lexus|rx300|highlander|tuktuk|passapp|motorcycle|motorbike|camry|corolla|tundra|tacoma|starex|alphard)\b/i,
+  /ម៉ូតូ|ឡាន|មានការគ្រី|ស្លាកលេខ/i, // moto, car, has registration card, license plate
+  
   // Transportation / Taxis / Tours & Activities
   /\b(?:airport transfer|taxi driver|reliable driver|transportation service)\b/i,
   /\b(?:butterfly|butterflies|peacock|peacocks|cluedo|hit the course|golf course|photo tour|landscape and portrait)\b/i,
@@ -41,14 +40,19 @@ export const SPAM_REGEXES: RegExp[] = [
   /រឿង\s*មន្តស្នេហ៍/,
   /\b(?:drama series|episode|ភាគ\d+)\b/i,
 
-  // Short-term hotel / guesthouse per night
-  /\b(?:1\s*night|per\s*night)\b/i,
+  // Short-term hotel / guesthouse / daily rent
+  /\b(?:1\s*night|per\s*night|\/night|មួយយប់|per\s*day|\/day|មួយថ្ងៃ)\b/i,
   /1\s*យប់\s*\d+\$/, // "1 night $XX"
 
   // Beauty, Hair, Nails, Massage & Salons
   /\b(?:hair\s*salon|nail\s*salon|beauty\s*salon|massage|layer\s*perm|perm|uonnongtieuchuan)\b/i,
   /#Rin26\b/i,
   /ហាងកាត់សក់|សាឡន/, // barbershop / salon in Khmer
+
+  // Commercial Real Estate & Generic Agency Ads
+  /\b(?:warehouse|restaurant space|office space|office for rent|commercial space)\b/i,
+  /ហាងសំរាប់ជួល/, // shop for rent
+  /\b(?:lowbudget rooms|many rooms from|we have many rooms|we have properties|many options available)\b/i,
 ];
 
 /**

@@ -398,6 +398,10 @@ async function runGeminiEnrichment(db: any, limit?: number): Promise<void> {
         },
         ai: aiResult
           ? {
+              is_real_estate: aiResult.is_real_estate,
+              title_en: aiResult.title_en,
+              description_en: aiResult.description_en,
+              price: aiResult.price,
               electricity: aiResult.electricity,
               water: aiResult.water,
               cleaning: aiResult.cleaning,
@@ -421,6 +425,26 @@ async function runGeminiEnrichment(db: any, limit?: number): Promise<void> {
       // Merge Best Values (AI priority with regex fallback)
       const patch: Record<string, unknown> = {};
 
+      if (aiResult) {
+        if (aiResult.is_real_estate === false) {
+          patch.is_active = 0;
+          console.log(`   🚫 #${row.id}: Skipped: LLM flagged as non-real-estate / commercial / spam`);
+          // If it's not real estate, we don't care about other fields, but we should update the DB.
+        } else {
+          if (aiResult.title_en && aiResult.title_en !== row.title) {
+            patch.title = aiResult.title_en;
+          }
+          if (aiResult.description_en && aiResult.description_en !== row.description) {
+            patch.description = aiResult.description_en;
+          }
+          
+          const newPriceCents = aiResult.price ? Math.round(aiResult.price * 100) : null;
+          if (newPriceCents !== row.price) {
+            patch.price = newPriceCents;
+          }
+        }
+      }
+
       const finalElec = aiResult?.electricity || regexElec;
       if (finalElec && finalElec !== row.electricity) patch.electricity = finalElec;
 
@@ -438,12 +462,24 @@ async function runGeminiEnrichment(db: any, limit?: number): Promise<void> {
       const finalPet = aiResult?.pet_friendly !== undefined ? (aiResult.pet_friendly ? 1 : 0) : undefined;
       if (finalPet !== undefined && finalPet !== row.pet_friendly) patch.pet_friendly = finalPet;
 
-      const finalLandmarks = (aiResult?.landmarks && aiResult.landmarks.length > 0)
+      const baseLandmarks = (aiResult?.landmarks && aiResult.landmarks.length > 0)
         ? aiResult.landmarks
         : regexLandmarks.map((l) => l.canonicalName);
+      const marketing = aiResult?.marketing_landmarks || [];
+      const finalLandmarks = Array.from(new Set([...baseLandmarks, ...marketing]));
+      
       if (finalLandmarks.length > 0) {
         patch.landmarks = JSON.stringify(finalLandmarks);
-        if (!row.primary_landmark) patch.primary_landmark = finalLandmarks[0];
+        if (!row.primary_landmark && baseLandmarks.length > 0) {
+          patch.primary_landmark = baseLandmarks[0];
+        }
+      }
+
+      const finalPropType = aiResult?.property_type || regexPropType;
+      if (finalPropType && finalPropType !== row.property_type) patch.property_type = finalPropType;
+
+      if (aiResult?.discovered_amenities && aiResult.discovered_amenities.length > 0) {
+        patch.amenities = JSON.stringify(aiResult.discovered_amenities);
       }
 
       if (aiResult?.bedrooms !== null && aiResult?.bedrooms !== undefined && row.bedrooms === null) {

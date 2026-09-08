@@ -5,6 +5,7 @@ import { createDatabaseBackup } from '../../../database/backup';
 import { runEnrichment } from '../../../database/enrich-properties';
 import { env } from '../../../config/env';
 import { adminMenuKeyboard, adminBackKeyboard } from '../keyboards/admin.keyboard';
+import { getScraperSettings, saveScraperSettings } from '../../../services/settings';
 
 export function createAdminHandler(container: AppContainer): Composer<MyContext> {
   const handler = new Composer<MyContext>();
@@ -52,6 +53,33 @@ export function createAdminHandler(container: AppContainer): Composer<MyContext>
         parse_mode: 'HTML',
         reply_markup: adminMenuKeyboard(),
       });
+    }
+  });
+
+  // ─── Scraper Toggle ────────────────────────────────────────────────────────
+  
+  handler.command('scraper', async (ctx) => {
+    if (!isAdmin(ctx)) {
+      await ctx.reply('⛔ This command is for admins only.');
+      return;
+    }
+
+    const args = ctx.message?.text?.split(' ').slice(1) ?? [];
+    if (args.length === 0) {
+      const settings = getScraperSettings();
+      await ctx.reply(`<b>Server FB Scraper is currently:</b> ${settings.facebookEnabled ? '✅ ENABLED' : '❌ DISABLED'}\n\nUse <code>/scraper off</code> to disable it, or <code>/scraper on</code> to enable it.`, { parse_mode: 'HTML' });
+      return;
+    }
+
+    const command = args[0].toLowerCase();
+    if (command === 'on' || command === 'enable') {
+      saveScraperSettings({ facebookEnabled: true });
+      await ctx.reply('✅ Server FB Scraper has been <b>ENABLED</b>.', { parse_mode: 'HTML' });
+    } else if (command === 'off' || command === 'disable') {
+      saveScraperSettings({ facebookEnabled: false });
+      await ctx.reply('❌ Server FB Scraper has been <b>DISABLED</b>.\n\nYou can now safely run <code>npm run scrape:fb</code> locally without burning proxy traffic on the server.', { parse_mode: 'HTML' });
+    } else {
+      await ctx.reply('Unknown command. Use <code>/scraper on</code> or <code>/scraper off</code>.', { parse_mode: 'HTML' });
     }
   });
 
