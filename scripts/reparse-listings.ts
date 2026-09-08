@@ -226,10 +226,16 @@ Return a JSON object matching this schema:
   "pet_friendly": boolean | null,
   "restrictions": string[],
   "landmarks": string[],
+  "marketing_landmarks": string[],
   "location": string | null,
   "description_en": string,
   "discovered_amenities": string[]
 }
+
+GUIDELINES:
+- \`is_real_estate\`: MUST be false if the post is selling second-hand goods, vehicles, clothes, electronics, furniture, food, visa services, or general non-property items. CRITICAL: Set \`is_real_estate: false\` IF the post is Commercial Real Estate (e.g., Warehouses, Restaurant spaces, Office spaces, Shops). We ONLY accept Residential real estate (apartments, houses, condos, rooms). CRITICAL: Set \`is_real_estate: false\` IF the post is a generic agency advertisement (e.g., 'We have many rooms from $50 to $500') without describing one specific property. STRICT RULE: This platform is for monthly rentals ONLY (min 1 month). If a post only advertises daily/nightly rates (e.g., '$35 per night') and provides NO monthly rate, you MUST set is_real_estate: false. If \`is_real_estate\` is false, you MUST set \`category: null\`, \`bedrooms: null\`, and \`price: null\`.
+- \`location\`: CRITICAL FOR LOCATION: Agents use 'borrowed prestige' (e.g., '5 mins to Pub Street', 'Near Aeon 3'). NEVER use relative distance/time markers as the actual location. Extract the ACTUAL physical district/sangkat into the \`location\` field.
+- \`marketing_landmarks\`: Extract ALL the promotional distance markers and 'near X' places strictly into the \`marketing_landmarks\` array.
 
 GUIDELINES FOR discovered_amenities:
 Inspect for and extract ALL features mentioned in the text. Normalize them to clean English names, such as:
