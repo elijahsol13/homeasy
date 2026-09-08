@@ -87,7 +87,7 @@
 - **Tier 1 (Instant Heuristics)**: Zero-cost instant regex extraction:
   - Cambodian utility rates: Electricity (EDC ~$0.20/kWh, fixed `$0.25/kWh`, `1000៛/kWh`), Water (state rate ~1000៛/m³, `$5/person`, included), cleaning services, deposits.
   - Property restrictions: No Pets, No Smoking, Quiet Hours, No Subleasing.
-  - 3-Way Location Consensus: Cross-validates post text, GPS coordinates, and Sangkat landmarks (Pub Street, Old Market, BKK1, Russian Market / Toul Tom Poung).
+  - Strict 3-Way Location Consensus: Cross-validates post text, GPS coordinates, and Sangkat landmarks. Protects against "borrowed prestige" clickbait (e.g., "5 mins to BKK1") by strictly separating actual districts (`location`) from promotional markers (`marketing_landmarks`).
 - **Tier 2 (Resilient AI Model Cascade)**:
   - Micro-batching (5–8 properties per request) slashing token consumption by 85%.
   - 12-model cascade ordered from smartest to lightest:
@@ -97,6 +97,7 @@
 
 ### 5. Telegram Mini App (TMA) & Interactive Map
 - Single Page Application with seamless Telegram Dark/Light theme adaptation.
+- **Deterministic Micro-Jitter Map**: Eliminates map pin overlapping/clustering issues. Properties without exact GPS coordinates are assigned a pseudo-random, deterministic offset (~330m) around their district centroid based on their `property.id`.
 - Interactive Leaflet map with clustering and coordinate Bounding Box filtering (+20% overscan buffer for smooth panning).
 - Full-screen photo gallery with native mobile touch-swipe carousel displaying all captured listing photos.
 - Granular search filters: city (Siem Reap / Phnom Penh), district, category (apartment, house, villa, room, hotel), budget range, swimming pool, and pet-friendly.
