@@ -632,6 +632,85 @@ export async function extractListingsBatchWithLLM(
   return results;
 }
 
+// ─── Batch LLM Classification (two-stage pipeline) ────────────────────────────
+
+export interface ClassifiedListing {
+  class: 'rental' | 'sale' | 'commercial' | 'daily' | 'not_property' | 'unclear';
+  reason: string;
+}
+
+export async function classifyListingsBatchWithLLM(
+  items: Array<{ id: string | number; text: string }>,
+  systemInstruction: string,
+): Promise<Map<string | number, ClassifiedListing>> {
+  const results = new Map<string | number, ClassifiedListing>();
+  if (items.length === 0) return results;
+
+  const geminiKey = getGeminiKey();
+  if (geminiKey && items.length > 1) {
+    const batchPrompt = JSON.stringify(
+      items.map((it) => ({ id: it.id, text: it.text })),
+    );
+
+    const batchSystemInstruction =
+      systemInstruction +
+      '\n\nYou will receive a JSON array of items: `[{"id": ..., "text": "..."}]`.\n' +
+      'Return a JSON array of objects: `[{"id": ..., "class": "...", "reason": "..."}]`.\n' +
+      'Do not skip any items. Use only the allowed class values.';
+
+    for (const modelName of GEMINI_MODEL_CASCADE) {
+      if (!isModelAvailable(modelName)) {
+        continue;
+      }
+      try {
+        if (!genAIInstance) {
+          genAIInstance = new GoogleGenerativeAI(geminiKey);
+        }
+        const model = genAIInstance.getGenerativeModel({
+          model: modelName,
+          generationConfig: {
+            responseMimeType: 'application/json',
+          },
+          systemInstruction: batchSystemInstruction,
+        });
+
+        const res = await model.generateContent(batchPrompt);
+        const raw = res.response.text();
+        if (raw) {
+          const parsedArray = JSON.parse(
+            raw.replace(/```(?:json)?/gi, '').replace(/```/g, '').trim(),
+          );
+          if (Array.isArray(parsedArray)) {
+            for (const entry of parsedArray) {
+              if (entry.id !== undefined && entry.class) {
+                const allowed = ['rental', 'sale', 'commercial', 'daily', 'not_property', 'unclear'];
+                const cls = allowed.includes(entry.class) ? entry.class : 'unclear';
+                results.set(entry.id, { class: cls as ClassifiedListing['class'], reason: entry.reason || '' });
+              }
+            }
+            if (results.size > 0) {
+              recordModelSuccess(modelName);
+              break;
+            }
+          }
+        }
+      } catch (batchErr) {
+        recordModelFailure(modelName, batchErr);
+      }
+    }
+  }
+
+  // If a classification could not be produced (missing from batch or no API result),
+  // mark it as unclear so the caller can decide what to do and the checkpoint still moves.
+  for (const item of items) {
+    if (!results.has(item.id)) {
+      results.set(item.id, { class: 'unclear', reason: 'batch classification failed or missing' });
+    }
+  }
+
+  return results;
+}
+
 // ─── Price extraction ─────────────────────────────────────────────────────────
 
 export interface ExtractedPrice {
