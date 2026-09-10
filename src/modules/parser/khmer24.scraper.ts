@@ -21,6 +21,8 @@ import { runMigrations } from '../../database/migrate';
 import type { AppContainer } from '../../container';
 import { createContainer } from '../../container';
 import type { PropertyCategory } from '../../config/settings';
+import { extractListingsBatchWithLLM, isExcessiveKhmer, type LLMExtractedListing } from './extractor';
+import { isNonRealEstateSpam } from './spam-detector';
 
 export const K24_SESSION_PATH = path.join(process.cwd(), 'data', 'k24_session.json');
 
@@ -417,6 +419,104 @@ export async function scrapeTargetWithBrowser(
   return listings;
 }
 
+// ─── AI-First Enrichment (micro-batched, same model cascade as Facebook) ─────
+
+/** Number of listings sent per Gemini request — balances token cost vs. per-item accuracy. */
+const LLM_BATCH_SIZE = 6;
+
+/**
+ * Rewrites title/description to clean English and backfills structured fields
+ * (bedrooms, category, deposit, utilities, etc.) via the Gemini model cascade,
+ * sent in micro-batches of `LLM_BATCH_SIZE` to conserve API quota — mirrors the
+ * batching pattern used by `scripts/reparse-listings.ts`.
+ *
+ * Listings the LLM flags as non-real-estate/land, or whose translated description
+ * is still >10% Khmer (low translation quality), are dropped. If the batch call
+ * fails or omits an item, that listing is ingested with its original scraped
+ * text rather than being silently discarded.
+ */
+export async function enrichListingsWithLLM(listings: RawListing[]): Promise<RawListing[]> {
+  if (listings.length === 0) return listings;
+
+  // Pre-filter obvious spam before spending any Gemini quota on it.
+  const candidates = listings.filter((listing) => {
+    const spamCheck = isNonRealEstateSpam(listing.title ?? '', listing.description ?? '');
+    if (spamCheck.isSpam) {
+      console.log(`  ⏩ [Skipped - Spam] "${(listing.title ?? '').slice(0, 40)}": ${spamCheck.reason}`);
+      return false;
+    }
+    return true;
+  });
+
+  const llmResults = new Map<number, LLMExtractedListing>();
+  for (let i = 0; i < candidates.length; i += LLM_BATCH_SIZE) {
+    const chunk = candidates.slice(i, i + LLM_BATCH_SIZE);
+    const batchInput = chunk.map((listing, idx) => ({
+      id: i + idx,
+      text: `${listing.title ?? ''}\n\n${listing.description ?? ''}`.trim(),
+    }));
+
+    console.log(
+      `  🚀 [AI Batch ${Math.floor(i / LLM_BATCH_SIZE) + 1}/${Math.ceil(candidates.length / LLM_BATCH_SIZE)}] Rewriting ${chunk.length} listings with Gemini...`,
+    );
+    try {
+      const batchResult = await extractListingsBatchWithLLM(batchInput);
+      for (const [id, llm] of batchResult) {
+        llmResults.set(Number(id), llm);
+      }
+    } catch (err: unknown) {
+      console.warn(`  ⚠️ [AI Batch] Failed, falling back to original text for this chunk: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
+  const enriched: RawListing[] = [];
+  candidates.forEach((listing, idx) => {
+    const llm = llmResults.get(idx);
+    if (!llm) {
+      // Batch call failed or omitted this item — ingest with original scraped text
+      // rather than dropping it.
+      enriched.push(listing);
+      return;
+    }
+
+    if (llm.is_real_estate === false || llm.category === 'land') {
+      console.log(`  ⏩ [Skipped - Not Residential Real Estate] "${(listing.title ?? '').slice(0, 40)}"`);
+      return;
+    }
+    if (isExcessiveKhmer(llm.description_en)) {
+      console.log(`  ⏩ [Skipped - Low Translation Quality] "${(listing.title ?? '').slice(0, 40)}"`);
+      return;
+    }
+
+    enriched.push({
+      ...listing,
+      title: llm.title_en?.trim() || listing.title,
+      description: llm.description_en || listing.description,
+      // Khmer24's own JSON-LD price/photos/phone are already reliable — never override those.
+      // (llm.category === 'land' already handled above.)
+      category: (llm.category ? llm.category : listing.category) as PropertyCategory | undefined,
+      bedrooms: llm.bedrooms ?? listing.bedrooms,
+      bathrooms: llm.bathrooms ?? listing.bathrooms,
+      deposit: llm.deposit ?? listing.deposit,
+      min_lease: llm.min_lease ?? listing.min_lease,
+      has_pool: llm.has_pool ?? listing.has_pool,
+      location: listing.location || llm.location || undefined,
+      maps_url: listing.maps_url || llm.maps_url || undefined,
+      property_type: llm.property_type ?? listing.property_type,
+      electricity: llm.electricity ?? listing.electricity,
+      water: llm.water ?? listing.water,
+      cleaning: llm.cleaning ?? listing.cleaning,
+      restrictions: (llm.restrictions && llm.restrictions.length > 0) ? llm.restrictions : listing.restrictions,
+      pet_friendly: llm.pet_friendly ?? listing.pet_friendly,
+      marketing_landmarks: (llm.marketing_landmarks && llm.marketing_landmarks.length > 0) ? llm.marketing_landmarks : listing.marketing_landmarks,
+      amenities: (llm.discovered_amenities && llm.discovered_amenities.length > 0) ? llm.discovered_amenities : listing.amenities,
+    });
+  });
+
+  console.log(`  ✅ AI enrichment complete: ${enriched.length}/${listings.length} listings kept (rewritten to English).`);
+  return enriched;
+}
+
 // ─── Backward-compatible stubs (used in tests) ───────────────────────────────
 
 /** @deprecated Superseded by the Playwright scraper. Kept for test imports. */
@@ -478,9 +578,10 @@ export async function runKhmer24Scraper(containerInstance?: AppContainer): Promi
 
     for (const target of KHMER24_TARGETS) {
       try {
-        const listings = await scrapeTargetWithBrowser(browser, target, 10);
-        totalScraped += listings.length;
-        
+        const rawListings = await scrapeTargetWithBrowser(browser, target, 10);
+        totalScraped += rawListings.length;
+        const listings = await enrichListingsWithLLM(rawListings);
+
         for (const listing of listings) {
           try {
             // Send straight to AI-First pipeline

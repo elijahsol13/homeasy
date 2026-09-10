@@ -829,10 +829,18 @@ export interface ExtractedLocation {
 
 /**
  * Attempts to match text against known district / sangkat lists (supporting both Khmer & English).
+ *
+ * @param restrictCity - When the caller already knows the listing's city from a reliable source
+ *   (a Khmer24 category page or a Facebook group are always single-city, assigned at scrape time),
+ *   pass it here to only search that city's districts. Post text frequently name-drops the OTHER
+ *   city for marketing/comparison purposes (e.g. "cheaper than BKK1", "closer than Phnom Penh"),
+ *   which — without this restriction — would silently flip the listing into the wrong city tab.
+ *   Leave undefined only when the city is genuinely unknown (e.g. manual/bulk JSON import).
  */
-export function extractLocation(text: string): ExtractedLocation | null {
+export function extractLocation(text: string, restrictCity?: CityKey): ExtractedLocation | null {
   // 1. Check direct Khmer Sangkat mentions
   for (const entry of KHMER_SANGKAT_MAP) {
+    if (restrictCity && entry.city !== restrictCity) continue;
     if (entry.regex.test(text)) {
       return { location: entry.location, city: entry.city };
     }
@@ -842,6 +850,7 @@ export function extractLocation(text: string): ExtractedLocation | null {
   const normalized = normalizeLocationString(text);
 
   for (const { city, district } of ALL_DISTRICTS) {
+    if (restrictCity && city !== restrictCity) continue;
     const normDistrict = normalizeLocationString(district);
     const abbrevMatch = /^\S+/.exec(normDistrict);
     const abbrev = abbrevMatch ? abbrevMatch[0] : '';

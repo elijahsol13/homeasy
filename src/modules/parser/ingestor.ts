@@ -146,11 +146,17 @@ export function normalizeRawToClean(
   const locationSearch = [raw.location, raw.city, raw.title, raw.description]
     .filter(Boolean)
     .join(' ');
-  const extracted = extractLocation(locationSearch);
+  // When the scraper already told us the city reliably (Khmer24 category page / Facebook
+  // group are both single-city, assigned at scrape time), restrict the district search to
+  // that city only. Otherwise post text mentioning the OTHER city for marketing/comparison
+  // purposes (e.g. "cheaper than BKK1") can silently flip the listing into the wrong city tab.
+  const extracted = extractLocation(locationSearch, detectedCity ?? undefined);
 
   if (extracted) {
     location = extracted.location;
-    city = extracted.city;
+    if (!detectedCity) {
+      city = extracted.city;
+    }
   } else if (raw.location && raw.location.trim().length > 0 && raw.location.toLowerCase() !== 'null') {
     location = normalizeText(raw.location);
   }
