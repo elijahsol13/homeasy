@@ -332,9 +332,12 @@ export async function parseFacebookPostText(
     llm?.deposit != null ? llm.deposit  // LLM takes priority
     : depositCents ? depositCents / 100 : undefined;
 
-  const locationResult = extractLocation(text);
+  // The Facebook group is single-city and assigned at scrape time — always trust it.
+  // Only use text matching to find the SPECIFIC sangkat/district within that city; never
+  // let a marketing comparison ("cheaper than BKK1") flip the listing into the wrong city.
+  const locationResult = extractLocation(text, target.city);
   const location = llm?.location || locationResult?.location || undefined;
-  const city = locationResult?.city ?? target.city;
+  const city = target.city;
   const type = extractType(text) ?? 'rent';
   const mapsUrl = llm?.maps_url || extractMapsUrl(text) || undefined;
   const directContacts = extractDirectContacts(text);

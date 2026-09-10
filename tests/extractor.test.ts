@@ -130,6 +130,25 @@ describe('Extractor: Cambodian Utilities & Property Types', () => {
       expect(ppLoc?.city).toBe('phnom_penh');
     });
 
+    test('restrictCity prevents marketing text from flipping the listing into the wrong city', () => {
+      // Regression test: a Siem Reap post that name-drops a Phnom Penh sangkat for comparison
+      // ("cheaper than BKK1") must NOT be classified as a Phnom Penh listing when the caller
+      // already knows (from the scraper source: Khmer24 category / Facebook group) that this
+      // post is Siem Reap. This is exactly what caused listings to appear under the wrong
+      // city tab in the Mini App.
+      const marketingOnly = extractLocation('Great value villa, way cheaper than renting in BKK1');
+      // Without restriction, this would incorrectly resolve to phnom_penh / BKK1.
+      expect(marketingOnly?.city).toBe('phnom_penh');
+
+      const restricted = extractLocation('Great value villa, way cheaper than renting in BKK1', 'siem_reap');
+      // With the known-city restriction applied, the Phnom Penh-only sangkat must be ignored.
+      expect(restricted).toBeNull();
+
+      const restrictedMatch = extractLocation('Great value villa near Sala Kamreuk, way cheaper than BKK1', 'siem_reap');
+      expect(restrictedMatch?.location).toBe('Sala Kamreuk');
+      expect(restrictedMatch?.city).toBe('siem_reap');
+    });
+
     test('extracts type rent vs sale', () => {
       expect(extractType('Beautiful villa for rent')).toBe('rent');
       expect(extractType('House for sale in Siem Reap')).toBe('sale');
