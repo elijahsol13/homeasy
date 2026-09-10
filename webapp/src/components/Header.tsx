@@ -61,18 +61,6 @@ export const Header: React.FC<HeaderProps> = ({
             <MapPin className="w-3.5 h-3.5" />
             <span>Phnom Penh</span>
           </button>
-          <button
-            type="button"
-            onClick={() => handleCitySwitch('sihanoukville')}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
-              filters.city === 'sihanoukville'
-                ? 'bg-white dark:bg-zinc-700 text-sky-600 dark:text-sky-400 shadow-xs'
-                : 'text-zinc-500 hover:text-zinc-800 dark:hover:text-zinc-200'
-            }`}
-          >
-            <MapPin className="w-3.5 h-3.5" />
-            <span>Sihanoukville</span>
-          </button>
         </div>
 
         <div className="text-right">

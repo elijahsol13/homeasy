@@ -12,7 +12,7 @@
  *  8. Backfills posted_at from relative post timestamps or created_at/parsed_at fallback.
  */
 
-import { createDatabase } from './db';
+import { createDatabase, closeDatabase } from './db';
 import { runMigrations } from './migrate';
 import { cleanPhotoUrls, extractDirectContacts, formatDomesticPhone, normalizePhoneNumber } from '../modules/parser/normalizer';
 import { extractElectricity, extractWater, isExcessiveKhmer } from '../modules/parser/extractor';
@@ -22,6 +22,7 @@ import type { PropertyCategory } from '../config/settings';
 import type { AlertService } from '../services/alert.service';
 import { createContainer } from '../container';
 import { isNonRealEstateSpam, SPAM_REGEXES } from '../modules/parser/spam-detector';
+export { isNonRealEstateSpam };
 import { translationRetryQueue } from '../modules/parser/facebook.scraper';
 
 export interface PropertyRecord {
@@ -430,6 +431,10 @@ export function runEnrichment(customDbPath?: string, alertService?: AlertService
     totalUpdated: 0,
   };
 
+  // node:sqlite connections are never closed automatically — always release this
+  // connection (even on error) to avoid leaking a second long-lived handle to the
+  // same database file while other processes (bot/api/scraper) hold their own.
+  try {
   const rows = db.prepare('SELECT * FROM properties').all() as unknown as PropertyRecord[];
   stats.totalScanned = rows.length;
 
@@ -528,6 +533,9 @@ export function runEnrichment(customDbPath?: string, alertService?: AlertService
   console.log(`═══════════════════════════════════════════════════════════════\n`);
 
   return stats;
+  } finally {
+    closeDatabase(db);
+  }
 }
 
 // CLI Execution

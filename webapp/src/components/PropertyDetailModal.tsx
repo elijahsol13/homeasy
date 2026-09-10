@@ -40,7 +40,7 @@ export const PropertyDetailModal: React.FC<PropertyDetailModalProps> = ({
       ? `https://www.google.com/maps/search/?api=1&query=${property.coordinates.lat},${property.coordinates.lng}`
       : property.location
         ? `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(
-            `${property.location}, ${property.city === 'phnom_penh' ? 'Phnom Penh' : property.city === 'sihanoukville' ? 'Sihanoukville' : 'Siem Reap'}, Cambodia`,
+            `${property.location}, ${property.city === 'phnom_penh' ? 'Phnom Penh' : 'Siem Reap'}, Cambodia`,
           )}`
         : null);
 

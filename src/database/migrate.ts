@@ -311,61 +311,48 @@ ALTER TABLE properties ADD COLUMN amenities TEXT;
 CREATE INDEX IF NOT EXISTS idx_properties_property_type
   ON properties(property_type);
 `,
-
-  // ── v16: add sihanoukville to city enum constraint ───────────────────────────
-  `
-  CREATE TABLE properties_v16 (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      hash TEXT NOT NULL,
-      title TEXT NOT NULL,
-      description TEXT NOT NULL DEFAULT '',
-      price INTEGER NOT NULL,
-      currency TEXT NOT NULL DEFAULT 'USD' CHECK(currency IN ('USD', 'KHR')),
-      type TEXT NOT NULL CHECK(type IN ('rent', 'sale')),
-      bedrooms INTEGER,
-      bathrooms INTEGER,
-      location TEXT NOT NULL DEFAULT '',
-      city TEXT NOT NULL CHECK(city IN ('siem_reap', 'phnom_penh', 'sihanoukville')),
-      photos TEXT NOT NULL DEFAULT '[]',
-      direct_contact TEXT NOT NULL DEFAULT '{}',
-      original_url TEXT NOT NULL DEFAULT '',
-      created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
-      deposit INTEGER,
-      min_lease INTEGER,
-      maps_url TEXT,
-      source_url TEXT,
-      parsed_at TEXT,
-      category TEXT CHECK(category IN ('apartment', 'house', 'room', 'hotel')),
-      has_pool INTEGER NOT NULL DEFAULT 0 CHECK(has_pool IN (0, 1)),
-      image_phash TEXT,
-      image_phashes TEXT,
-      reports_count INTEGER NOT NULL DEFAULT 0,
-      is_active INTEGER NOT NULL DEFAULT 1 CHECK(is_active IN (0, 1)),
-      posted_at TEXT,
-      updated_at TEXT,
-      electricity TEXT, water TEXT, cleaning TEXT, restrictions TEXT, pet_friendly INTEGER NOT NULL DEFAULT 0 CHECK(pet_friendly IN (0, 1)), primary_landmark TEXT, landmarks TEXT, latitude REAL, longitude REAL, property_type TEXT, amenities TEXT
-  );
-  INSERT INTO properties_v16 SELECT * FROM properties;
-  DROP TABLE properties;
-  ALTER TABLE properties_v16 RENAME TO properties;
-  CREATE INDEX idx_properties_hash ON properties(hash);
-  CREATE INDEX idx_properties_city_type ON properties(city, type);
-  CREATE INDEX idx_properties_created ON properties(created_at DESC);
-  CREATE INDEX idx_properties_phash ON properties(image_phash);
-  CREATE INDEX idx_properties_city_location ON properties(city, location);
-  CREATE INDEX idx_properties_is_active ON properties(is_active);
-  CREATE INDEX idx_properties_updated_at ON properties(updated_at DESC);
-  CREATE INDEX idx_properties_posted_at ON properties(posted_at DESC);
-  CREATE INDEX idx_properties_pet_friendly ON properties(pet_friendly);
-  CREATE INDEX idx_properties_primary_landmark ON properties(primary_landmark);
-  CREATE INDEX idx_properties_coords ON properties(latitude, longitude) WHERE is_active = 1;
-  CREATE INDEX idx_properties_property_type ON properties(property_type);
-  `
 ];
+
+/**
+ * Blocks (with SQLite's own file-level locking) until this connection can acquire
+ * the write lock, retrying on SQLITE_BUSY. This is critical because `bot`, `scraper`,
+ * and `api` are three separate OS processes that all call runMigrations() on their
+ * own startup against the SAME database file (bind-mounted). Without this guard,
+ * a fresh deploy that restarts all three containers at once causes them to race to
+ * apply the same pending migration concurrently — including heavy DDL migrations
+ * that rebuild the `properties` table (CREATE + copy + DROP + RENAME). Concurrent
+ * DDL from multiple processes against one SQLite file is a well-known trigger for
+ * "database disk image is malformed", especially combined with the experimental
+ * node:sqlite driver.
+ */
+function beginExclusiveWithRetry(db: DatabaseSync, maxWaitMs = 60_000): void {
+  const start = Date.now();
+  let lastErr: unknown;
+  while (Date.now() - start < maxWaitMs) {
+    try {
+      db.exec('BEGIN IMMEDIATE');
+      return;
+    } catch (err: unknown) {
+      lastErr = err;
+      const msg = err instanceof Error ? err.message : String(err);
+      if (!/SQLITE_BUSY|database is locked/i.test(msg)) {
+        throw err;
+      }
+      // Another process is applying migrations right now — wait briefly and retry.
+      const waitUntil = Date.now() + 200 + Math.random() * 300;
+      while (Date.now() < waitUntil) {
+        /* short synchronous backoff before retrying the lock */
+      }
+    }
+  }
+  throw new Error(
+    `Could not acquire exclusive migration lock after ${maxWaitMs}ms: ${lastErr instanceof Error ? lastErr.message : String(lastErr)}`,
+  );
+}
 
 export function runMigrations(db: DatabaseSync): void {
 
-  // Bootstrap migration tracker
+  // Bootstrap migration tracker (idempotent, safe to run before the lock)
   db.exec(`
     CREATE TABLE IF NOT EXISTS schema_migrations (
       version    INTEGER PRIMARY KEY,
@@ -374,24 +361,24 @@ export function runMigrations(db: DatabaseSync): void {
     );
   `);
 
-  const appliedVersions = (
-    db.prepare('SELECT version FROM schema_migrations ORDER BY version').all() as unknown as {
-      version: number;
-    }[]
-  ).map((r) => r.version);
-
-  const pendingCount = MIGRATIONS.filter((_, i) => !appliedVersions.includes(i + 1)).length;
-
-  if (pendingCount === 0) {
-    console.log('✅ Database schema is up to date');
-    return;
-  }
-
-  console.log(`🔄 Applying ${pendingCount} database migration(s)...`);
-
-  // node:sqlite uses SQL transactions directly
-  db.exec('BEGIN');
+  // Acquire the cross-process write lock BEFORE checking which versions are applied,
+  // so a concurrent process can't apply the same migration between our check and our write.
+  beginExclusiveWithRetry(db);
   try {
+    const appliedVersions = (
+      db.prepare('SELECT version FROM schema_migrations ORDER BY version').all() as unknown as {
+        version: number;
+      }[]
+    ).map((r) => r.version);
+
+    const pendingCount = MIGRATIONS.filter((_, i) => !appliedVersions.includes(i + 1)).length;
+
+    if (pendingCount === 0) {
+      db.exec('COMMIT');
+      console.log('✅ Database schema is up to date');
+      return;
+    }
+
     const insertMigration = db.prepare('INSERT OR IGNORE INTO schema_migrations (version) VALUES (?)');
     MIGRATIONS.forEach((sql, i) => {
       const version = i + 1;

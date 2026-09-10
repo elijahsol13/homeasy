@@ -25,13 +25,18 @@ export function createDatabase(customPath?: string): DatabaseSync {
     db = new DatabaseSync(dbPath);
   }
 
+  // Set busy_timeout FIRST, before any other statement. bot/scraper/api are three
+  // separate processes opening the same bind-mounted file concurrently on startup;
+  // without busy_timeout active yet, even `PRAGMA journal_mode = WAL` itself can
+  // throw "database is locked" (SQLITE_BUSY) instead of transparently retrying.
+  db.exec('PRAGMA busy_timeout = 5000'); // Wait up to 5s on locked DB before SQLITE_BUSY
+
   // Performance & safety pragmas (low-RAM optimized for 1GB VPS)
   if (!isMemory) {
     db.exec('PRAGMA journal_mode = WAL');
     db.exec('PRAGMA synchronous = NORMAL');
     db.exec('PRAGMA wal_autocheckpoint = 500'); // Checkpoint WAL frequently to avoid disk/RAM ballooning
   }
-  db.exec('PRAGMA busy_timeout = 5000'); // Wait up to 5s on locked DB before SQLITE_BUSY
   db.exec('PRAGMA foreign_keys = ON');
   db.exec('PRAGMA cache_size = -2000'); // 2 MB page cache instead of 32 MB
   db.exec('PRAGMA temp_store = FILE');   // Offload temporary tables to disk rather than RAM

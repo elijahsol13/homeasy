@@ -97,9 +97,13 @@ async function reparseKhmer24(db: any, limit?: number): Promise<void> {
   const targets = limit ? rows.slice(0, limit) : rows;
   console.log(`🎯 Processing ${targets.length} listings...\n`);
 
+  const isLocal = process.argv.includes('--local');
+  const proxyConfig = (!isLocal && process.env.PROXY_URL) ? { server: process.env.PROXY_URL } : undefined;
+
   const browser = await chromium.launch({
     headless: true,
     args: ['--no-sandbox', '--disable-setuid-sandbox'],
+    proxy: proxyConfig,
   });
 
   const context = await browser.newContext({
@@ -172,13 +176,18 @@ async function reparseKhmer24(db: any, limit?: number): Promise<void> {
             `UPDATE properties SET description = ?, photos = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE id = ?`,
           ).run(newDesc, JSON.stringify(combinedPhotos), row.id);
           console.log(`   ✅ Updated description (${newDesc.length} chars) & ${combinedPhotos.length} photos`);
-        } else if (combinedPhotos.length > existingPhotos.length) {
-          db.prepare(
-            `UPDATE properties SET photos = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE id = ?`,
-          ).run(JSON.stringify(combinedPhotos), row.id);
-          console.log(`   📸 Updated ${combinedPhotos.length} photos`);
         } else {
-          console.log(`   ⏭️  Listing unchanged or redirected.`);
+          if (newDesc !== row.description) {
+             console.log(`   ℹ️  newDesc length: ${newDesc.length}, old: ${(row.description || '').length}`);
+          }
+          if (combinedPhotos.length > existingPhotos.length) {
+            db.prepare(
+              `UPDATE properties SET photos = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE id = ?`,
+            ).run(JSON.stringify(combinedPhotos), row.id);
+            console.log(`   📸 Updated ${combinedPhotos.length} photos`);
+          } else {
+            console.log(`   ⏭️  Listing unchanged or redirected.`);
+          }
         }
       }
     } catch (err) {
@@ -226,16 +235,10 @@ Return a JSON object matching this schema:
   "pet_friendly": boolean | null,
   "restrictions": string[],
   "landmarks": string[],
-  "marketing_landmarks": string[],
   "location": string | null,
   "description_en": string,
   "discovered_amenities": string[]
 }
-
-GUIDELINES:
-- \`is_real_estate\`: MUST be false if the post is selling second-hand goods, vehicles, clothes, electronics, furniture, food, visa services, or general non-property items. CRITICAL: Set \`is_real_estate: false\` IF the post is Commercial Real Estate (e.g., Warehouses, Restaurant spaces, Office spaces, Shops). We ONLY accept Residential real estate (apartments, houses, condos, rooms). CRITICAL: Set \`is_real_estate: false\` IF the post is a generic agency advertisement (e.g., 'We have many rooms from $50 to $500') without describing one specific property. STRICT RULE: This platform is for monthly rentals ONLY (min 1 month). If a post only advertises daily/nightly rates (e.g., '$35 per night') and provides NO monthly rate, you MUST set is_real_estate: false. If \`is_real_estate\` is false, you MUST set \`category: null\`, \`bedrooms: null\`, and \`price: null\`.
-- \`location\`: CRITICAL FOR LOCATION: Agents use 'borrowed prestige' (e.g., '5 mins to Pub Street', 'Near Aeon 3'). NEVER use relative distance/time markers as the actual location. Extract the ACTUAL physical district/sangkat into the \`location\` field.
-- \`marketing_landmarks\`: Extract ALL the promotional distance markers and 'near X' places strictly into the \`marketing_landmarks\` array.
 
 GUIDELINES FOR discovered_amenities:
 Inspect for and extract ALL features mentioned in the text. Normalize them to clean English names, such as:

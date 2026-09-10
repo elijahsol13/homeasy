@@ -27,6 +27,7 @@
     "webhook:set": "ts-node scripts/manage-webhook.ts set",
     "webhook:delete": "ts-node scripts/manage-webhook.ts delete",
     "pack": "node scripts/pack-codebase.js",
+    "gemini:audit": "ts-node scripts/list-gemini-models.ts",
     "test": "jest"
   },
   "dependencies": {

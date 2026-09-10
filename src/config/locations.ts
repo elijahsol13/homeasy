@@ -254,56 +254,6 @@ export const CAMBODIA_LOCATIONS: LocationEntry[] = [
     aliases: ['boeung kak', 'boeng kak', 'edc'],
     googleMapsPlaceQuery: 'Sangkat Boeng Kak, Khan Tuol Kouk, Phnom Penh',
   },
-  
-  // ─── Sihanoukville ──────────────────────────────────────────
-  {
-    canonicalName: 'Sangkat 1',
-    khmerName: 'សង្កាត់ ១',
-    city: 'sihanoukville',
-    administrativeType: 'sangkat',
-    aliases: ['sangkat 1', 'sangkat muoy', 'sangkat mwy'],
-    googleMapsPlaceQuery: 'Sangkat 1, Sihanoukville, Cambodia',
-  },
-  {
-    canonicalName: 'Sangkat 2',
-    khmerName: 'សង្កាត់ ២',
-    city: 'sihanoukville',
-    administrativeType: 'sangkat',
-    aliases: ['sangkat 2', 'sangkat pir', 'sangkat pii'],
-    googleMapsPlaceQuery: 'Sangkat 2, Sihanoukville, Cambodia',
-  },
-  {
-    canonicalName: 'Sangkat 3',
-    khmerName: 'សង្កាត់ ៣',
-    city: 'sihanoukville',
-    administrativeType: 'sangkat',
-    aliases: ['sangkat 3', 'sangkat bei', 'sangkat b3i'],
-    googleMapsPlaceQuery: 'Sangkat 3, Sihanoukville, Cambodia',
-  },
-  {
-    canonicalName: 'Sangkat 4',
-    khmerName: 'សង្កាត់ ៤',
-    city: 'sihanoukville',
-    administrativeType: 'sangkat',
-    aliases: ['sangkat 4', 'sangkat boun', 'sangkat 4', 'otres'],
-    googleMapsPlaceQuery: 'Sangkat 4, Sihanoukville, Cambodia',
-  },
-  {
-    canonicalName: 'Prey Nob',
-    khmerName: 'ព្រៃនប់',
-    city: 'sihanoukville',
-    administrativeType: 'district',
-    aliases: ['prey nob', 'preynub', 'preynob'],
-    googleMapsPlaceQuery: 'Prey Nob, Preah Sihanouk, Cambodia',
-  },
-  {
-    canonicalName: 'Koh Rong',
-    khmerName: 'កោះរ៉ុង',
-    city: 'sihanoukville',
-    administrativeType: 'district',
-    aliases: ['koh rong', 'koh rong sanloem', 'koh kong'],
-    googleMapsPlaceQuery: 'Koh Rong, Preah Sihanouk, Cambodia',
-  },
 ];
 
 /**
@@ -373,8 +323,8 @@ export function formatGoogleMapsUrl(
     return existingMapsUrl.trim();
   }
 
-  const cityKey: CityKey = city === 'phnom_penh' ? 'phnom_penh' : city === 'sihanoukville' ? 'sihanoukville' : 'siem_reap';
-  const cityLabel = city === 'phnom_penh' ? 'Phnom Penh' : city === 'sihanoukville' ? 'Sihanoukville' : 'Siem Reap';
+  const cityKey: CityKey = city === 'phnom_penh' ? 'phnom_penh' : 'siem_reap';
+  const cityLabel = cityKey === 'phnom_penh' ? 'Phnom Penh' : 'Siem Reap';
 
   if (!location || !location.trim()) {
     return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(`${cityLabel}, Cambodia`)}`;
@@ -519,12 +469,6 @@ const CITY_GEO_BOUNDS = {
     maxRadiusKm: 30,
     isWater: () => false,
   },
-  sihanoukville: {
-    centerLat: 10.6253,
-    centerLng: 103.5234,
-    maxRadiusKm: 30,
-    isWater: (lat: number, lng: number) => lat < 10.5 && lng < 103.5, // Rough ocean boundary
-  },
 } as const;
 
 /**
@@ -613,14 +557,6 @@ export const LOCATION_CENTROIDS: Record<string, { lat: number; lng: number }> = 
   'Pou Senchey': { lat: 11.5500, lng: 104.8400 },
   'Por Senchey': { lat: 11.5500, lng: 104.8400 },
   'Boeung Kak': { lat: 11.5760, lng: 104.9120 },
-
-  // Sihanoukville
-  'Sangkat 1': { lat: 10.6400, lng: 103.5100 },
-  'Sangkat 2': { lat: 10.6300, lng: 103.5200 },
-  'Sangkat 3': { lat: 10.6200, lng: 103.5300 },
-  'Sangkat 4': { lat: 10.6100, lng: 103.5250 },
-  'Prey Nob': { lat: 10.7200, lng: 103.6300 },
-  'Koh Rong': { lat: 10.7300, lng: 103.2500 },
 };
 
 /**
@@ -691,7 +627,7 @@ export function crossValidateLocation(
     hotelName?: string | null;
   },
 ): CrossValidatedLocation {
-  const cityLabel = city === 'phnom_penh' ? 'Phnom Penh' : city === 'sihanoukville' ? 'Sihanoukville' : 'Siem Reap';
+  const cityLabel = city === 'phnom_penh' ? 'Phnom Penh' : 'Siem Reap';
 
   // Hotel special case: if a verified hotel name is detected
   if (options.hotelName && options.hotelName.trim().length > 2) {

@@ -36,6 +36,8 @@ import {
 } from './proxy';
 import { attachTrafficGuard } from './traffic-guard';
 import { FB_GROUPS, type CityKey, type PropertyCategory } from '../../config/settings';
+import { loadGroupState, saveGroupState, FBGroupState } from './fb-state';
+import { fetchPostAnonymous } from './fb-worker';
 import {
   extractBedrooms,
   extractBathrooms,
@@ -130,6 +132,12 @@ export interface TranslationRetryItem {
 
 export const MAX_TRANSLATION_RETRY_QUEUE_SIZE = 20;
 export const translationRetryQueue: TranslationRetryItem[] = [];
+
+export class SessionDegradedError extends Error {
+  constructor() {
+    super('FB Session Degraded or Logged Out');
+  }
+}
 
 export class FacebookSessionExpiredError extends Error {
   constructor(message = 'Facebook session expired or blocked') {
@@ -802,6 +810,65 @@ export function extractPostsFromFbGraphQL(
 
 // ─── Group Scraper ────────────────────────────────────────────────────────────
 
+
+function updateRecentIds(state: FBGroupState, extractedIds: string[]) {
+    const all = [...extractedIds, ...state.recentPostIds];
+    const unique = Array.from(new Set(all));
+    state.recentPostIds = unique.slice(0, 50);
+}
+
+function updateAdaptiveInterval(state: FBGroupState, newPostsCount: number) {
+    if (newPostsCount > 0) {
+        state.currentIntervalMs = 5 * 60 * 1000;
+    } else {
+        const next = state.currentIntervalMs * 2;
+        state.currentIntervalMs = Math.min(next, 4 * 60 * 60 * 1000);
+    }
+}
+
+async function discoverNewPosts(page: any, target: FBGroupTarget, state: FBGroupState): Promise<string[]> {
+    await attachTrafficGuard(page);
+    const extractedIds: string[] = [];
+    
+    try {
+        await page.goto(target.url, { waitUntil: 'domcontentloaded', timeout: 30000 });
+        const pageUrl = page.url();
+        if (pageUrl.includes('/login') || (await page.content()).includes('You must log in to continue')) {
+            throw new SessionDegradedError();
+        }
+        
+        await page.evaluate(() => window.scrollBy(0, 500));
+        await page.waitForTimeout(1500);
+        
+        const links = await page.evaluate(() => {
+            const anchors = Array.from(document.querySelectorAll('a[href*="/posts/"]'));
+            return anchors.map((a: any) => a.href);
+        });
+
+        for (const link of links) {
+            const match = link.match(/\/posts\/(\d+)/);
+            if (match) extractedIds.push(match[1]);
+        }
+    } catch (e) {
+        throw e;
+    }
+
+    const uniqueExtracted = Array.from(new Set(extractedIds));
+    const newIds = uniqueExtracted.filter(id => !state.recentPostIds.includes(id));
+    
+    newIds.forEach(id => {
+        const groupPath = target.url.split('groups/')[1].split('?')[0].replace(/\/$/, '');
+        const url = `https://www.facebook.com/groups/${groupPath}/posts/${id}/`;
+        if (!state.pendingQueue.includes(url)) state.pendingQueue.push(url);
+    });
+    
+    updateRecentIds(state, uniqueExtracted);
+    updateAdaptiveInterval(state, newIds.length);
+    state.lastCheckedAt = Date.now();
+    
+    return newIds;
+}
+
 export interface ScrapeGroupResult {
   listings: RawListing[];
   wireBytes: number;
@@ -810,382 +877,68 @@ export interface ScrapeGroupResult {
 }
 
 export async function scrapeFacebookGroup(
-  context: BrowserContext,
+  context: BrowserContext | null,
   target: FBGroupTarget,
-  maxPosts = 15,
-  container?: AppContainer,
-  maxScrolls = 1,
+  maxPosts = 10,
+  container: AppContainer,
+  maxScrolls = 3,
 ): Promise<ScrapeGroupResult> {
-  console.log(`\n🔎 Scraping Facebook Group: [${target.name}]`);
-  console.log(`🔗 URL: ${target.url}`);
-
-  // Cap the retry queue to prevent unbounded growth
-  while (translationRetryQueue.length > MAX_TRANSLATION_RETRY_QUEUE_SIZE) {
-    translationRetryQueue.shift();
-  }
-
-  const page = await context.newPage();
-  const listings: RawListing[] = [];
-  const seenUrls = new Set<string>();
-  const seenPostIds = new Set<string>();
-  const interceptedPosts: ParsedFbGraphQLPost[] = [];
-
-  let groupWireBytes = 0;
-  let cachedHits = 0;
-  let networkHits = 0;
-
-  try {
-    const cdp = await context.newCDPSession(page);
-    await cdp.send('Network.enable');
-    cdp.on('Network.loadingFinished', (params: { encodedDataLength?: number }) => {
-      const bytes = params.encodedDataLength || 0;
-      groupWireBytes += bytes;
-      if (bytes === 0) {
-        cachedHits++;
-      } else {
-        networkHits++;
-      }
-    });
-  } catch {
-    // CDP fallback
-  }
-
-  try {
-    // 🛡️ IRONCLAD RULE: Block all heavy media, images, stylesheets, and telemetry over proxy
-    await attachTrafficGuard(page);
-
-    // Intercept Facebook GraphQL API responses
-    page.on('response', async (resp) => {
-      const url = resp.url();
-      if (!url.includes('/api/graphql')) return;
-
-      try {
-        const bodyText = await resp.text();
-        // Support newline-delimited or streaming JSON chunks
-        const lines = bodyText.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
-        for (const line of lines) {
-          try {
-            const cleanLine = line.replace(/^for\s*\(\s*;\s*;\s*\);/, '');
-            const json = JSON.parse(cleanLine);
-            const posts = extractPostsFromFbGraphQL(json, target.url);
-            for (const post of posts) {
-              const key = post.id || post.postUrl || post.text.slice(0, 40);
-              if (seenPostIds.has(key)) continue;
-              seenPostIds.add(key);
-              interceptedPosts.push(post);
-            }
-          } catch {
-            // Ignore non-JSON line fragments
-          }
-        }
-      } catch {
-        // Ignore aborted response stream errors
-      }
-    });
-
-    try {
-      await page.goto(target.url, { waitUntil: 'domcontentloaded', timeout: 45000 });
-    } catch (err: unknown) {
-      if (isProxyError(err)) {
-        throw new ProxyConnectionError(
-          `Proxy tunnel failure navigating to [${target.name}]: ${err instanceof Error ? err.message : String(err)}`,
-        );
-      }
-      throw err;
-    }
-    await sleepRandom(3000, 5000);
-
-    // 1. Detect if redirected to login page or checkpoint
-    const currentUrl = page.url();
-    const isLoginRedirect =
-      currentUrl.includes('/login') ||
-      currentUrl.includes('/checkpoint') ||
-      currentUrl.includes('/recover') ||
-      currentUrl.includes('two_step_verification');
-
-    if (isLoginRedirect) {
-      throw new FacebookSessionExpiredError(`Redirected to login/checkpoint URL: ${currentUrl}`);
-    }
-
-    // 2. Detect login form elements on page
-    const hasLoginForm =
-      (await page
-        .locator(
-          'input[name="email"], input[name="pass"], form[action*="login"], [data-testid="royal_login_button"]',
-        )
-        .count()) > 0;
-
-    if (hasLoginForm) {
-      throw new FacebookSessionExpiredError('Facebook login form detected on page');
-    }
-
-    // Click "Close" / dismiss on any login/cookie popups if present
-    const closeButtons = page.locator(
-      'div[role="dialog"] div[role="button"][aria-label="Close"], [aria-label="Decline optional cookies"], [data-testid="cookie-policy-manage-dialog-accept-button"]',
-    );
-    if ((await closeButtons.count()) > 0) {
-      await closeButtons.first().click().catch(() => {});
-      await sleepRandom(1000, 2000);
-    }
-
-    // 3. Verify feed container or posts presence
-    const hasFeed =
-      (await page
-        .locator(
-          '[role="feed"], div[role="article"], div[data-pagelet*="FeedUnit"], div[data-ad-preview="message"]',
-        )
-        .count()) > 0;
-
-    if (!hasFeed) {
-      const isBlockedDialog =
-        (await page
-          .locator(
-            '[role="dialog"]:has-text("Log In"), [role="dialog"]:has-text("Sign Up"), [role="dialog"]:has-text("blocked")',
-          )
-          .count()) > 0;
-      if (isBlockedDialog) {
-        throw new FacebookSessionExpiredError('Facebook login/blocking dialog detected');
-      }
-    }
-
-    let scrollAttempts = 0;
-    let processedIndex = 0;
-    let consecutiveAlreadyInDb = 0;
-    let earlyExitTriggered = false;
-    const earlyExitThreshold = env.FB_EARLY_EXIT_THRESHOLD ?? 3;
-
-    // Helper to process captured GraphQL posts with Intelligent Batching & Translation Retry Queue
-    const processInterceptedPosts = async () => {
-      while (
-        (processedIndex < interceptedPosts.length || translationRetryQueue.length > 0) &&
-        listings.length < maxPosts &&
-        !earlyExitTriggered
-      ) {
-        const batchItems: Array<{
-          id: string;
-          text: string;
-          retries: number;
-          target: FBGroupTarget;
-          postUrl: string;
-          photos: string[];
-          rawDate?: string;
-        }> = [];
-
-        // 1. First, mix in pending translation retries from translationRetryQueue (up to 2 per batch)
-        while (translationRetryQueue.length > 0 && batchItems.length < 2) {
-          const retryItem = translationRetryQueue.shift()!;
-          batchItems.push({
-            id: retryItem.id,
-            text: retryItem.text,
-            retries: retryItem.retries,
-            target: retryItem.target ?? target,
-            postUrl: retryItem.postUrl ?? retryItem.id,
-            photos: retryItem.photos ?? [],
-            rawDate: retryItem.rawDate,
-          });
-        }
-
-        // 2. Fill batch with new candidate posts from interceptedPosts (up to 6 items per batch)
-        while (processedIndex < interceptedPosts.length && batchItems.length < 6) {
-          const post = interceptedPosts[processedIndex++];
-          if (!post) continue;
-
-          const cleanedUrl =
-            cleanFacebookUrl(post.postUrl) ||
-            `https://facebook.com/groups/post-${listings.length + batchItems.length + 1}`;
-
-          if (seenUrls.has(cleanedUrl)) continue;
-          seenUrls.add(cleanedUrl);
-
-          // Pre-Filtering: check if source_url already exists in DB
-          if (container && cleanedUrl && !cleanedUrl.includes('post-')) {
-            const existingInDb = container.propertiesRepo.findBySourceUrl(cleanedUrl);
-            if (existingInDb) {
-              const createdAtMs = new Date(existingInDb.created_at).getTime();
-              const FORTY_FIVE_DAYS_MS = 45 * 24 * 60 * 60 * 1000;
-              const isOlderThan45Days =
-                !isNaN(createdAtMs) && Date.now() - createdAtMs >= FORTY_FIVE_DAYS_MS;
-
-              if (isOlderThan45Days) {
-                console.log(
-                  `  🔄 [Re-listing >45 days old] Post #${existingInDb.id} (${existingInDb.created_at}): ${cleanedUrl}`,
-                );
-                consecutiveAlreadyInDb = 0;
-              } else {
-                console.log(`  ⏩ [Skipped - Already in DB] Post #${existingInDb.id}: ${cleanedUrl}`);
-                consecutiveAlreadyInDb++;
-                if (consecutiveAlreadyInDb >= earlyExitThreshold) {
-                  earlyExitTriggered = true;
-                  break;
+    const groupId = target.url.match(/groups\/([^/?]+)/)?.[1] || "unknown";
+    const state = loadGroupState(groupId);
+    
+    console.log(`\n🔎 [Adaptive FB] ${target.name}`);
+    console.log(`   Pending in queue: ${state.pendingQueue.length}`);
+    
+    const timeSinceLast = Date.now() - state.lastCheckedAt;
+    
+    if (timeSinceLast >= state.currentIntervalMs) {
+        console.log(`   Time to run Discovery (Interval: ${Math.round(state.currentIntervalMs/60000)}m)...`);
+        if (!context) {
+           console.log(`   No context available, skipping discovery.`);
+        } else {
+            const page = await context.newPage();
+            try {
+                const newIds = await discoverNewPosts(page, target, state);
+                console.log(`   Discovery found ${newIds.length} new posts.`);
+                saveGroupState(groupId, state);
+            } catch (e: any) {
+                if (e instanceof SessionDegradedError) {
+                    console.warn(`   ⚠️  Session Degraded! Pausing Discovery. Worker will continue processing queue.`);
+                    container.alertService.critical('Facebook Checkpoint: Session Expired. Discovery paused until re-auth.');
+                } else {
+                    console.error(`   ❌ Discovery error: ${e.message}`);
                 }
-                continue;
-              }
-            } else {
-              consecutiveAlreadyInDb = 0;
+            } finally {
+                await page.close().catch(() => {});
             }
-          }
-
-          // Spam defense BEFORE submitting to LLM
-          const spamCheck = isNonRealEstateSpam(post.text.slice(0, 100), post.text);
-          if (spamCheck.isSpam) {
-            console.log(`  ⏩ [Skipped - Spam] Post ${cleanedUrl}: ${spamCheck.reason}`);
-            continue;
-          }
-
-          batchItems.push({
-            id: cleanedUrl,
-            text: post.text,
-            retries: 0,
-            target,
-            postUrl: cleanedUrl,
-            photos: post.photos ?? [],
-            rawDate: post.rawDate,
-          });
         }
+    } else {
+        console.log(`   Skipping Discovery. Next check in ${Math.round((state.currentIntervalMs - timeSinceLast)/60000)}m.`);
+    }
 
-        if (earlyExitTriggered) {
-          console.log(
-            `  ⚡ [Early Exit] Encountered ${consecutiveAlreadyInDb} consecutive posts already in DB. Group feed is up to date, halting pagination early!`,
-          );
-          break;
-        }
-
-        if (batchItems.length === 0) break;
-
-        // 3. Batch extract with LLM (saves 80%+ quotas and latency)
-        let batchResults = new Map<string | number, LLMExtractedListing>();
-        try {
-          batchResults = await extractListingsBatchWithLLM(
-            batchItems.map((b) => ({ id: b.id, text: b.text })),
-          );
-        } catch (llmErr) {
-          console.warn('⚠️ Batch LLM extraction error, falling back to per-item extraction:', llmErr);
-        }
-
-        // 4. Process each item in batch
-        for (const item of batchItems) {
-          if (listings.length >= maxPosts) break;
-
-          const aiResult = batchResults.get(item.id);
-
-          // Translation quality verification (Regex /[\u1780-\u17FF]/g)
-          if (aiResult?.description_en && isExcessiveKhmer(aiResult.description_en)) {
-            console.warn(
-              `  ⚠️ [Translation Quality] Post ${item.id} description_en has >10% Khmer characters.`,
-            );
-            // 1. Do NOT save to DB
-            // 2. If retries < 2, return to translationRetryQueue (retries++)
-            if (item.retries < 2) {
-              console.log(
-                `  🔄 [Translation Retry] Re-queueing post ${item.id} for next AI batch (attempt ${item.retries + 1}/3)...`,
-              );
-              translationRetryQueue.push({
-                ...item,
-                retries: item.retries + 1,
-              });
-            } else {
-              // 3. If retries >= 2 (third attempt), permanently discard
-              console.warn(
-                `  ❌ [Translation Discarded] Post ${item.id} failed translation after 3 attempts. Discarded from memory.`,
-              );
+    const listings: RawListing[] = [];
+    // Process up to maxPosts from the queue
+    const itemsToProcess = state.pendingQueue.splice(0, maxPosts);
+    
+    if (itemsToProcess.length > 0) {
+        console.log(`   Worker processing ${itemsToProcess.length} posts from queue...`);
+        for (const url of itemsToProcess) {
+            const listing = await fetchPostAnonymous(url, target);
+            if (listing) {
+                listings.push(listing);
             }
-            continue;
-          }
-
-          try {
-            const rawListing = await parseFacebookPostText(
-              item.text,
-              item.target,
-              item.postUrl,
-              item.photos,
-              item.rawDate,
-              aiResult ?? null,
-            );
-
-            if (!rawListing) {
-              console.log(`  ⏩ [Skipped] Post identified as non-residential / land sale / irrelevant`);
-              continue;
-            }
-
-            listings.push(rawListing);
-            console.log(
-              `  📄 [GraphQL Post #${listings.length}] "${rawListing.title?.slice(0, 45)}" | ` +
-                `💰 $${rawListing.price ?? '?'} | 📍 ${rawListing.location} | 🖼️ ${rawListing.photos.length} photos`,
-            );
-          } catch (err: unknown) {
-            console.warn(
-              `  ⚠️ Failed to parse GraphQL post: ${err instanceof Error ? err.message : String(err)}`,
-            );
-          }
+            await new Promise(r => setTimeout(r, 1500));
         }
-      }
+        saveGroupState(groupId, state);
+    }
+    
+    return {
+        listings,
+        wireBytes: 0,
+        cachedHits: 0,
+        networkHits: itemsToProcess.length
     };
-
-    while (listings.length < maxPosts && scrollAttempts < maxScrolls) {
-      if (earlyExitTriggered) break;
-
-      // Natural human mouse movement across the viewport
-      await simulateHumanMouseMove(page);
-
-      // Process GraphQL posts intercepted so far
-      await processInterceptedPosts();
-
-      if (listings.length >= maxPosts || earlyExitTriggered) break;
-
-      // Variable human scroll with occasional slight upward backtrack (triggers next GraphQL pagination query)
-      await simulateHumanScroll(page);
-      scrollAttempts++;
-
-      // Wait for network response to be received and processed
-      await sleepRandom(2800, 5200);
-
-      // Process posts received after scroll
-      await processInterceptedPosts();
-
-      if (earlyExitTriggered) break;
-
-      // 12% probability of a longer human reading pause (6s - 11s)
-      if (Math.random() < 0.12) {
-        await sleepRandom(6000, 11000);
-      }
-    }
-
-    // Final drain of any GraphQL posts captured in the last network roundtrip
-    if (!earlyExitTriggered) {
-      await processInterceptedPosts();
-    }
-  } catch (err: unknown) {
-    if (err instanceof FacebookSessionExpiredError) {
-      throw err;
-    }
-    console.error(
-      `💥 Error scraping group [${target.name}]:`,
-      err instanceof Error ? err.message : String(err),
-    );
-  } finally {
-    await page.close().catch(() => {});
-  }
-
-  const groupKb = Math.round(groupWireBytes / 1024);
-  const groupMb = (groupWireBytes / 1024 / 1024).toFixed(2);
-  console.log(`  ✅ Extracted ${listings.length} posts from [${target.name}]`);
-  console.log(
-    `  📊 [Proxy Traffic] [${target.name}]: ${groupMb} MB (${groupKb} KB) wire data (${networkHits} net requests, ${cachedHits} from disk cache)`,
-  );
-
-  return {
-    listings,
-    wireBytes: groupWireBytes,
-    cachedHits,
-    networkHits,
-  };
 }
-
-/**
- * Safe, economical Facebook re-parser that traverses group feeds
- * and intercepts /api/graphql responses instead of visiting individual post URLs.
- * Saves 95%+ of residential proxy traffic compared to per-post navigation.
- */
 export async function reparseFacebookViaGroupFeed(
   containerInstance?: AppContainer,
   options: {
@@ -1210,10 +963,14 @@ export async function reparseFacebookViaGroupFeed(
     return { totalChecked: 0, totalUpdated: 0, totalInserted: 0, errors: 1 };
   }
 
+  const isLocal = process.argv.includes('--local');
   const proxyResult = parseProxyConfig(env.FB_PROXY);
-  if (!proxyResult) {
-    console.error('❌ Cannot run Facebook re-parser without FB_PROXY.');
-    return { totalChecked: 0, totalUpdated: 0, totalInserted: 0, errors: 1 };
+  const proxyConfig = isLocal ? undefined : proxyResult?.config;
+
+  if (!proxyConfig && !isLocal) {
+    console.warn('⚠️ Running Facebook re-parser WITHOUT FB_PROXY.');
+  } else if (isLocal) {
+    console.log('🏠 Running locally, bypassing FB_PROXY.');
   }
 
   let totalChecked = 0;
@@ -1223,7 +980,7 @@ export async function reparseFacebookViaGroupFeed(
 
   const browser = await chromium.launch({
     headless: true,
-    proxy: proxyResult.config,
+    proxy: proxyConfig,
     args: [
       '--no-sandbox',
       '--disable-setuid-sandbox',
@@ -1453,10 +1210,12 @@ export async function runFacebookScraper(
   }
 
   // Check proxy requirement (mandatory to prevent IP bans)
+  const isLocal = process.argv.includes('--local');
   const proxyResult = parseProxyConfig(env.FB_PROXY);
-  if (!proxyResult) {
-    await container.alertService.critical('FB_PROXY is missing. Facebook scraper not started.');
-    return { totalScraped: 0, inserted: 0, duplicates: 0, errors: 1, wireBytesTransferred: 0 };
+  const proxyConfig = isLocal ? undefined : proxyResult?.config;
+
+  if (!proxyConfig && !isLocal) {
+    console.warn('⚠️ Running FB scraper WITHOUT PROXY.');
   }
 
   let totalScraped = 0;
@@ -1467,7 +1226,7 @@ export async function runFacebookScraper(
   let context: BrowserContext | null = null;
 
   try {
-    console.log(`🌐 Proxy enabled: ${proxyResult.masked}`);
+    if (proxyConfig) console.log(`🌐 Proxy enabled: ${proxyResult?.masked}`);
 
     const chosenViewport = VIEWPORT_PRESETS[Math.floor(Math.random() * VIEWPORT_PRESETS.length)]!;
     const chosenUserAgent = USER_AGENTS[Math.floor(Math.random() * USER_AGENTS.length)]!;
@@ -1480,7 +1239,7 @@ export async function runFacebookScraper(
     console.log(`💾 Launching persistent browser context with disk cache: ${BROWSER_CACHE_DIR}`);
     context = await chromium.launchPersistentContext(BROWSER_CACHE_DIR, {
       headless: true,
-      proxy: proxyResult.config,
+      proxy: proxyConfig,
       userAgent: chosenUserAgent,
       viewport: chosenViewport,
       locale: 'en-US',

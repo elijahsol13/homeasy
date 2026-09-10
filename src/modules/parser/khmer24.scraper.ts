@@ -1,37 +1,31 @@
 /**
- * Khmer24 Scraper — API-First Architecture
+ * Khmer24 Scraper — Classic DOM Parsing Architecture
  *
  * Strategy:
- *  - Use Playwright (Stealth) to load khmer24.com pages and acquire valid Cloudflare cookies.
- *  - Intercept the JSON responses from api-posts.khmer24.com directly inside the browser context.
- *  - Parse the clean JSON API responses (no HTML/Cheerio required).
- *
- * API Endpoints discovered via live network interception:
- *   Feed:   https://api-posts.khmer24.com/feed?category=house-for-rent&location=siem-reap&sortby=newads&...
- *
- * Sorting:
- *   sortby=newads     → genuinely newest listings (ignores VIP/bumped)
- *   sortby=latestads  → most recently renewed (bumped VIP listings dominate)
- *
- * Post type field (on the post object, not the feed item):
- *   "normal"   → organic new listing ✅
- *   "top"      → paid top placement ❌  (skipped)
- *   "featured" → paid featured banner ❌  (skipped)
+ *  - Use Playwright (Stealth) to load HTML pages directly.
+ *  - Use a "relaxed" traffic guard: block images, media, fonts, and CSS to save proxy bandwidth,
+ *    BUT allow scripts and fetch/XHR requests so Nuxt 3 (Vue) can hydrate and render the DOM.
+ *  - Extract listing URLs from the category feed.
+ *  - Visit each listing page, bypass Cloudflare naturally.
+ *  - Extract raw text, price, and apply the "-b.jpg" trick for high-res photos.
+ *  - Yield the raw data to the AI-First Ingestor pipeline for semantic extraction.
  */
 
 import path from 'path';
 import fs from 'fs';
 import { chromium } from 'playwright-extra';
 import stealthPlugin from 'puppeteer-extra-plugin-stealth';
-import type { Browser, BrowserContext } from 'playwright';
+import type { Browser, BrowserContext, Page } from 'playwright';
 import type { RawListing } from './schemas';
 import { runMigrations } from '../../database/migrate';
 import type { AppContainer } from '../../container';
 import { createContainer } from '../../container';
 import type { PropertyCategory } from '../../config/settings';
-import { attachTrafficGuard } from './traffic-guard';
 
 export const K24_SESSION_PATH = path.join(process.cwd(), 'data', 'k24_session.json');
+
+// Apply stealth plugin once at module load
+chromium.use(stealthPlugin());
 
 export class Khmer24SessionExpiredError extends Error {
   constructor(message: string) {
@@ -39,9 +33,6 @@ export class Khmer24SessionExpiredError extends Error {
     this.name = 'Khmer24SessionExpiredError';
   }
 }
-
-// Apply stealth plugin once at module load
-chromium.use(stealthPlugin());
 
 // ─── Target Definitions ───────────────────────────────────────────────────────
 
@@ -56,484 +47,330 @@ export interface ScrapeTarget {
 
 export const KHMER24_TARGETS: ScrapeTarget[] = [
   // ─── Siem Reap Rentals ───────────────────────────────────────────────────────
-  {
-    name: 'Siem Reap — Houses for Rent',
-    category: 'house',
-    city: 'siem_reap',
-    type: 'rent',
-    categorySlug: 'house-for-rent',
-    locationSlug: 'siem-reap',
-  },
-  {
-    name: 'Siem Reap — Apartments & Condos for Rent',
-    category: 'apartment',
-    city: 'siem_reap',
-    type: 'rent',
-    categorySlug: 'apartment-for-rent',
-    locationSlug: 'siem-reap',
-  },
-  {
-    name: 'Siem Reap — Rooms for Rent',
-    category: 'room',
-    city: 'siem_reap',
-    type: 'rent',
-    categorySlug: 'room-for-rent',
-    locationSlug: 'siem-reap',
-  },
+  { name: 'Siem Reap — Houses for Rent', category: 'house', city: 'siem_reap', type: 'rent', categorySlug: 'house-for-rent', locationSlug: 'siem-reap' },
+  { name: 'Siem Reap — Apartments & Condos for Rent', category: 'apartment', city: 'siem_reap', type: 'rent', categorySlug: 'apartment-for-rent', locationSlug: 'siem-reap' },
+  { name: 'Siem Reap — Rooms for Rent', category: 'room', city: 'siem_reap', type: 'rent', categorySlug: 'room-for-rent', locationSlug: 'siem-reap' },
 
   // ─── Siem Reap Sales ────────────────────────────────────────────────────────
-  {
-    name: 'Siem Reap — Houses for Sale',
-    category: 'house',
-    city: 'siem_reap',
-    type: 'sale',
-    categorySlug: 'house-for-sale',
-    locationSlug: 'siem-reap',
-  },
-  {
-    name: 'Siem Reap — Condos for Sale',
-    category: 'apartment',
-    city: 'siem_reap',
-    type: 'sale',
-    categorySlug: 'condo-for-sale',
-    locationSlug: 'siem-reap',
-  },
+  { name: 'Siem Reap — Houses for Sale', category: 'house', city: 'siem_reap', type: 'sale', categorySlug: 'house-for-sale', locationSlug: 'siem-reap' },
+  { name: 'Siem Reap — Condos for Sale', category: 'apartment', city: 'siem_reap', type: 'sale', categorySlug: 'condo-for-sale', locationSlug: 'siem-reap' },
 
   // ─── Phnom Penh Rentals ─────────────────────────────────────────────────────
-  {
-    name: 'Phnom Penh — Houses for Rent',
-    category: 'house',
-    city: 'phnom_penh',
-    type: 'rent',
-    categorySlug: 'house-for-rent',
-    locationSlug: 'phnom-penh',
-  },
-  {
-    name: 'Phnom Penh — Apartments for Rent',
-    category: 'apartment',
-    city: 'phnom_penh',
-    type: 'rent',
-    categorySlug: 'apartment-for-rent',
-    locationSlug: 'phnom-penh',
-  },
-  {
-    name: 'Phnom Penh — Rooms for Rent',
-    category: 'room',
-    city: 'phnom_penh',
-    type: 'rent',
-    categorySlug: 'room-for-rent',
-    locationSlug: 'phnom-penh',
-  },
+  { name: 'Phnom Penh — Houses for Rent', category: 'house', city: 'phnom_penh', type: 'rent', categorySlug: 'house-for-rent', locationSlug: 'phnom-penh' },
+  { name: 'Phnom Penh — Apartments for Rent', category: 'apartment', city: 'phnom_penh', type: 'rent', categorySlug: 'apartment-for-rent', locationSlug: 'phnom-penh' },
+  { name: 'Phnom Penh — Rooms for Rent', category: 'room', city: 'phnom_penh', type: 'rent', categorySlug: 'room-for-rent', locationSlug: 'phnom-penh' },
 
   // ─── Phnom Penh Sales ───────────────────────────────────────────────────────
-  {
-    name: 'Phnom Penh — Houses for Sale',
-    category: 'house',
-    city: 'phnom_penh',
-    type: 'sale',
-    categorySlug: 'house-for-sale',
-    locationSlug: 'phnom-penh',
-  },
-  {
-    name: 'Phnom Penh — Condos for Sale',
-    category: 'apartment',
-    city: 'phnom_penh',
-    type: 'sale',
-    categorySlug: 'condo-for-sale',
-    locationSlug: 'phnom-penh',
-  },
+  { name: 'Phnom Penh — Houses for Sale', category: 'house', city: 'phnom_penh', type: 'sale', categorySlug: 'house-for-sale', locationSlug: 'phnom-penh' },
+  { name: 'Phnom Penh — Condos for Sale', category: 'apartment', city: 'phnom_penh', type: 'sale', categorySlug: 'condo-for-sale', locationSlug: 'phnom-penh' },
 ];
 
-// ─── Khmer24 API Types ────────────────────────────────────────────────────────
-
-interface K24Location {
-  id?: string;
-  en_name: string;
-  en_name2?: string;
-  en_name3?: string;
-  slug: string;
-  map?: { x?: string | number; y?: string | number; z?: number };
-  [key: string]: unknown;
-}
-
-interface K24HighlightSpec {
-  title: string;
-  field: string;
-  value: string;
-  display_value?: string;
-  value_slug?: string | number;
-  [key: string]: unknown;
-}
-
-interface K24Post {
-  id: string;
-  title: string;
-  price: string;
-  /** Promotion tier: "normal" | "top" | "featured" */
-  type?: string;
-  photos: string[];
-  link?: string;
-  short_link?: string;
-  description?: string;
-  location?: K24Location;
-  category?: { id?: string; en_name: string; slug: string; [key: string]: unknown };
-  condition?: { value: string; title?: string; field?: string; [key: string]: unknown };
-  object_highlight_specs?: {
-    bedroom?: K24HighlightSpec;
-    bathroom?: K24HighlightSpec;
-    size?: K24HighlightSpec;
-    [key: string]: K24HighlightSpec | undefined;
-  };
-  user?: { id: string; name: string; username: string; [key: string]: unknown };
-  renew_date?: string;
-  [key: string]: unknown;
-}
-
-interface K24FeedItem {
-  type: 'post' | 'banner';
-  data?: K24Post;
-}
-
-interface K24FeedResponse {
-  total: number;
-  limit: number;
-  offset: number;
-  data: K24FeedItem[];
-}
-
-// ─── API Constants ────────────────────────────────────────────────────────────
-
-const API_BASE = 'https://api-posts.khmer24.com/feed';
-
-const API_FIELDS =
-  'thumbnails,thumbnail,location,photos,user,store,renew_date,is_like,is_saved,category,link,object_highlight_specs,condition,video,description';
-
-const API_FUNCTIONS =
-  'save,chat,like,apply_job,shipping,banner,highlight_ads[object_highlight_specs]';
-
-/** Build the API URL for a feed page */
-function buildFeedUrl(target: ScrapeTarget, offset: number): string {
-  const params = new URLSearchParams({
-    meta: 'true',
-    fields: API_FIELDS,
-    functions: API_FUNCTIONS,
-    offset: String(offset),
-    filter_version: '4',
-    lang: 'en',
-    category: target.categorySlug,
-    location: target.locationSlug,
-    // Sort by genuine creation date — ignores VIP/bumped promotions
-    sortby: 'newads',
-    // Only listings from the last 7 days — keeps 30-min cron efficient
-    date: 'last-7-days',
-  });
-  return `${API_BASE}?${params.toString()}`;
-}
-
-/** Build the corresponding front-end page URL for CF cookie acquisition */
 function buildFeedPageUrl(target: ScrapeTarget): string {
-  return (
-    `https://www.khmer24.com/en/c-${target.categorySlug}` +
-    `?location=${target.locationSlug}&sortby=newads&date=last-7-days`
-  );
+  // CORRECTED: using province= instead of location=
+  return `https://www.khmer24.com/en/c-${target.categorySlug}?province=${target.locationSlug}&sortby=newads&date=last-7-days`;
 }
 
-// ─── Data Extraction Helpers ──────────────────────────────────────────────────
+// ─── Browser Automation Helpers ───────────────────────────────────────────────
 
-/** Extract the most specific Sangkat/district name from the location object */
-function extractLocationText(loc?: K24Location): string | undefined {
-  if (!loc) return undefined;
-  // en_name3 is most specific: "Svay Dangkum, Siem Reap, Siem Reap"
-  const full = loc.en_name3 ?? loc.en_name2 ?? loc.en_name ?? '';
-  if (!full) return undefined;
-  const parts = full.split(',').map((s) => s.trim());
-  return parts[0] || undefined;
-}
-
-/** Build a verified Google Maps URL from embedded GPS or fallback to Sangkat search */
-function extractMapsUrl(
-  loc?: K24Location,
-  city: 'siem_reap' | 'phnom_penh' = 'siem_reap',
-  locationName?: string,
-): string {
-  const map = loc?.map;
-  const cityName = city === 'phnom_penh' ? 'Phnom Penh' : 'Siem Reap';
-  const fallbackQuery = locationName ? `${locationName}, ${cityName}, Cambodia` : `${cityName}, Cambodia`;
-  const fallbackUrl = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(fallbackQuery)}`;
-
-  if (!map?.x || !map?.y) return fallbackUrl;
-
-  const lat = typeof map.x === 'number' ? map.x : parseFloat(String(map.x));
-  const lng = typeof map.y === 'number' ? map.y : parseFloat(String(map.y));
-
-  if (isNaN(lat) || isNaN(lng)) return fallbackUrl;
-
-  // Validate coordinates stay within the target city's actual bounds
-  if (city === 'siem_reap') {
-    const inSiemReap = lat >= 13.0 && lat <= 13.7 && lng >= 103.5 && lng <= 104.2;
-    if (!inSiemReap) return fallbackUrl;
-  } else if (city === 'phnom_penh') {
-    const inPhnomPenh = lat >= 11.3 && lat <= 11.8 && lng >= 104.6 && lng <= 105.2;
-    if (!inPhnomPenh) return fallbackUrl;
+/**
+ * Checks if Cloudflare blocked the page and throws an error if necessary.
+ */
+async function checkCloudflareBlock(page: Page, url: string) {
+  const title = await page.title().catch(() => '');
+  if (title.includes('Attention Required') || title.includes('Just a moment') || title.includes('Cloudflare')) {
+    throw new Khmer24SessionExpiredError(`Cloudflare blocked access to: ${url} (Title: "${title}")`);
   }
-
-  // Official universal Google Maps search URL that works accurately on iOS, Android, and Desktop
-  return `https://www.google.com/maps/search/?api=1&query=${lat},${lng}`;
 }
 
-function parseBedrooms(specs?: K24Post['object_highlight_specs']): number | undefined {
-  const val = specs?.bedroom?.value;
-  if (!val || val === 'more') return undefined;
-  const n = parseInt(val, 10);
-  return isNaN(n) ? undefined : n;
+/**
+ * Custom Traffic Guard: Blocks heavy visual assets to save proxy traffic,
+ * but ALLOWS scripts and XHR so Nuxt/Vue can hydrate the page.
+ */
+async function setupRelaxedTrafficGuard(page: Page) {
+  await page.route('**/*', (route) => {
+    const type = route.request().resourceType();
+    const url = route.request().url().toLowerCase();
+
+    // Блокируем ТОЛЬКО тяжелый медиа-контент и шрифты (экономит 95% трафика)
+    if (['image', 'media', 'font'].includes(type)) {
+      return route.abort();
+    }
+    // Блокируем только очевидную стороннюю аналитику
+    if (
+      url.includes('google-analytics') || 
+      url.includes('googletagmanager') ||
+      url.includes('doubleclick') || 
+      url.includes('onesignal')
+    ) {
+      return route.abort();
+    }
+    
+    // Пропускаем всё остальное (scripts, fetch, xhr, document, stylesheet)
+    return route.continue();
+  });
 }
 
-function parseBathrooms(specs?: K24Post['object_highlight_specs']): number | undefined {
-  const val = specs?.bathroom?.value;
-  if (!val || val === 'more') return undefined;
-  const n = parseInt(val, 10);
-  return isNaN(n) ? undefined : n;
-}
-
-function extractSpecsDetails(specs?: K24Post['object_highlight_specs']): string[] {
-  if (!specs) return [];
-  const parts: string[] = [];
-
-  const size = specs.size?.display_value ?? specs.size?.value;
-  if (size) parts.push(`Size: ${size}`);
-
-  const floor = specs.floor?.display_value ?? specs.floor?.value;
-  if (floor) parts.push(`Floor: ${floor}`);
-
-  const furniture = specs.furniture?.display_value ?? specs.furniture?.value;
-  if (furniture) parts.push(`Furniture: ${furniture}`);
-
-  const facing = specs.facing?.display_value ?? specs.facing?.value;
-  if (facing) parts.push(`Facing: ${facing}`);
-
-  const parking = specs.parking?.display_value ?? specs.parking?.value;
-  if (parking) parts.push(`Parking: ${parking}`);
-
-  return parts;
-}
-
-function parsePrice(price: string): number | undefined {
-  const cleaned = price.replace(/[^0-9.]/g, '');
+/**
+ * Parses raw price string to number (e.g. "$ 350" -> 350)
+ */
+function parseRawPrice(priceStr: string): number | undefined {
+  const cleaned = priceStr.replace(/[^0-9.]/g, '');
   const n = parseFloat(cleaned);
   return isNaN(n) ? undefined : n;
 }
 
-/** Map a Khmer24 API post to our internal RawListing schema */
-export function postToRawListing(post: K24Post, target: ScrapeTarget, phone?: string): RawListing {
-  const location = extractLocationText(post.location);
-  const priceRaw = parsePrice(post.price);
-  const mapsUrl = extractMapsUrl(post.location, target.city, location);
-  const listingUrl =
-    post.link ?? post.short_link ?? `https://www.khmer24.com/post-adid-${post.id}`;
-
-  let description = post.description ?? '';
-  const specDetails = extractSpecsDetails(post.object_highlight_specs);
-  if (specDetails.length > 0) {
-    const specsStr = specDetails.join(' · ');
-    if (!description.includes(specsStr)) {
-      description = description ? `${description}\n\n${specsStr}` : specsStr;
-    }
-  }
-
-  const rawDate = (post.renew_date || (post as Record<string, unknown>).posted_at || (post as Record<string, unknown>).created_at) as string | undefined;
-  let postedAt: string | undefined;
-  if (rawDate) {
-    const parsedDate = new Date(rawDate);
-    if (!isNaN(parsedDate.getTime())) {
-      postedAt = parsedDate.toISOString();
-    }
-  }
-
-  return {
-    title: post.title,
-    description,
-    price: priceRaw,
-    currency: 'USD',
-    type: target.type ?? 'rent',
-    category: target.category,
-    location,
-    city: target.city,
-    photos: post.photos ?? [],
-    bedrooms: parseBedrooms(post.object_highlight_specs),
-    bathrooms: parseBathrooms(post.object_highlight_specs),
-    maps_url: mapsUrl,
-    phone,
-    url: listingUrl,
-    source_url: listingUrl,
-    posted_at: postedAt,
-  };
-}
-
-// ─── Browser Feed Fetching ────────────────────────────────────────────────────
-
-async function fetchFeedPage(
+/**
+ * Scrapes individual post URLs from the category feed page.
+ *
+ * Strategy: Khmer24 (Nuxt 3) fully SSR-renders feed data into __NUXT_DATA__.
+ * We load the page once, parse the flat dehydrated payload, resolve the `link`
+ * field for each post, and return absolute URLs — no Vue hydration needed.
+ */
+async function fetchListingUrlsFromFeed(
   ctx: BrowserContext,
   target: ScrapeTarget,
-  offset: number,
-): Promise<K24FeedResponse | null> {
-  const pageUrl = buildFeedPageUrl(target);
-  const apiUrl = buildFeedUrl(target, offset);
-
+  maxLinks = 15,
+): Promise<string[]> {
+  const feedUrl = buildFeedPageUrl(target);
   const page = await ctx.newPage();
-  let feedData: K24FeedResponse | null = null;
+  const links: string[] = [];
 
   try {
-    // 🛡️ IRONCLAD RULE: Block all heavy media, images, stylesheets, and telemetry over proxy
-    await attachTrafficGuard(page);
+    await setupRelaxedTrafficGuard(page);
+    await page.goto(feedUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
+    await checkCloudflareBlock(page, feedUrl);
 
-    // Intercept the API response fired by the page's own JS
-    page.on('response', async (resp) => {
-      const u = resp.url();
-      if (u.startsWith(API_BASE) && !u.includes('/relates')) {
-        try {
-          const json = (await resp.json()) as K24FeedResponse;
-          if (json.data) feedData = json;
-        } catch {
-          // ignore JSON parse errors
+    // Parse Nuxt 3 dehydrated SSR payload — all post data is already in the HTML
+    const extractedLinks = await page.evaluate((max: number) => {
+      const el = document.getElementById('__NUXT_DATA__');
+      if (!el) return [];
+      try {
+        const raw: unknown[] = JSON.parse(el.textContent || '[]');
+        function r(v: unknown): unknown { return typeof v === 'number' ? raw[v as number] : v; }
+
+        // Find feed object: has {total, limit, data} keys
+        for (let i = 0; i < raw.length; i++) {
+          const item = raw[i];
+          if (!item || typeof item !== 'object' || Array.isArray(item)) continue;
+          const obj = item as Record<string, unknown>;
+          if (!('total' in obj) || !('data' in obj) || !('limit' in obj)) continue;
+
+          const dataRef = r(obj.data);
+          if (!dataRef || typeof dataRef !== 'object') continue;
+
+          // dataRef is either an Array or numeric-keyed object of post wrapper refs
+          const postIndices: unknown[] = Array.isArray(dataRef)
+            ? (dataRef as unknown[])
+            : Object.values(dataRef as Record<string, unknown>);
+
+          const urls: string[] = [];
+          for (const idx of postIndices) {
+            if (urls.length >= max) break;
+            const wrapper = r(idx);
+            if (!wrapper || typeof wrapper !== 'object') continue;
+            const w = wrapper as Record<string, unknown>;
+            const postData = r(w.data);
+            if (!postData || typeof postData !== 'object') continue;
+            const p = postData as Record<string, unknown>;
+            // `link` may be relative ("/en/house-adid-123") or absolute URL
+            const link = r(p.link);
+            if (typeof link === 'string' && link.includes('-adid-')) {
+              const absUrl = link.startsWith('http') ? link : 'https://www.khmer24.com' + link;
+              urls.push(absUrl);
+            }
+          }
+
+          if (urls.length > 0) return urls;
         }
+        return [];
+      } catch {
+        return [];
       }
-    });
+    }, maxLinks);
 
-    if (offset === 0) {
-      // Navigate to the front-end page — triggers CF cookie resolution + API call
-      const resp = await page.goto(pageUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
-      const status = resp?.status();
-      const title = await page.title().catch(() => '');
-      if (status === 403 || title.includes('Attention Required') || title.includes('Just a moment')) {
-        throw new Khmer24SessionExpiredError(
-          `Cloudflare 403 / Challenge detected on ${pageUrl} (status: ${status}, title: "${title}")`,
-        );
+    links.push(...extractedLinks);
+
+    // Fallback: if SSR parsing didn't work, wait briefly for Vue and scrape DOM
+    if (links.length === 0) {
+      await page.waitForSelector('a[href*="-adid-"]', { timeout: 8000 }).catch(() => {});
+      const domLinks = await page.evaluate(() =>
+        Array.from(document.querySelectorAll('a[href*="-adid-"]'))
+          .map(a => (a as HTMLAnchorElement).href)
+          .filter(h => !h.includes('/user/'))
+          .map(h => h.split('?')[0]),
+      );
+      const seen = new Set<string>();
+      for (const l of domLinks) {
+        if (seen.has(l) || seen.size >= maxLinks) break;
+        seen.add(l);
+        links.push(l);
       }
-    } else {
-      // For subsequent pages use fetch() in the page context (reuses existing CF cookies)
-      feedData = (await page.evaluate(async (url: string) => {
-        const res = await fetch(url, {
-          headers: { Accept: 'application/json', Referer: 'https://www.khmer24.com/' },
-        });
-        return res.ok ? (res.json() as unknown) : null;
-      }, apiUrl)) as K24FeedResponse | null;
-    }
-
-    // Poll up to 12s for the intercepted response
-    const deadline = Date.now() + 12000;
-    while (!feedData && Date.now() < deadline) {
-      await page.waitForTimeout(300);
-    }
-
-    // Final fallback: in-browser fetch with full cookie context
-    if (!feedData) {
-      feedData = (await page.evaluate(async (url: string) => {
-        const res = await fetch(url, {
-          headers: { Accept: 'application/json', Referer: 'https://www.khmer24.com/' },
-        });
-        return res.ok ? (res.json() as unknown) : null;
-      }, apiUrl)) as K24FeedResponse | null;
     }
   } catch (err: unknown) {
-    if (err instanceof Khmer24SessionExpiredError) {
-      throw err;
-    }
-    const msg = err instanceof Error ? err.message : String(err);
-    console.warn(`⚠️  [Scraper] fetchFeedPage error: ${msg}`);
+    console.warn(`⚠️  [Feed Scraper] Error on ${feedUrl}:`, err instanceof Error ? err.message : String(err));
   } finally {
     await page.close().catch(() => {});
   }
 
-  return feedData;
+  return links;
 }
 
-async function fetchPostPhone(ctx: BrowserContext, adId: string): Promise<string | undefined> {
+/**
+ * Scrapes a single listing detail page using JSON-LD Schema.org data.
+ *
+ * Khmer24 injects a `Product` + `Offer` schema into every detail page:
+ *   - description: full post text (no masks)
+ *   - offers.price / offers.priceCurrency: clean numeric price in USD
+ *   - offers.seller.telephone[]: array of UNMASKED phone numbers
+ *   - image[]: array of high-res photo URLs (-b.jpg)
+ *   - offers.seller.address.streetAddress: district-level location
+ *
+ * Falls back to DOM extraction if JSON-LD is missing or malformed.
+ */
+async function scrapeListingDetail(ctx: BrowserContext, target: ScrapeTarget, url: string): Promise<RawListing | null> {
   const page = await ctx.newPage();
-  let phone: string | undefined;
+  let listing: RawListing | null = null;
 
   try {
-    // 🛡️ IRONCLAD RULE: Block all heavy media, images, stylesheets, and telemetry over proxy
-    await attachTrafficGuard(page);
+    await setupRelaxedTrafficGuard(page);
+    await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 25000 });
+    await checkCloudflareBlock(page, url);
 
-    // Listen for any API response that might contain the phone number
-    page.on('response', async (resp) => {
-      const u = resp.url();
-      if (u.includes('khmer24') && (u.includes('contact') || u.includes('phone'))) {
+    // ── Primary: extract from JSON-LD (no hydration needed, pure SSR) ──────────
+    const extracted = await page.evaluate(() => {
+      // Khmer24 injects a `Product` schema in <script type="application/ld+json">
+      const ldScripts = Array.from(document.querySelectorAll('script[type="application/ld+json"]'));
+      for (const script of ldScripts) {
         try {
-          const json = (await resp.json()) as Record<string, unknown>;
-          const txt = JSON.stringify(json);
-          const m = /(?:phone|tel|mobile)["\s:]+["']?(\+?855[\d\s-]{6,12}|0\d{8,9})/.exec(txt);
-          if (m?.[1]) phone = m[1].trim();
+          const raw = JSON.parse(script.textContent || '[]');
+          // The data is an array: find the Product entry
+          const items = Array.isArray(raw) ? raw : [raw];
+          for (const item of items) {
+            if (item['@type'] !== 'Product' || !item.name) continue;
+
+            const offer = item.offers || {};
+            const seller = offer.seller || {};
+            const address = seller.address || {};
+
+            // Price: offer.price is already a clean number string e.g. "1300.00"
+            const priceStr: string = String(offer.price || '');
+            const price = parseFloat(priceStr.replace(/[^0-9.]/g, '')) || undefined;
+            const currency: string = offer.priceCurrency || 'USD';
+
+            // Phones: seller.telephone is string | string[] — all unmasked
+            const rawPhones = seller.telephone;
+            const phones: string[] = Array.isArray(rawPhones)
+              ? rawPhones
+              : rawPhones ? [rawPhones] : [];
+
+            // Photos: item.image is string | string[]
+            const rawImages = item.image;
+            const photos: string[] = Array.isArray(rawImages)
+              ? rawImages
+              : rawImages ? [rawImages] : [];
+
+            // Location: street address is the most precise (district level)
+            const location: string = address.streetAddress || address.addressLocality || '';
+
+            return {
+              title: item.name as string,
+              description: item.description as string || '',
+              price,
+              currency,
+              phone: phones[0] || '',
+              allPhones: phones,
+              photos,
+              location,
+            };
+          }
         } catch {
-          // ignore
+          // malformed JSON-LD — skip
         }
       }
+      return null;
     });
 
-    await page.goto(`https://www.khmer24.com/post-adid-${adId}`, {
-      waitUntil: 'domcontentloaded',
-      timeout: 20000,
-    });
-    await page.waitForTimeout(3000);
+    if (extracted && extracted.title) {
+      // ✅ JSON-LD succeeded — rich structured data
+      const phone = extracted.allPhones.find(p => p && !p.toUpperCase().includes('X'))
+        ?? extracted.allPhones[0];
 
-    // Click "Show Phone" button if present
-    const phoneBtn = page
-      .locator('[class*=phone] button, button[class*=phone], [class*=contact] button, [data-phone]')
-      .first();
-    if ((await phoneBtn.count()) > 0) {
-      await phoneBtn.click();
-      await page.waitForTimeout(2000);
-    }
+      listing = {
+        title: extracted.title,
+        description: extracted.description,
+        price: extracted.price,
+        currency: extracted.currency as 'USD' | 'KHR',
+        type: target.type ?? 'rent',
+        category: target.category,
+        location: extracted.location || undefined,
+        city: target.city,
+        photos: extracted.photos,
+        phone: phone || undefined,
+        url,
+        source_url: url,
+      };
+    } else {
+      // ── Fallback: DOM extraction (CSS selectors + visible text) ────────────
+      // Wait for h1 to confirm page rendered
+      await page.waitForSelector('h1', { timeout: 8000 }).catch(() => {});
 
-    // Extract from tel: links in DOM
-    if (!phone) {
-      const telLinks = await page.locator('a[href^="tel:"]').all();
-      for (const link of telLinks) {
-        const href = await link.getAttribute('href');
-        if (href && !href.toUpperCase().includes('X')) {
-          phone = href.replace(/^tel:/i, '').trim();
-          break;
-        }
-      }
-    }
+      const domData = await page.evaluate(() => {
+        const h1 = document.querySelector('h1')?.textContent?.trim() || '';
 
-    // Extract from phone/contact elements in DOM (unmasked when authenticated)
-    if (!phone) {
-      const phoneElements = page.locator(
-        '[class*="contact"] a, [class*="phone"] a, .phone-number, [data-phone], [class*="contact-phone"]',
-      );
-      const count = await phoneElements.count();
-      for (let i = 0; i < count; i++) {
-        const text = (await phoneElements.nth(i).innerText()).trim();
-        const m = /(\+855[\d\s-]{6,12}|0\d{1,2}[\s-]?\d{3}[\s-]?\d{3,4})/.exec(text);
-        if (m?.[1] && !m[1].toUpperCase().includes('X')) {
-          phone = m[1].trim();
-          break;
-        }
-      }
-    }
+        // Price: Khmer24 uses text-error-500 for the price text
+        const priceEl =
+          document.querySelector('[class*="text-error-500"]') ||
+          document.querySelector('[class*="price"]');
+        const priceText = priceEl?.textContent?.trim() || '';
 
-    // Extract from visible page text as final fallback
-    if (!phone) {
-      const bodyText = (await page.evaluate(
-        () => (globalThis as unknown as { document: { body: { innerText: string } } }).document.body.innerText,
-      )) as string;
-      const m = /(\+855[\d\s-]{6,10}|0\d{1,2}[\s-]?\d{3}[\s-]?\d{3,4})/.exec(bodyText);
-      if (m?.[1] && !m[1].toUpperCase().includes('X')) phone = m[1].trim();
-    }
+        // Description: whitespace-break-spaces paragraph is the post body
+        const descEl = document.querySelector('[class*="whitespace-break-spaces"]');
+        const description = descEl?.textContent?.trim() || '';
 
-    // Never return masked phone numbers ending in XXX
-    if (phone && phone.toUpperCase().includes('X')) {
-      phone = undefined;
+        // Photos from img src
+        const imgs: string[] = [];
+        document.querySelectorAll('img').forEach(img => {
+          const src = img.getAttribute('data-src') || img.getAttribute('src') || '';
+          if (src.includes('images.khmer24.co')) {
+            const hi = src.replace(/-[a-z]\.jpg$/i, '-b.jpg');
+            if (!imgs.includes(hi)) imgs.push(hi);
+          }
+        });
+
+        // Phones from tel: links
+        const phones = Array.from(document.querySelectorAll('a[href^="tel:"]'))
+          .map(a => a.getAttribute('href')?.replace(/^tel:/i, '') || '')
+          .filter(p => p && !p.toUpperCase().includes('X'));
+
+        return { h1, priceText, description, photos: imgs, phones };
+      });
+
+      if (!domData.h1) return null;
+
+      listing = {
+        title: domData.h1,
+        description: domData.description,
+        price: parseRawPrice(domData.priceText),
+        currency: 'USD',
+        type: target.type ?? 'rent',
+        category: target.category,
+        location: undefined,
+        city: target.city,
+        photos: domData.photos,
+        phone: domData.phones[0] || undefined,
+        url,
+        source_url: url,
+      };
     }
   } catch (err: unknown) {
-    const msg = err instanceof Error ? err.message : String(err);
-    console.warn(`⚠️  [Scraper] fetchPostPhone(${adId}) error: ${msg}`);
+    if (err instanceof Khmer24SessionExpiredError) throw err;
+    console.warn(`⚠️  [Detail Scraper] Error on ${url}:`, err instanceof Error ? err.message : String(err));
   } finally {
     await page.close().catch(() => {});
+    await new Promise(r => setTimeout(r, Math.random() * 2000 + 1000)); // Gentle jitter
   }
 
-  return phone;
+  return listing;
 }
 
 // ─── Target Scraper ───────────────────────────────────────────────────────────
@@ -541,89 +378,48 @@ async function fetchPostPhone(ctx: BrowserContext, adId: string): Promise<string
 export async function scrapeTargetWithBrowser(
   browser: Browser,
   target: ScrapeTarget,
-  maxListings = 20,
+  maxListings = 15,
 ): Promise<RawListing[]> {
   console.log(`\n🔎 Scraping [${target.name}]...`);
   const listings: RawListing[] = [];
 
   const contextOptions: Parameters<Browser['newContext']>[0] = {
-    userAgent:
-      'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+    userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
     viewport: { width: 1280, height: 800 },
     extraHTTPHeaders: { 'Accept-Language': 'en-US,en;q=0.9' },
   };
 
   if (fs.existsSync(K24_SESSION_PATH)) {
     contextOptions.storageState = K24_SESSION_PATH;
-    console.log('🔑 [Khmer24] Using saved authenticated session from data/k24_session.json');
-  } else {
-    console.log('ℹ️  [Khmer24] Running unauthenticated. For 100% unmasked phone numbers, run: npm run k24:login');
   }
 
   const ctx = await browser.newContext(contextOptions);
 
   try {
-    let offset = 0;
-    let totalFetched = 0;
+    // 1. Get raw URLs from feed
+    const urls = await fetchListingUrlsFromFeed(ctx, target, maxListings);
+    console.log(`  🔗 Found ${urls.length} raw URLs in feed.`);
 
-    while (totalFetched < maxListings) {
-      const feedData = await fetchFeedPage(ctx, target, offset);
-
-      if (!feedData || !feedData.data?.length) {
-        console.log(`  No more results at offset ${offset}.`);
-        break;
+    // 2. Process each URL
+    for (const url of urls) {
+      console.log(`  📄 Processing: ${url.split('/').pop()}`);
+      const listing = await scrapeListingDetail(ctx, target, url);
+      if (listing) {
+        if (listing.phone) console.log(`  📞 Phone extracted: ${listing.phone}`);
+        listings.push(listing);
       }
-
-      const allPosts = feedData.data
-        .filter(
-          (item): item is { type: 'post'; data: K24Post } =>
-            item.type === 'post' && !!item.data,
-        )
-        .map((item) => item.data);
-
-      // Filter out paid/bumped posts (type="top"|"featured") — only "normal"/"new" are fresh
-      const posts = allPosts.filter((p) => {
-        const t = String(p.type ?? 'normal').toLowerCase();
-        return t === 'normal' || t === 'new';
-      });
-      const skippedVip = allPosts.length - posts.length;
-
-      console.log(
-        `  offset=${offset}: ${allPosts.length} posts ` +
-          `(${skippedVip} VIP skipped, ${posts.length} organic) | ` +
-          `total available: ${feedData.total}`,
-      );
-
-      const toProcess = posts.slice(0, maxListings - totalFetched);
-
-      for (const post of toProcess) {
-        let phone: string | undefined;
-        try {
-          phone = await fetchPostPhone(ctx, post.id);
-          if (phone) console.log(`  📞 Phone for "${post.title?.slice(0, 35)}": ${phone}`);
-        } catch {
-          // Phone is optional
-        }
-
-        listings.push(postToRawListing(post, target, phone));
-        await new Promise<void>((r) => setTimeout(r, 800));
-      }
-
-      totalFetched += toProcess.length;
-      offset += feedData.limit;
-      if (offset >= feedData.total) break;
     }
   } finally {
     await ctx.close().catch(() => {});
   }
 
-  console.log(`  ✅ Scraped ${listings.length} listings from [${target.name}]`);
+  console.log(`  ✅ Successfully extracted ${listings.length} listings from [${target.name}]`);
   return listings;
 }
 
 // ─── Backward-compatible stubs (used in tests) ───────────────────────────────
 
-/** @deprecated Superseded by the JSON API scraper. Kept for test imports. */
+/** @deprecated Superseded by the Playwright scraper. Kept for test imports. */
 export function parseKhmer24DetailHtml(
   _html: string,
   detailUrl: string,
@@ -631,27 +427,16 @@ export function parseKhmer24DetailHtml(
   city: 'siem_reap' | 'phnom_penh' = 'siem_reap',
 ): RawListing | null {
   return {
-    title: '',
-    description: '',
-    price: undefined,
-    currency: 'USD',
-    type: 'rent',
-    category,
-    location: 'Siem Reap',
-    city,
-    photos: [],
-    url: detailUrl,
-    source_url: detailUrl,
+    title: '', description: '', price: undefined, currency: 'USD',
+    type: 'rent', category, location: 'Siem Reap', city,
+    photos: [], url: detailUrl, source_url: detailUrl,
   };
 }
 
 /** Converts thumbnail CDN URL to full-resolution. Retained for test compatibility. */
 export function toHighResImageUrl(url: string): string {
   if (!url) return '';
-  return url
-    .replace(/\/thumbs\//i, '/uploads/')
-    .replace(/\/s\//i, '/l/')
-    .replace(/\/m\//i, '/l/');
+  return url.replace(/\/thumbs\//i, '/uploads/').replace(/\/s\//i, '/l/').replace(/\/m\//i, '/l/');
 }
 
 // ─── Main Ingestion Runner ────────────────────────────────────────────────────
@@ -663,7 +448,7 @@ export async function runKhmer24Scraper(containerInstance?: AppContainer): Promi
   errors: number;
 }> {
   console.log('═══════════════════════════════════════════════════════════════');
-  console.log('🤖 Khmer24 Scraper (API via Playwright Stealth) — HomEasy');
+  console.log('🤖 Khmer24 Scraper (Classic DOM + AI-First) — HomEasy');
   console.log('═══════════════════════════════════════════════════════════════');
 
   const container = containerInstance ?? createContainer();
@@ -676,20 +461,17 @@ export async function runKhmer24Scraper(containerInstance?: AppContainer): Promi
   let browser: Browser | null = null;
 
   try {
+    const isLocal = process.argv.includes('--local');
+    const proxyConfig = (!isLocal && process.env.PROXY_URL) ? { server: process.env.PROXY_URL } : undefined;
+    
     browser = await chromium.launch({
-      headless: true,
+      headless: true, // You can switch this to false for debugging
+      proxy: proxyConfig,
       args: [
-        '--no-sandbox',
-        '--disable-setuid-sandbox',
-        '--disable-dev-shm-usage',
-        '--disable-gpu',
-        '--no-zygote',
-        '--disable-extensions',
-        '--disable-default-apps',
-        '--mute-audio',
-        '--disable-background-networking',
-        '--disable-blink-features=AutomationControlled',
-        '--disable-infobars',
+        '--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage',
+        '--disable-gpu', '--no-zygote', '--disable-extensions',
+        '--disable-default-apps', '--mute-audio', '--disable-background-networking',
+        '--disable-blink-features=AutomationControlled', '--disable-infobars',
         '--js-flags=--max-old-space-size=128',
       ],
     });
@@ -698,16 +480,14 @@ export async function runKhmer24Scraper(containerInstance?: AppContainer): Promi
       try {
         const listings = await scrapeTargetWithBrowser(browser, target, 10);
         totalScraped += listings.length;
-        console.log(`\n📥 Ingesting ${listings.length} listings from [${target.name}]...`);
-
+        
         for (const listing of listings) {
           try {
+            // Send straight to AI-First pipeline
             const result = await container.ingestionService.ingestRawListing(listing);
             if (result.status === 'inserted') {
               totalInserted++;
-              console.log(
-                `  ✅ Inserted: "${listing.title?.slice(0, 40)}" (ID #${result.propertyId})`,
-              );
+              console.log(`  ✅ Inserted: "${listing.title?.slice(0, 40)}" (ID #${result.propertyId})`);
             } else if (result.status === 'duplicate') {
               totalDuplicates++;
               console.log(`  🔁 Duplicate: "${listing.title?.slice(0, 40)}"`);
@@ -717,35 +497,25 @@ export async function runKhmer24Scraper(containerInstance?: AppContainer): Promi
             }
           } catch (err: unknown) {
             totalErrors++;
-            console.error(
-              `  ❌ Ingest error: ${err instanceof Error ? err.message : String(err)}`,
-            );
+            console.error(`  ❌ Ingest error: ${err instanceof Error ? err.message : String(err)}`);
           }
         }
       } catch (err: unknown) {
         if (err instanceof Khmer24SessionExpiredError) {
           console.error(`💥 Khmer24 session expired or Cloudflare 403 blocked: ${err.message}`);
-          console.error('📢 Sending high-priority alert to administrators...');
           await container.notifierService.notifyAdmins(
-            '⚠️ Khmer24 session expired or Cloudflare 403 blocked. Run <code>npm run k24:login</code> on the server.',
-          );
+            '⚠️ Khmer24 session expired or Cloudflare 403 blocked. Check proxy or run `npm run k24:login`',
+          ).catch(() => {});
           totalErrors++;
-          // Halt further Khmer24 targets in this cycle so it moves immediately to Facebook
-          break;
+          break; // Halt Khmer24 loop on CF block
         } else {
           totalErrors++;
-          console.error(
-            `💥 Error processing Khmer24 target [${target.name}]:`,
-            err instanceof Error ? err.message : String(err),
-          );
+          console.error(`💥 Error processing Khmer24 target [${target.name}]:`, err instanceof Error ? err.message : String(err));
         }
       }
     }
   } catch (err: unknown) {
-    console.error(
-      '💥 Fatal scraper error:',
-      err instanceof Error ? err.message : String(err),
-    );
+    console.error('💥 Fatal scraper error:', err instanceof Error ? err.message : String(err));
   } finally {
     if (browser) await browser.close().catch(() => {});
     await container.notifierService.flushNotificationQueue().catch((err) => console.error('[Notifier] Flush error:', err));
@@ -759,21 +529,13 @@ export async function runKhmer24Scraper(containerInstance?: AppContainer): Promi
   console.log(`   ❌ Errors     : ${totalErrors}`);
   console.log('═══════════════════════════════════════════════════════════════\n');
 
-  return {
-    totalScraped,
-    inserted: totalInserted,
-    duplicates: totalDuplicates,
-    errors: totalErrors,
-  };
+  return { totalScraped, inserted: totalInserted, duplicates: totalDuplicates, errors: totalErrors };
 }
 
 // ─── CLI entry point ──────────────────────────────────────────────────────────
-
 if (require.main === module) {
-  runKhmer24Scraper()
-    .then(() => process.exit(0))
-    .catch((err) => {
-      console.error('💥 Fatal:', err);
-      process.exit(1);
-    });
+  runKhmer24Scraper().then(() => process.exit(0)).catch((err) => {
+    console.error('💥 Fatal:', err);
+    process.exit(1);
+  });
 }
