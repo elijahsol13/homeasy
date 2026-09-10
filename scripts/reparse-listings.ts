@@ -212,42 +212,12 @@ async function reparseFacebook(db: any, _limit?: number): Promise<void> {
 
 const DISCOVERED_REPORT_PATH = path.join(process.cwd(), 'data', 'discovered_features_report.json');
 
-const COMPREHENSIVE_AGGREGATOR_INSTRUCTION = `You are a world-class real estate and hotel intelligence extraction engine (operating at the level of Airbnb Plus, Booking.com, and Zillow).
-Translate all Khmer and foreign text to English.
-Analyze the listing text with extreme attention to detail. Extract standard property data AND actively discover all amenities, repeating features, and lease conditions.
-
-Return a JSON object matching this schema:
-{
-  "is_real_estate": boolean,
-  "title": string,
-  "price": number | null,
-  "currency": "USD" | "KHR",
-  "category": "apartment" | "house" | "room" | "hotel" | "land",
-  "property_type": "Flat House" | "Private Villa" | "Private House" | "Condo" | "Apartment" | "Hotel Room" | "Room" | null,
-  "bedrooms": number | null,
-  "bathrooms": number | null,
-  "deposit_months": number | null,
-  "min_lease_months": number | null,
-  "has_pool": boolean,
-  "electricity": "Included" | "EDC (State Rate) ~$0.20/kWh" | string | null,
-  "water": "Included" | "State Rate (~1000៛/m³)" | string | null,
-  "cleaning": "1x/week Free" | "2x/week Included" | string | null,
-  "pet_friendly": boolean | null,
-  "restrictions": string[],
-  "landmarks": string[],
-  "location": string | null,
-  "description_en": string,
-  "discovered_amenities": string[]
-}
-
-GUIDELINES FOR discovered_amenities:
-Inspect for and extract ALL features mentioned in the text. Normalize them to clean English names, such as:
-- Utilities & Building: "Backup Generator", "Elevator", "24/7 Security Guard", "CCTV", "Gated Community (Borey)", "Free WiFi", "Free Garbage Collection", "Keycard Access"
-- Comfort & Appliances: "Washing Machine", "Clothes Dryer", "Hot Water Heater", "Bathtub", "Western Kitchen", "Gas Stove", "Oven", "Microwave", "Refrigerator", "Smart TV", "Air Conditioning", "Ceiling Fan", "Work Desk"
-- Outdoor & Views: "Balcony", "Private Terrace", "Rooftop Access", "Garden", "River View", "Pool View", "City View", "BBQ Area"
-- Parking: "Car Parking", "Motorbike Parking", "Bicycle Parking"
-- Services & Terms: "Cleaning Service", "Bed Linen Change", "Drinking Water Provided", "Foreigner Friendly", "Digital Nomad Friendly"
-Do NOT invent features not mentioned in the text.`;
+// NOTE: previously this file sent a custom "COMPREHENSIVE_AGGREGATOR_INSTRUCTION" prompt
+// that asked the model for a different field schema (`title`/`deposit_months`/`min_lease_months`
+// instead of `title_en`/`deposit`/`min_lease`). extractListingsBatchWithLLM's sanitizeLlmResult()
+// only reads the standard field names (same ones used during live scraping), so title_en always
+// came back empty and the title/description rewrite below silently never applied. We now reuse
+// the same default SYSTEM_INSTRUCTIONS as live scraping (extractor.ts) for consistency.
 
 export const FEATURE_PROPOSAL_THRESHOLD_PERCENT = 2.0; // 2.0% of total active database
 
@@ -366,7 +336,13 @@ async function runGeminiEnrichment(db: any, limit?: number): Promise<void> {
     console.log(`🚀 [Batch ${Math.floor(i / BATCH_SIZE) + 1}/${Math.ceil(targets.length / BATCH_SIZE)}] Processing listings: ${chunk.map((c) => `#${c.id}`).join(', ')}...`);
 
     const startTime = Date.now();
-    const batchResults = await extractListingsBatchWithLLM(batchInput, COMPREHENSIVE_AGGREGATOR_INSTRUCTION);
+    // Use the SAME standard instructions as live scraping (extractor.ts's default
+    // SYSTEM_INSTRUCTIONS), not the old COMPREHENSIVE_AGGREGATOR_INSTRUCTION — that
+    // custom prompt asked the model for a different field schema (`title` instead of
+    // `title_en`, `deposit_months` instead of `deposit`), and sanitizeLlmResult() only
+    // reads the standard field names. The result: aiResult.title_en always came back
+    // empty, so the title/description rewrite below silently never applied.
+    const batchResults = await extractListingsBatchWithLLM(batchInput);
     const duration = Date.now() - startTime;
     console.log(`   ⏱️ Gemini response received in ${(duration / 1000).toFixed(1)}s (extracted ${batchResults.size}/${chunk.length} items)`);
 
