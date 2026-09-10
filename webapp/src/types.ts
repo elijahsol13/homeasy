@@ -1,4 +1,4 @@
-export type CityKey = 'siem_reap' | 'phnom_penh' | 'sihanoukville';
+export type CityKey = 'siem_reap' | 'phnom_penh';
 
 export interface PropertyDTO {
   id: number;

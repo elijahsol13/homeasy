@@ -48,3 +48,24 @@ data/reparse_checkpoint.json
 data/ai_extraction_eval.json
 data/discovered_features_report.json
 
+# Archived/legacy one-off debug & PoC scripts (kept locally, not shipped)
+scripts/_archive/
+
+# Persistent Playwright disk cache for proxy bandwidth conservation — KEEP ON DISK,
+# never delete this folder, just don't track it in git (large, binary, host-specific).
+data/browser_cache/
+
+# Scraper debug dumps & runtime artifacts (never source of truth, regenerated on each run)
+data/*.html
+data/fb_js/
+data/fb_error_dumps/
+data/fb_debug_resp.json
+data/fb_doc_id.txt
+data/fb_groups_state.json
+data/scraper_state.json
+data/database.sqlite
+data/homeasy_before.db*
+data/homeasy_backup_final.db
+js_urls.txt
+scratch.html
+

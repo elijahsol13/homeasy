@@ -6,6 +6,7 @@ services:
       dockerfile: Dockerfile
     container_name: homeasy-bot
     restart: unless-stopped
+    stop_grace_period: 60s
     command: npm run start:bot
     environment:
       - NODE_ENV=production
@@ -33,6 +34,10 @@ services:
       dockerfile: Dockerfile
     container_name: homeasy-scraper
     restart: unless-stopped
+    # Long grace period: VACUUM INTO backups and full-table enrichment scans are
+    # synchronous (node:sqlite) and can exceed Docker's 10s default, causing
+    # SIGKILL mid-write and SQLite corruption ("database disk image is malformed").
+    stop_grace_period: 120s
     command: npm run start:scraper
     environment:
       - NODE_ENV=production
@@ -60,6 +65,7 @@ services:
       dockerfile: Dockerfile
     container_name: homeasy-api
     restart: unless-stopped
+    stop_grace_period: 30s
     command: npm run start:api
     ports:
       - "127.0.0.1:3000:3000"

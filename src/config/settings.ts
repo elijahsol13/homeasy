@@ -12,7 +12,6 @@ export const RATE_LIMIT = {
 export const CITIES = {
   siem_reap: 'Siem Reap',
   phnom_penh: 'Phnom Penh',
-  sihanoukville: 'Sihanoukville',
 } as const;
 
 export type CityKey = keyof typeof CITIES;
@@ -43,14 +42,6 @@ export const DISTRICTS: Record<CityKey, readonly string[]> = {
     'Dangkao',
     'Por Sen Chey',
     'Chbar Ampov',
-  ],
-  sihanoukville: [
-    'Sangkat 1',
-    'Sangkat 2',
-    'Sangkat 3',
-    'Sangkat 4',
-    'Prey Nob',
-    'Koh Rong',
   ],
 };
 
@@ -198,15 +189,5 @@ export const FB_GROUPS: readonly FBGroupConfig[] = [
     name: 'Siem Reap Buy and Sell',
     url: 'https://www.facebook.com/groups/youthfitness2014?sorting_setting=CHRONOLOGICAL',
     city: 'siem_reap',
-  },
-  {
-    name: 'Rent of real estate Kampot, Kep and Sihanoukville',
-    url: 'https://www.facebook.com/groups/1429813247347963?sorting_setting=CHRONOLOGICAL',
-    city: 'sihanoukville',
-  },
-  {
-    name: 'Sihanoukville Real Estate',
-    url: 'https://www.facebook.com/groups/sihanoukvillerealestate?sorting_setting=CHRONOLOGICAL',
-    city: 'sihanoukville',
   },
 ] as const;
