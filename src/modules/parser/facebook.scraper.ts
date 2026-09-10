@@ -37,7 +37,7 @@ import {
 import { attachTrafficGuard } from './traffic-guard';
 import { FB_GROUPS, type CityKey, type PropertyCategory } from '../../config/settings';
 import { loadGroupState, saveGroupState, FBGroupState } from './fb-state';
-import { fetchPostAnonymous } from './fb-worker';
+import { fetchPostTextAnonymous, type FetchedFbPost } from './fb-worker';
 import {
   extractBedrooms,
   extractBathrooms,
@@ -922,25 +922,91 @@ export async function scrapeFacebookGroup(
     const listings: RawListing[] = [];
     // Process up to maxPosts from the queue
     const itemsToProcess = state.pendingQueue.splice(0, maxPosts);
-    
+
     if (itemsToProcess.length > 0) {
         console.log(`   Worker processing ${itemsToProcess.length} posts from queue...`);
+
+        // Phase 1: fetch raw post text/photos for the whole batch first (no LLM calls
+        // yet). Still throttled between HTTP fetches to stay gentle on Facebook.
+        const fetched: FetchedFbPost[] = [];
         for (const url of itemsToProcess) {
-            const listing = await fetchPostAnonymous(url, target);
-            if (listing) {
-                listings.push(listing);
-            }
+            const post = await fetchPostTextAnonymous(url);
+            if (post) fetched.push(post);
             await new Promise(r => setTimeout(r, 1500));
         }
+
+        // Phase 2: send all fetched posts through Gemini in micro-batches, then
+        // finish building each RawListing via the existing single-post merge logic
+        // (parseFacebookPostText), reusing its precomputedLlm hook to skip a second
+        // per-post LLM call.
+        const llmResults = await batchExtractFbPosts(fetched);
+        for (let i = 0; i < fetched.length; i++) {
+            const post = fetched[i]!;
+            const precomputedLlm = llmResults.has(i) ? llmResults.get(i)! : null;
+            try {
+                const listing = await parseFacebookPostText(post.text, target, post.postUrl, post.photos, undefined, precomputedLlm);
+                if (listing) listings.push(listing);
+            } catch (err: unknown) {
+                console.warn(`   ⚠️ Failed to parse post ${post.postUrl}:`, err instanceof Error ? err.message : String(err));
+            }
+        }
+
         saveGroupState(groupId, state);
     }
-    
+
     return {
         listings,
         wireBytes: 0,
         cachedHits: 0,
         networkHits: itemsToProcess.length
     };
+}
+
+/** Number of posts sent per Gemini request — balances token cost vs. per-item accuracy. */
+const FB_LLM_BATCH_SIZE = 6;
+
+/**
+ * Batches fetched Facebook post texts through `extractListingsBatchWithLLM` in
+ * groups of `FB_LLM_BATCH_SIZE` to conserve Gemini quota (mirrors the batching
+ * pattern used by `khmer24.scraper.ts` and `scripts/reparse-listings.ts`).
+ * Obvious spam is pre-filtered before spending any quota on it. Returns a map
+ * keyed by the post's index in `fetched`; callers should treat a missing key
+ * as "no LLM data for this post" and fall back to heuristics-only extraction
+ * (via `parseFacebookPostText`'s existing regex fallbacks) rather than firing
+ * an extra single-post LLM call.
+ */
+export async function batchExtractFbPosts(fetched: FetchedFbPost[]): Promise<Map<number, LLMExtractedListing>> {
+  const results = new Map<number, LLMExtractedListing>();
+  if (fetched.length === 0) return results;
+
+  const candidateIndices: number[] = [];
+  fetched.forEach((post, idx) => {
+    const spamCheck = isNonRealEstateSpam(post.text.slice(0, 100), post.text);
+    if (spamCheck.isSpam) {
+      console.log(`   ⏩ [Skipped - Spam] ${spamCheck.reason}`);
+      return;
+    }
+    candidateIndices.push(idx);
+  });
+
+  for (let i = 0; i < candidateIndices.length; i += FB_LLM_BATCH_SIZE) {
+    const chunkIndices = candidateIndices.slice(i, i + FB_LLM_BATCH_SIZE);
+    const batchInput = chunkIndices.map((idx) => ({ id: idx, text: fetched[idx]!.text }));
+
+    console.log(
+      `   🚀 [AI Batch ${Math.floor(i / FB_LLM_BATCH_SIZE) + 1}/${Math.ceil(candidateIndices.length / FB_LLM_BATCH_SIZE)}] Rewriting ${batchInput.length} posts with Gemini...`,
+    );
+    try {
+      const batchResult = await extractListingsBatchWithLLM(batchInput);
+      for (const [id, llm] of batchResult) {
+        results.set(Number(id), llm);
+      }
+    } catch (err: unknown) {
+      console.warn(`   ⚠️ [AI Batch] Failed, remaining posts in this chunk fall back to heuristics: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
+  return results;
 }
 export async function reparseFacebookViaGroupFeed(
   containerInstance?: AppContainer,
