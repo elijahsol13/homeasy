@@ -4,7 +4,20 @@ import crypto from 'crypto';
 import { RawListing } from './schemas';
 import { FBGroupTarget, parseFacebookPostText } from './facebook.scraper';
 
-export async function fetchPostAnonymous(postUrl: string, target: FBGroupTarget): Promise<RawListing | null> {
+export interface FetchedFbPost {
+    postUrl: string;
+    text: string;
+    photos: string[];
+}
+
+/**
+ * Fetches and extracts the raw post text/photos for a permalink WITHOUT calling
+ * the LLM. Split out from `fetchPostAnonymous` so callers (namely `scrapeFacebookGroup`)
+ * can fetch a whole batch of posts first, then send them through
+ * `extractListingsBatchWithLLM` together in a single micro-batched request instead
+ * of one Gemini call per post.
+ */
+export async function fetchPostTextAnonymous(postUrl: string): Promise<FetchedFbPost | null> {
     const headers = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
         'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
@@ -21,7 +34,7 @@ export async function fetchPostAnonymous(postUrl: string, target: FBGroupTarget)
         console.warn(`[Worker] HTTP failed for ${postUrl}: ${e.message}`);
         return null;
     }
-    
+
     // Check for login wall vs SSR content
     if (!html.includes('GroupsCometLoggedOutPermalinkQuery')) {
         // Not the expected SSR. Might be an error or pure login wall.
@@ -38,28 +51,36 @@ export async function fetchPostAnonymous(postUrl: string, target: FBGroupTarget)
         }
 
         const data = JSON.parse(match[1]);
-        
+
         // Locate the post text in the nested GraphQL structure
         // Usually: data.group.group_feed.edges[0].node.comet_sections.message.story_body.text
         // We'll use a deep search for the text field to be robust against schema changes
-        let postText = extractText(data);
-        
+        const postText = extractText(data);
+
         if (!postText) {
             dumpErrorHtml(postUrl, html, 'no_text_extracted');
             return null;
         }
 
         const photos: string[] = []; // Getting images securely out of this deeply nested JSON is harder, let's leave empty for now
-        
-        // Use the unified parser which invokes the LLM to clean, translate, and format
-        const listing = await parseFacebookPostText(postText, target, postUrl, photos);
-        return listing;
 
+        return { postUrl, text: postText, photos };
     } catch (e: any) {
         dumpErrorHtml(postUrl, html, 'parse_error');
         console.warn(`[Worker] Parse error on ${postUrl}: ${e.message}`);
         return null;
     }
+}
+
+/**
+ * Single-post convenience wrapper (fetch + LLM extraction). Prefer batching via
+ * `fetchPostTextAnonymous` + `extractListingsBatchWithLLM` when processing more
+ * than one post, to conserve Gemini quota.
+ */
+export async function fetchPostAnonymous(postUrl: string, target: FBGroupTarget): Promise<RawListing | null> {
+    const fetched = await fetchPostTextAnonymous(postUrl);
+    if (!fetched) return null;
+    return parseFacebookPostText(fetched.text, target, fetched.postUrl, fetched.photos);
 }
 
 function dumpErrorHtml(url: string, html: string, reason: string) {
