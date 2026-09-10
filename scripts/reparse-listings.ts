@@ -634,7 +634,7 @@ async function runGeminiEnrichment(db: any, limit?: number): Promise<void> {
       if (cls.class !== 'unclear' && row.is_active !== 0) {
         try {
           db.prepare(
-            `UPDATE properties SET is_active = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE id = ?`,
+            `UPDATE properties SET is_active = ?, type = 'sale', updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE id = ?`,
           ).run(0, row.id);
           console.log(`   🚫 #${row.id}: ${cls.class} — ${cls.reason}`);
         } catch (err: unknown) {
@@ -742,9 +742,11 @@ async function runGeminiEnrichment(db: any, limit?: number): Promise<void> {
       if (aiResult) {
         if (aiResult.is_real_estate === false) {
           patch.is_active = 0;
+          patch.type = 'sale';
           console.log(`   🚫 #${row.id}: Skipped: LLM flagged as non-real-estate / commercial / spam`);
           // If it's not real estate, we don't care about other fields, but we should update the DB.
         } else {
+          patch.type = 'rent';
           if (aiResult.title_en && aiResult.title_en !== row.title) {
             patch.title = aiResult.title_en;
           }

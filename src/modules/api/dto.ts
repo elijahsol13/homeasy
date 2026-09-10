@@ -82,7 +82,10 @@ export function toPropertyDTO(property: Property, isFavorite?: boolean): Propert
   const fullText = `${property.title}\n${property.description}`;
   const electricity = property.electricity ?? extractElectricity(fullText);
   const water = property.water ?? extractWater(fullText);
-  const propertyType = extractPropertyType(fullText, property.category) ?? (property.category ?? 'Property');
+  const propertyType =
+    (property.property_type && property.property_type.trim().length > 0 ? property.property_type.trim() : null) ??
+    extractPropertyType(fullText, property.category) ??
+    (property.category ?? 'Property');
   const cleaning = property.cleaning ?? extractCleaning(fullText);
   const restrictions = property.restrictions && property.restrictions.length > 0 ? property.restrictions : extractRestrictions(fullText);
   const landmarks = findLandmarksInText(fullText, property.city).map((l: LandmarkEntry) => ({
@@ -185,7 +188,10 @@ export function toPropertyDTO(property: Property, isFavorite?: boolean): Propert
  */
 export function toMapMarkerDTO(property: Property): MapMarkerDTO {
   const fullText = `${property.title}\n${property.description}`;
-  const propertyType = extractPropertyType(fullText, property.category) ?? (property.category ?? 'Property');
+  const propertyType =
+    (property.property_type && property.property_type.trim().length > 0 ? property.property_type.trim() : null) ??
+    extractPropertyType(fullText, property.category) ??
+    (property.category ?? 'Property');
   
   let coords: { lat: number; lng: number } | null = null;
   if (property.latitude !== null && property.latitude !== undefined && property.longitude !== null && property.longitude !== undefined) {
