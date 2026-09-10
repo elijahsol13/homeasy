@@ -2,7 +2,8 @@ import fs from 'fs';
 import path from 'path';
 import crypto from 'crypto';
 import { RawListing } from './schemas';
-import { FBGroupTarget, parseFacebookPostText } from './facebook.scraper';
+import { FBGroupTarget, parseFacebookPostText, extractStoriesFromGraphQL, extractPhotosFromStory } from './facebook.scraper';
+import { cleanPhotoUrls } from './normalizer';
 
 export interface FetchedFbPost {
     postUrl: string;
@@ -62,7 +63,13 @@ export async function fetchPostTextAnonymous(postUrl: string): Promise<FetchedFb
             return null;
         }
 
-        const photos: string[] = []; // Getting images securely out of this deeply nested JSON is harder, let's leave empty for now
+        // Extract photo URLs from the Relay GraphQL story node(s)
+        const stories = extractStoriesFromGraphQL(data);
+        const extractedPhotos: string[] = [];
+        for (const story of stories) {
+          extractedPhotos.push(...extractPhotosFromStory(story));
+        }
+        const photos = cleanPhotoUrls(extractedPhotos);
 
         return { postUrl, text: postText, photos };
     } catch (e: any) {

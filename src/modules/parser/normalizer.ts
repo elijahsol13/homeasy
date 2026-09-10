@@ -372,19 +372,52 @@ const JUNK_PHOTO_PATTERNS: RegExp[] = [
   /rsrc\.php/i,
 ];
 
+function photoResolutionArea(url: string): number {
+  // Facebook encodes the actual rendered/cached size in query params like:
+  //   ctp=s1280x960        <- actual cached thumbnail
+  //   cstp=mx1280x960      <- maximum container/source size
+  // The same URL can contain both; prefer the actual rendered size (ctp).
+  // Sometimes the size is also in the path like s1280x960 or p1280x960.
+  function maxArea(re: RegExp): number {
+    let max = 0;
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(url)) !== null) {
+      const area = Number(m[1]) * Number(m[2]);
+      if (area > max) max = area;
+    }
+    return max;
+  }
+
+  const ctp = maxArea(/[?&]ctp=m?[sx]?(\d+)x(\d+)/gi);
+  if (ctp > 0) return ctp;
+
+  const cstp = maxArea(/[?&]cstp=m?[sx]?(\d+)x(\d+)/gi);
+  if (cstp > 0) return cstp;
+
+  const path = maxArea(/\/(?:s|p|mx)(\d+)x(\d+)\//gi) || maxArea(/[?&]size=(\d+)x(\d+)/gi);
+  if (path > 0) return path;
+
+  // No size hint: assume it's a full-resolution original and keep it first.
+  return Number.MAX_SAFE_INTEGER;
+}
+
 /**
  * Sanitizes an array of photo URLs:
  * 1. Discards avatars, tiny thumbnails, profile icons, and emoji graphics.
  * 2. Eliminates duplicates (including same photo with different resolution query params) while preserving insertion order.
- * 3. CRITICAL INVARIANT: The very first valid original post image remains at index 0 (Hero Image).
+ * 3. Prefers the highest-resolution variant when the same image appears in multiple sizes.
+ * 4. CRITICAL INVARIANT: The very first valid original post image remains at index 0 (Hero Image).
  */
 export function cleanPhotoUrls(urls: string[] | undefined | null): string[] {
   if (!Array.isArray(urls) || urls.length === 0) return [];
 
+  // Process largest resolutions first so the hero image is the best available copy.
+  const sorted = [...urls].sort((a, b) => photoResolutionArea(b) - photoResolutionArea(a));
+
   const seenPaths = new Set<string>();
   const filtered: string[] = [];
 
-  for (const rawUrl of urls) {
+  for (const rawUrl of sorted) {
     if (!rawUrl || typeof rawUrl !== 'string') continue;
     const url = rawUrl.trim();
     if (!url.startsWith('http://') && !url.startsWith('https://')) continue;
