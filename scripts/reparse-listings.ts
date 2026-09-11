@@ -285,10 +285,18 @@ STRICT RULES:
 
 5. currency: "USD" if price is in dollars; "KHR" if explicitly in riel (៛/riel).
 
-6. category: "apartment" for apartments/condos; "house" for houses/villas; "room" for single rooms; "hotel" only for long-term monthly hotel rooms.
+6. category: derive it FROM property_type (see rule 7), do not guess independently.
+   - "room" ONLY for property_type "Room".
+   - "apartment" for property_type "Studio", "Apartment", or "Condo".
+   - "house" for property_type "Private Villa", "Private House", or "Flat House".
+   - "hotel" for property_type "Hotel Room".
 
-7. property_type:
-   - "Condo", "Apartment", "Studio", "Room", "Private Villa", "Private House", "Flat House" (shophouse used as residence), "Hotel Room".
+7. property_type: MUST be exactly one of "Condo", "Apartment", "Studio", "Room", "Private Villa", "Private House", "Flat House" (shophouse used as residence), "Hotel Room".
+   CRITICAL — "Room" vs "Studio"/"Apartment"/"Condo" are NOT the same and are frequently confused:
+   - "Room" = a single bedroom rented inside someone else's house or a shared building, WITHOUT its own private kitchen; tenant shares common areas with the owner/other tenants (e.g. "room for rent", "private room", "shared room", "បន្ទប់ជួល" as a room inside a house).
+   - "Studio" = a SELF-CONTAINED single-unit dwelling with its OWN private bathroom (and usually a kitchenette), even if it has no separate bedroom wall (e.g. "studio condo", "studio apartment", "bachelor unit"). A studio is NEVER "Room".
+   - "Apartment"/"Condo" = a self-contained multi-room unit with its own bathroom and (usually) kitchen.
+   If the post explicitly says "studio" or clearly describes a self-contained unit (own bathroom/kitchen/unit number/entrance), NEVER use "Room" even if it was scraped from a "Room for Rent" page/category — use "Studio", "Apartment", or "Condo" instead.
 
 8. min_lease: 1 for monthly/short term, 6 for "6 months", "long term", 12 for "1 year" or "12 months".
 

@@ -77,13 +77,19 @@ STRICT RULES:
 - \`restrictions\`: Extract array of restrictions (e.g. ['No Pets', 'No Smoking', 'Quiet Hours']).
 - \`pet_friendly\`: true if pets allowed, false if not allowed, null if not mentioned.
 - \`discovered_amenities\`: Extract an array of all distinct amenities found (e.g. ['Fridge', 'Washing Machine', 'AC', 'Secure Parking', 'Balcony', 'WiFi', 'Gym', 'Elevator']).
-- \`property_type\`: 'Flat House' (for flat house, shophouse, ផ្ទះល្វែង), 'Private Villa' (for villa, ផ្ទះវីឡា), 'Private House' (for house, detached house), 'Condo', 'Apartment', or 'Hotel Room'.
+- \`property_type\`: MUST be one of exactly: 'Condo', 'Apartment', 'Studio', 'Room', 'Private Villa', 'Private House', 'Flat House' (shophouse/ផ្ទះល្វែង used as a residence), 'Hotel Room'.
+  CRITICAL — Room vs Studio/Apartment/Condo: these are NOT the same thing and are frequently confused.
+    * 'Room' = a single bedroom rented inside someone else's house/family home, or a shared building, where the tenant does NOT get their own private kitchen and shares common areas with the owner/other tenants (e.g. "room for rent", "private room", "shared room").
+    * 'Studio' = a SELF-CONTAINED single-unit dwelling with its OWN private bathroom (and usually a kitchenette), even if it is only one room and has no separate bedroom wall (e.g. "studio condo", "studio apartment", "bachelor unit"). A studio is NOT a 'Room'.
+    * 'Apartment' / 'Condo' = a self-contained multi-room unit inside a building, with its own bathroom and (usually) kitchen.
+  If the post explicitly says "studio" or describes a fully self-contained unit (own bathroom/kitchen, own unit number, own entrance), NEVER classify it as 'Room' even if the source listing page or category was labeled "room for rent" — use 'Studio', 'Apartment', or 'Condo' instead.
+- \`category\`: Derive it FROM \`property_type\`, do not guess independently: 'room' ONLY for property_type 'Room'; 'apartment' for property_type 'Studio', 'Apartment', or 'Condo'; 'house' for 'Private Villa', 'Private House', or 'Flat House'; 'hotel' for 'Hotel Room'.
 - \`phone_numbers\`: Extract ALL phone numbers found (WhatsApp, Telegram, local, international). Strip non-numeric characters except leading '+'. Example: ['+85577448002', '089899084'].
 - \`description_en\`: DO NOT repeat the price, location, or title. Extract ONLY the core details and overview. Return strictly as 1-3 short bullet points.
 - \`location\`: CRITICAL FOR LOCATION: Agents use 'borrowed prestige' (e.g., '5 mins to Pub Street', 'Near Aeon 3'). NEVER use relative distance/time markers as the actual location. Extract the ACTUAL physical district/sangkat into the \`location\` field (e.g. 'Choeung Ek', 'Boeng Trabaek', etc.), analyzing the text and mapping it to ONE of these exact values: [${VALID_SANGKATS.join(', ')}]. If NO location is mentioned, return null. Do not guess or invent a location.
 - \`marketing_landmarks\`: Extract ALL the promotional distance markers and 'near X' places strictly into the \`marketing_landmarks\` array.
 - \`maps_url\`: If the post contains a Google Maps link (goo.gl, google.com/maps, maps.app.goo.gl), extract it here. Otherwise, return null.
-- If the property is a hotel room, hotel suite, or boutique hotel room, return category: 'hotel'.
+- If the property is a hotel room, hotel suite, or boutique hotel room, return category: 'hotel', property_type: 'Hotel Room'.
 - If the post is selling land, return category: 'land'.
 `.trim();
 
@@ -367,16 +373,54 @@ export function extractPropertyType(text: string, category?: PropertyCategory | 
     return 'Hotel Room';
   }
 
-  // 5. Condo
+  // 5. Studio — a self-contained single-unit studio (own bathroom/kitchenette, no
+  // separate bedroom wall). Checked BEFORE Condo/Apartment so "Studio Condo" /
+  // "Studio Apartment" text reads as the more specific "Studio".
+  if (/\bstudio\b/i.test(text)) {
+    return 'Studio';
+  }
+
+  // 6. Condo
   if (/\b(?:condo|condominium)\b/i.test(text)) {
     return 'Condo';
   }
 
-  // 6. Apartment
-  if (category === 'apartment' || /\b(?:apartment|serviced\s+apartment|studio\s+apartment)\b/i.test(text)) {
+  // 7. Apartment
+  if (category === 'apartment' || /\b(?:apartment|serviced\s+apartment)\b/i.test(text)) {
     return 'Apartment';
   }
 
+  // 8. Room — ONLY a single room rented inside a shared house/building without its
+  // own private kitchen (NOT a self-contained studio/apartment/condo, which are
+  // handled above). Deliberately narrow to avoid false positives on "bedroom",
+  // "living room", etc.
+  if (
+    category === 'room' ||
+    /\b(?:single\s+room|private\s+room|shared\s+room|room\s+for\s+rent|room\s+available)\b/i.test(text)
+  ) {
+    return 'Room';
+  }
+
+  return null;
+}
+
+/**
+ * Derives the coarse filter `category` (apartment/house/room/hotel) from the more
+ * granular `property_type` (Condo/Apartment/Studio/Room/Private Villa/Private
+ * House/Flat House/Hotel Room). This is the SINGLE SOURCE OF TRUTH for category
+ * once a property_type is known — it must be preferred over whatever category the
+ * scrape source page or LLM's own (looser) `category` field guessed, so that
+ * self-contained studios/condos/apartments never get miscategorized as "room"
+ * just because they were discovered on a "Room for Rent" listing page (Khmer24)
+ * or the LLM only returned property_type and left category null.
+ */
+export function categoryFromPropertyType(propertyType?: string | null): PropertyCategory | null {
+  if (!propertyType || typeof propertyType !== 'string') return null;
+  const normalized = propertyType.trim().toLowerCase();
+  if (normalized === 'room') return 'room';
+  if (normalized === 'studio' || normalized === 'apartment' || normalized === 'condo') return 'apartment';
+  if (normalized === 'private house' || normalized === 'private villa' || normalized === 'flat house') return 'house';
+  if (normalized === 'hotel room') return 'hotel';
   return null;
 }
 

@@ -50,7 +50,9 @@ import {
   extractMapsUrl,
   extractMinLease,
   extractPrice,
+  extractPropertyType,
   extractType,
+  categoryFromPropertyType,
   isExcessiveKhmer,
   type LLMExtractedListing,
 } from './extractor';
@@ -325,6 +327,15 @@ export async function parseFacebookPostText(
     if (heuristicCat) category = heuristicCat;
   }
 
+  // property_type (Condo/Apartment/Studio/Room/Private Villa/Private House/Flat
+  // House/Hotel Room) is a more reliable signal than the LLM's own loose `category`
+  // field or the group's default category. Whenever we know the property_type,
+  // derive `category` from it so self-contained studios/condos/apartments never
+  // end up bucketed as "room" (and vice-versa).
+  const propertyType = llm?.property_type ?? extractPropertyType(text, category) ?? undefined;
+  const derivedCategory = categoryFromPropertyType(propertyType);
+  if (derivedCategory) category = derivedCategory;
+
   const hasPool = llm?.has_pool != null ? llm.has_pool : extractHasPool(text);
   const minLease = llm?.min_lease ?? extractMinLease(text) ?? undefined;
   const depositCents = extractDeposit(text, priceResult?.amountCents);
@@ -393,7 +404,7 @@ export async function parseFacebookPostText(
     phone,
     telegram_contact,
     posted_at: parseFacebookRelativeDate(rawDate),
-    property_type: llm?.property_type ?? undefined,
+    property_type: propertyType,
     electricity: llm?.electricity ?? undefined,
     water: llm?.water ?? undefined,
     cleaning: llm?.cleaning ?? undefined,

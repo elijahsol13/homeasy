@@ -20,9 +20,10 @@ import type { RawListing } from './schemas';
 import { runMigrations } from '../../database/migrate';
 import type { AppContainer } from '../../container';
 import { createContainer } from '../../container';
-import type { PropertyCategory } from '../../config/settings';
-import { extractListingsBatchWithLLM, isExcessiveKhmer, type LLMExtractedListing } from './extractor';
+import type { PropertyCategory, CityKey } from '../../config/settings';
+import { extractListingsBatchWithLLM, categoryFromPropertyType, isExcessiveKhmer, type LLMExtractedListing } from './extractor';
 import { isNonRealEstateSpam } from './spam-detector';
+import { findCanonicalLocation } from '../../config/locations';
 
 export const K24_SESSION_PATH = path.join(process.cwd(), 'data', 'k24_session.json');
 
@@ -488,21 +489,50 @@ export async function enrichListingsWithLLM(listings: RawListing[]): Promise<Raw
       return;
     }
 
+    const propertyType = llm.property_type ?? listing.property_type;
+    // property_type is a more reliable signal than the LLM's own loose `category`
+    // field or the Khmer24 browse-category the listing happened to be scraped
+    // from (e.g. Khmer24's "Room for Rent" page routinely includes full
+    // self-contained studios/condos/apartments). Derive category from it first.
+    const category = (categoryFromPropertyType(propertyType)
+      ?? (llm.category ? llm.category : listing.category)) as PropertyCategory | undefined;
+
+    const location = listing.location || llm.location || undefined;
+
+    // Khmer24's own province filter (the page we scraped this listing from) is
+    // NOT always accurate — ads get cross-posted or mis-tagged on Khmer24's side,
+    // so a "Siem Reap" browse page can still surface a Phnom Penh property. The
+    // structured district/sangkat we extracted (JSON-LD street address, or the
+    // AI's `location`) is the ground truth. Cross-check it against the canonical
+    // location table and correct the city when it confidently resolves to the
+    // OTHER city.
+    let city = listing.city;
+    if (location) {
+      const canonical = findCanonicalLocation(location);
+      if (canonical && canonical.city !== city) {
+        console.log(
+          `  🌍 [City Fix] "${(listing.title ?? '').slice(0, 40)}" location "${location}" resolves to ${canonical.city}, not scraped ${city}. Correcting.`,
+        );
+        city = canonical.city;
+      }
+    }
+
     enriched.push({
       ...listing,
       title: llm.title_en?.trim() || listing.title,
       description: llm.description_en || listing.description,
       // Khmer24's own JSON-LD price/photos/phone are already reliable — never override those.
       // (llm.category === 'land' already handled above.)
-      category: (llm.category ? llm.category : listing.category) as PropertyCategory | undefined,
+      category,
+      city,
       bedrooms: llm.bedrooms ?? listing.bedrooms,
       bathrooms: llm.bathrooms ?? listing.bathrooms,
       deposit: llm.deposit ?? listing.deposit,
       min_lease: llm.min_lease ?? listing.min_lease,
       has_pool: llm.has_pool ?? listing.has_pool,
-      location: listing.location || llm.location || undefined,
+      location,
       maps_url: listing.maps_url || llm.maps_url || undefined,
-      property_type: llm.property_type ?? listing.property_type,
+      property_type: propertyType,
       electricity: llm.electricity ?? listing.electricity,
       water: llm.water ?? listing.water,
       cleaning: llm.cleaning ?? listing.cleaning,
