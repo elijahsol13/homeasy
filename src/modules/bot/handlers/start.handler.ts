@@ -14,9 +14,33 @@ Tired of scrolling through noisy Facebook groups, spam posts, and outdated ads? 
 🗺 <b>Interactive Map & Catalog:</b> Browse listings with photos and filters on the map.
 🤖 <b>AI-Powered Quality:</b> Automatically translates Khmer text, extracts pricing & specs, and filters spam.
 🎯 <b>Laser-Focused Search:</b> Filter by Sangkat, budget, bedrooms, swimming pool, and lease terms.
-👥 <b>Direct Contacts:</b> Verified phone numbers and Telegram direct messages.
+👥 <b>Direct Contacts:</b> Phone numbers, Telegram & WhatsApp straight from the listing.
 
 👇 <b>Get started below:</b> Speak/type your search, open the Mini App, or set up an alert!
+`.trim();
+
+const HELP_TEXT = `
+🏡 <b>HomEasy — How it works</b>
+
+<b>Find a home:</b>
+• 🎙️ Send a <b>voice note</b> (up to 30s) or just <b>type</b> what you need — e.g. <i>"1BR apartment in Wat Bo under $350"</i>. Gemini AI parses your criteria and shows instant matches.
+• 🛠 Prefer manual setup? Use the <b>Step-by-Step Wizard</b> via /search.
+• 📱 Browse everything on the interactive map via /app.
+
+<b>Stay updated:</b>
+• 🔔 Save any search as an <b>alert</b> — new matching listings land in your chat automatically.
+• 🛠 /myfilters — view & delete your alerts.
+• ⭐ /favorites — listings you saved.
+• ⏸ Pause/resume alerts from the /menu.
+
+<b>Commands:</b>
+/start — main menu
+/search — AI search & alert setup
+/app — Mini App (map & catalog)
+/myfilters — your alerts
+/favorites — saved listings
+/stop — unsubscribe from all notifications
+/help — this message
 `.trim();
 
 export function createStartHandler(container: AppContainer): Composer<MyContext> {
@@ -77,6 +101,16 @@ export function createStartHandler(container: AppContainer): Composer<MyContext>
     }
   });
 
+  handler.command('help', async (ctx) => {
+    const from = ctx.from;
+    const user = from ? container.usersRepo.findByTelegramId(from.id) : null;
+    const isAdmin = from ? (env.ADMIN_IDS.includes(from.id) || user?.role === 'admin') : false;
+    await ctx.reply(HELP_TEXT, {
+      parse_mode: 'HTML',
+      reply_markup: mainMenuKeyboard({ alertsPaused: user?.alerts_paused === 1, isAdmin }),
+    });
+  });
+
   /** Handles /stop — marks user inactive so they don't receive notifications. */
   handler.command('stop', async (ctx) => {
     const from = ctx.from;
@@ -85,7 +119,10 @@ export function createStartHandler(container: AppContainer): Composer<MyContext>
     container.usersRepo.setActive(from.id, false);
 
     await ctx.reply(
-      '👋 You have been unsubscribed from HomEasy notifications.\nSend /start anytime to reactivate.',
+      '👋 You have been unsubscribed from all HomEasy notifications.\n\n' +
+        '💡 <i>To pause search alerts temporarily instead, use the ⏸ Pause Alerts button in /menu.</i>\n\n' +
+        'Send /start anytime to reactivate.',
+      { parse_mode: 'HTML' },
     );
   });
 

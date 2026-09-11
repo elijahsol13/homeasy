@@ -8,13 +8,12 @@ import {
   extractCleaning,
   extractRestrictions,
 } from '../../services/notifier';
-import { findLandmarksInText, type LandmarkEntry } from '../../config/landmarks';
+import { findLandmarksInText, getLandmarkByCanonicalName, type LandmarkEntry } from '../../config/landmarks';
 import { extractCoordinatesFromMapsUrl, getFallbackCoordinates } from '../../config/locations';
 import { formatDomesticPhone, formatPhoneNumber, normalizePhoneNumber } from '../parser/normalizer';
 
 export interface PropertyDTO {
   id: number;
-  hash: string;
   title: string;
   description: string;
   priceUsd: number;
@@ -42,7 +41,10 @@ export interface PropertyDTO {
     water: string | null;
     cleaning: string | null;
     restrictions: string[];
+    amenities: string[];
     landmarks: Array<{ id: string; name: string; link: string }>;
+    /** Promotional "5 min to X" claims — shown as advertised references, not facts. */
+    marketingLandmarks: Array<{ id: string; name: string; link: string }>;
   };
   contact: {
     phone?: string;
@@ -76,6 +78,26 @@ export interface MapMarkerDTO {
 }
 
 /**
+ * Maps a stored canonical landmark name to a DTO entry. Names missing from the
+ * catalog still get a generic Google Maps search link scoped to the city.
+ */
+function landmarkNameToDTO(
+  name: string,
+  city: string,
+): { id: string; name: string; link: string } {
+  const entry = getLandmarkByCanonicalName(name);
+  if (entry) {
+    return { id: entry.id, name: entry.canonicalName, link: entry.gmapsLink };
+  }
+  const cityLabel = city === 'phnom_penh' ? 'Phnom Penh' : 'Siem Reap';
+  return {
+    id: `custom:${name}`,
+    name,
+    link: `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(`${name}, ${cityLabel}, Cambodia`)}`,
+  };
+}
+
+/**
  * Transforms an internal database Property entity into a rich, frontend-friendly PropertyDTO.
  */
 export function toPropertyDTO(property: Property, isFavorite?: boolean): PropertyDTO {
@@ -88,11 +110,21 @@ export function toPropertyDTO(property: Property, isFavorite?: boolean): Propert
     (property.category ?? 'Property');
   const cleaning = property.cleaning ?? extractCleaning(fullText);
   const restrictions = property.restrictions && property.restrictions.length > 0 ? property.restrictions : extractRestrictions(fullText);
-  const landmarks = findLandmarksInText(fullText, property.city).map((l: LandmarkEntry) => ({
-    id: l.id,
-    name: l.canonicalName,
-    link: l.gmapsLink,
-  }));
+
+  // Prefer stored (AI-normalized) landmark data; fall back to text scanning
+  // for legacy rows that predate the landmarks column.
+  const storedLandmarks = property.landmarks ?? [];
+  const landmarks =
+    storedLandmarks.length > 0
+      ? storedLandmarks.map((n) => landmarkNameToDTO(n, property.city))
+      : findLandmarksInText(fullText, property.city).map((l: LandmarkEntry) => ({
+          id: l.id,
+          name: l.canonicalName,
+          link: l.gmapsLink,
+        }));
+  const marketingLandmarks = (property.marketing_landmarks ?? []).map((n) =>
+    landmarkNameToDTO(n, property.city),
+  );
 
   let coords: { lat: number; lng: number } | null = null;
   if (property.latitude !== null && property.latitude !== undefined && property.longitude !== null && property.longitude !== undefined) {
@@ -148,7 +180,6 @@ export function toPropertyDTO(property: Property, isFavorite?: boolean): Propert
 
   return {
     id: property.id,
-    hash: property.hash,
     title: property.title || `${propertyType} in ${property.location || property.city}`,
     description: property.description,
     priceUsd: Math.round(property.price / 100),
@@ -176,7 +207,9 @@ export function toPropertyDTO(property: Property, isFavorite?: boolean): Propert
       water,
       cleaning,
       restrictions,
+      amenities: property.amenities ?? [],
       landmarks,
+      marketingLandmarks,
     },
     contact,
     isFavorite,

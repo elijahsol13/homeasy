@@ -125,6 +125,7 @@ describe('Telegram Bot Keyboard Generators', () => {
       const kb = bedroomsKeyboard([1, 2]);
       const flat = kb.inline_keyboard.flat() as FlatBtn[];
 
+      expect(flat.some((b) => b.text.includes('Studio') && b.callback_data === 'cb:filter:beds:toggle:0')).toBe(true);
       expect(flat.some((b) => b.text.includes('✅ 1 BR'))).toBe(true);
       expect(flat.some((b) => b.text.includes('✅ 2 BR'))).toBe(true);
       expect(flat.some((b) => b.text.includes('3 BR'))).toBe(true);
@@ -216,6 +217,9 @@ describe('Telegram Bot Keyboard Generators', () => {
     test('formatBedroomsLabel formats multiple bedrooms accurately', () => {
       expect(formatBedroomsLabel(null)).toBe('Any');
       expect(formatBedroomsLabel([])).toBe('Any');
+      expect(formatBedroomsLabel([0])).toBe('Studio');
+      expect(formatBedroomsLabel([0, 1])).toBe('Studio, 1 BR');
+      expect(formatBedroomsLabel(0)).toBe('Studio');
       expect(formatBedroomsLabel([1])).toBe('1 BR');
       expect(formatBedroomsLabel([1, 2])).toBe('1, 2 BR');
       expect(formatBedroomsLabel([2, 3, 4])).toBe('2, 3, 4+ BR');

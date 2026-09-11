@@ -171,7 +171,16 @@ export const CAMBODIA_LOCATIONS: LocationEntry[] = [
     khmerName: 'ទួលទំពូង',
     city: 'phnom_penh',
     administrativeType: 'sangkat',
-    aliases: ['tuol tompoung', 'toul tompoung', 'toul tom poung', 'ttp', 'russian market'],
+    aliases: [
+      'tuol tompoung',
+      'toul tompoung',
+      'toul tom poung',
+      'tuol tom poung',
+      'toul tumpung',
+      'ttp',
+      'russian market',
+      'russian mkt',
+    ],
     googleMapsPlaceQuery: 'Sangkat Tuol Tompoung, Khan Chamkar Mon, Phnom Penh',
   },
   {

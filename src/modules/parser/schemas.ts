@@ -37,6 +37,13 @@ export const RawListingSchema = z.object({
   pet_friendly: z.boolean().optional(),
   amenities: z.array(z.string()).optional(),
   marketing_landmarks: z.array(z.string()).optional(),
+  /** Original post text before AI normalization — preserved for re-parsing. */
+  raw_text: z.string().optional(),
+  /** Structured price from platform metadata (e.g. FB GroupCommerceProductItem). */
+  price_hint: z.number().optional(),
+  price_hint_currency: z.string().optional(),
+  /** Structured location text from platform metadata (e.g. FB commerce attachment). */
+  commerce_location: z.string().optional(),
 });
 
 export type RawListing = z.infer<typeof RawListingSchema>;
@@ -81,8 +88,11 @@ export const CleanPropertySchema = z.object({
   amenities: z.array(z.string()).default([]),
   primary_landmark: z.string().nullable().default(null),
   landmarks: z.array(z.string()).default([]),
+  marketing_landmarks: z.array(z.string()).default([]),
   latitude: z.number().nullable().default(null),
   longitude: z.number().nullable().default(null),
+  raw_text: z.string().nullable().default(null),
+  parse_warnings: z.array(z.string()).default([]),
 });
 
 export type CleanProperty = z.infer<typeof CleanPropertySchema>;

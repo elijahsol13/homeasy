@@ -37,7 +37,7 @@ import {
 import { attachTrafficGuard } from './traffic-guard';
 import { FB_GROUPS, type CityKey, type PropertyCategory } from '../../config/settings';
 import { loadGroupState, saveGroupState, FBGroupState } from './fb-state';
-import { fetchPostTextAnonymous, type FetchedFbPost } from './fb-worker';
+import { fetchPostTextAnonymous, parseFormattedPrice, extractCommerceAttachment, type FetchedFbPost } from './fb-worker';
 import {
   extractBedrooms,
   extractBathrooms,
@@ -272,6 +272,7 @@ export async function parseFacebookPostText(
   photos: string[] = [],
   rawDate?: string,
   precomputedLlm?: LLMExtractedListing | null,
+  commerce?: { priceText: string; locationText: string },
 ): Promise<RawListing | null> {
   // 0. Pre-filter spam before calling LLM (saves AI quotas)
   const spamCheck = isNonRealEstateSpam(text.slice(0, 100), text);
@@ -432,6 +433,12 @@ export async function parseFacebookPostText(
     pet_friendly: llm?.pet_friendly ?? undefined,
     amenities: llm?.discovered_amenities ?? undefined,
     marketing_landmarks: llm?.marketing_landmarks ?? undefined,
+    // Preserve the original post text for debugging / re-parsing, plus the
+    // structured "Sell"-format attachment fields (price & declared location).
+    raw_text: text,
+    price_hint: commerce ? parseFormattedPrice(commerce.priceText)?.amount : undefined,
+    price_hint_currency: commerce ? parseFormattedPrice(commerce.priceText)?.currency : undefined,
+    commerce_location: commerce?.locationText || undefined,
   };
 }
 
@@ -561,6 +568,8 @@ export interface ParsedFbGraphQLPost {
   postUrl: string;
   photos: string[];
   rawDate?: string;
+  /** Structured "Sell"-format attachment fields when present in the story. */
+  commerce?: { priceText: string; locationText: string };
 }
 
 // ─── GraphQL Extraction Engine ────────────────────────────────────────────────
@@ -836,6 +845,7 @@ export function extractPostsFromFbGraphQL(
       postUrl,
       photos,
       rawDate,
+      commerce: extractCommerceAttachment(story) ?? undefined,
     });
   }
 
@@ -975,7 +985,7 @@ export async function scrapeFacebookGroup(
             const post = fetched[i]!;
             const precomputedLlm = llmResults.has(i) ? llmResults.get(i)! : null;
             try {
-                const listing = await parseFacebookPostText(post.text, target, post.postUrl, post.photos, undefined, precomputedLlm);
+                const listing = await parseFacebookPostText(post.text, target, post.postUrl, post.photos, undefined, precomputedLlm, post.commerce);
                 if (listing) listings.push(listing);
             } catch (err: unknown) {
                 console.warn(`   ⚠️ Failed to parse post ${post.postUrl}:`, err instanceof Error ? err.message : String(err));
@@ -1230,6 +1240,8 @@ export async function reparseFacebookViaGroupFeed(
                 cleanedUrl || `https://facebook.com/groups/post-${Date.now()}`,
                 post.photos,
                 post.rawDate,
+                undefined,
+                post.commerce,
               );
               if (rawListing) {
                 const ingestRes = await container.ingestionService.ingestRawListing(rawListing);

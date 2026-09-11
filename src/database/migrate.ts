@@ -311,6 +311,24 @@ ALTER TABLE properties ADD COLUMN amenities TEXT;
 CREATE INDEX IF NOT EXISTS idx_properties_property_type
   ON properties(property_type);
 `,
+
+  // ── v16: marketing_landmarks (promotional "5 min to X" claims, kept separate
+  //         from physical `landmarks` so they never influence location/matching) ──
+  `
+ALTER TABLE properties ADD COLUMN marketing_landmarks TEXT;
+`,
+
+  // ── v17: raw_text (original un-normalized post body for re-parsing/debugging)
+  //         + parse_warnings (machine-readable extraction issue codes) ──────────
+  `
+ALTER TABLE properties ADD COLUMN raw_text TEXT;
+ALTER TABLE properties ADD COLUMN parse_warnings TEXT;
+`,
+
+  // ── v18: last_verified_at — drives the smart re-verification queue cadence ──
+  `
+ALTER TABLE properties ADD COLUMN last_verified_at TEXT;
+`,
 ];
 
 /**

@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Heart, MapPin, Send, Phone, Waves, Zap, Droplets, Ban, Sparkles } from 'lucide-react';
+import { Heart, MapPin, Send, Phone, Waves, Zap, Droplets, Ban, Sparkles, MessageCircle } from 'lucide-react';
 import type { PropertyDTO } from '../types';
 import { triggerHaptic, openExternalUrl } from '../services/telegram';
 import posthog from 'posthog-js';
@@ -10,6 +10,25 @@ interface PropertyCardProps {
   onToggleFavorite: (propertyId: number) => void;
 }
 
+function sourceLabel(url: string | null | undefined): string | null {
+  if (!url) return null;
+  if (url.includes('facebook.com') || url.includes('fb.com')) return 'Facebook';
+  if (url.includes('khmer24.com')) return 'Khmer24';
+  return null;
+}
+
+function timeAgo(iso: string | null | undefined): string | null {
+  if (!iso) return null;
+  const ts = Date.parse(iso);
+  if (isNaN(ts)) return null;
+  const days = Math.floor((Date.now() - ts) / 86_400_000);
+  if (days <= 0) return 'today';
+  if (days === 1) return '1d ago';
+  if (days < 30) return `${days}d ago`;
+  const months = Math.floor(days / 30);
+  return months === 1 ? '1mo ago' : `${months}mo ago`;
+}
+
 export const PropertyCard: React.FC<PropertyCardProps> = ({
   property,
   onSelect,
@@ -18,6 +37,8 @@ export const PropertyCard: React.FC<PropertyCardProps> = ({
   const carouselRef = React.useRef<HTMLDivElement>(null);
   const [photoIndex, setPhotoIndex] = useState(0);
   const photos = property.photos && property.photos.length > 0 ? property.photos : [];
+  const source = sourceLabel(property.originalUrl);
+  const freshness = timeAgo(property.postedAt || property.createdAt);
 
   const handleScroll = (e: React.UIEvent<HTMLDivElement>) => {
     const el = e.currentTarget;
@@ -143,12 +164,20 @@ export const PropertyCard: React.FC<PropertyCardProps> = ({
         {/* Price & Location Header */}
         <div className="flex items-baseline justify-between gap-2 mb-1.5">
           <div className="flex items-baseline gap-1">
-            <span className="text-xl font-bold text-zinc-900 dark:text-zinc-50">
-              ${property.priceUsd}
-            </span>
-            <span className="text-xs text-zinc-500 dark:text-zinc-400">
-              {property.type === 'rent' ? '/month' : ''}
-            </span>
+            {property.priceUsd > 0 ? (
+              <>
+                <span className="text-xl font-bold text-zinc-900 dark:text-zinc-50">
+                  ${property.priceUsd}
+                </span>
+                <span className="text-xs text-zinc-500 dark:text-zinc-400">
+                  {property.type === 'rent' ? '/month' : ''}
+                </span>
+              </>
+            ) : (
+              <span className="text-[11px] font-semibold text-zinc-500 dark:text-zinc-400 bg-zinc-100 dark:bg-zinc-700/60 px-2 py-1 rounded-lg">
+                Price on request
+              </span>
+            )}
           </div>
 
           <div className="flex items-center gap-1 text-xs text-zinc-500 dark:text-zinc-400 truncate max-w-[50%]">
@@ -161,6 +190,15 @@ export const PropertyCard: React.FC<PropertyCardProps> = ({
         <h3 className="text-sm font-medium text-zinc-800 dark:text-zinc-200 line-clamp-2 leading-snug mb-2.5">
           {property.title}
         </h3>
+
+        {/* Source & freshness meta */}
+        {(source || freshness) && (
+          <div className="text-[10px] text-zinc-400 dark:text-zinc-500 mb-2 flex items-center gap-1">
+            {source && <span>{source}</span>}
+            {source && freshness && <span>·</span>}
+            {freshness && <span>posted {freshness}</span>}
+          </div>
+        )}
 
         {/* Specs & Amenities Pills */}
         <div className="flex flex-wrap items-center gap-1.5 mb-3.5 text-[11px] font-medium text-zinc-600 dark:text-zinc-300">
@@ -224,6 +262,22 @@ export const PropertyCard: React.FC<PropertyCardProps> = ({
                 <span>View Original Post ↗</span>
               </a>
             ) : null}
+
+            {property.contact.whatsappLink && (
+              <a
+                href={property.contact.whatsappLink}
+                target="_blank"
+                rel="noopener noreferrer"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  triggerHaptic('light');
+                }}
+                className="p-2 bg-zinc-100 dark:bg-zinc-700 hover:bg-zinc-200 text-zinc-700 dark:text-zinc-200 rounded-xl transition-all active:scale-95 flex items-center justify-center"
+                aria-label="WhatsApp Agent"
+              >
+                <MessageCircle className="w-4 h-4 text-emerald-500" />
+              </a>
+            )}
 
             {property.contact.phone && (
               <button

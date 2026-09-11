@@ -8,17 +8,18 @@ import {
   type CityKey,
 } from '../../../config/settings';
 
-// Helper to format bedrooms label e.g. "1, 2 BR", "4+ BR", "Any"
+// Helper to format bedrooms label e.g. "Studio", "1, 2 BR", "4+ BR", "Any"
 export function formatBedroomsLabel(bedrooms: number[] | number | null | undefined): string {
   if (bedrooms === null || bedrooms === undefined) return 'Any';
   if (typeof bedrooms === 'number') {
-    const val = bedrooms === 0 ? 1 : bedrooms;
-    return val >= 4 ? '4+ BR' : `${val} BR`;
+    if (bedrooms === 0) return 'Studio';
+    return bedrooms >= 4 ? '4+ BR' : `${bedrooms} BR`;
   }
   if (!Array.isArray(bedrooms) || bedrooms.length === 0) return 'Any';
 
-  const normalized = Array.from(new Set(bedrooms.map((b) => (b === 0 ? 1 : b)))).sort((a, b) => a - b);
-  const parts = normalized.map((b) => (b >= 4 ? '4+' : String(b)));
+  const normalized = Array.from(new Set(bedrooms)).sort((a, b) => a - b);
+  const parts = normalized.map((b) => (b === 0 ? 'Studio' : b >= 4 ? '4+' : String(b)));
+  if (parts.every((p) => p === 'Studio')) return 'Studio';
   return `${parts.join(', ')} BR`;
 }
 
@@ -106,13 +107,13 @@ export function bedroomsKeyboard(selected: number[] = []): InlineKeyboard {
   const kb = new InlineKeyboard();
 
   const options = [
+    { label: 'Studio', value: 0 },
     { label: '1 BR', value: 1 },
     { label: '2 BR', value: 2 },
     { label: '3 BR', value: 3 },
     { label: '4+ BR', value: 4 },
   ];
 
-  // Row 1: 1 BR, 2 BR
   options.slice(0, 2).forEach((opt) => {
     const isSelected = selected.includes(opt.value);
     const label = isSelected ? `✅ ${opt.label}` : `   ${opt.label}`;
@@ -120,21 +121,25 @@ export function bedroomsKeyboard(selected: number[] = []): InlineKeyboard {
   });
   kb.row();
 
-  // Row 2: 3 BR, 4+ BR, Any
   options.slice(2, 4).forEach((opt) => {
     const isSelected = selected.includes(opt.value);
     const label = isSelected ? `✅ ${opt.label}` : `   ${opt.label}`;
     kb.text(label, `cb:filter:beds:toggle:${opt.value}`);
   });
+  kb.row();
+
+  const last = options[4]!;
+  const lastSelected = selected.includes(last.value);
+  kb.text(lastSelected ? `✅ ${last.label}` : `   ${last.label}`, `cb:filter:beds:toggle:${last.value}`);
   kb.text('🛏 Any', 'cb:filter:beds:any');
   kb.row();
 
-  // Row 3: Continue button with selected label
+  // Continue button with selected label
   const continueText =
     selected.length > 0 ? `➡️ Continue (${formatBedroomsLabel(selected)})` : '➡️ Continue (Any Bedrooms)';
   kb.text(continueText, 'cb:filter:beds:done').row();
 
-  // Row 4: Back & Cancel
+  // Back & Cancel
   kb.text('◀️ Back', 'cb:filter:back:filter:budget').text('❌ Cancel', 'cb:filter:cancel');
 
   return kb;

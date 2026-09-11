@@ -57,6 +57,7 @@ export function createContainer(options?: CreateContainerOptions): AppContainer 
   const ingestionService = new IngestionService(propertiesRepo, matcherService, alertService);
   const nlSearchService = new NLSearchService(propertiesRepo, analyticsRepo);
   const linkVerifierService = new LinkVerifierService(propertiesRepo, alertService);
+  linkVerifierService.setIngestionService(ingestionService);
 
   const container = {
     db,

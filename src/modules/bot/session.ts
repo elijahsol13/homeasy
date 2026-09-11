@@ -13,6 +13,7 @@ export interface FilterDraft {
   max_price?: number;
   bedrooms?: number[] | null;
   requires_pool?: boolean;
+  pet_friendly?: boolean;
   min_lease_preferred?: number | null;
   primary_landmark?: string | null;
 }
