@@ -27,19 +27,20 @@ jest.mock('../src/modules/parser/extractor', () => {
     extractListingWithLLM: jest.fn().mockImplementation(async (text: string, city: string) => {
       const isHotel = text.toLowerCase().includes('hotel');
       const isMinimal = text.includes('Room for rent in Svay Dangkum $150');
+      const isCrossPosted = text.includes('CROSSPOST_PP');
       return {
-        title_en: isMinimal ? 'Room for rent in Svay Dangkum' : isHotel ? 'Boutique Hotel Room for rent' : 'Modern 3-Bedroom Villa with Swimming Pool',
+        title_en: isCrossPosted ? '2BR Condo in BKK1' : isMinimal ? 'Room for rent in Svay Dangkum' : isHotel ? 'Boutique Hotel Room for rent' : 'Modern 3-Bedroom Villa with Swimming Pool',
         description_en: text,
-        price: isMinimal ? 150 : isHotel ? 300 : 650,
+        price: isMinimal ? 150 : isHotel ? 300 : isCrossPosted ? 500 : 650,
         currency: 'USD',
         type: 'rent',
-        category: isHotel ? 'hotel' : isMinimal ? 'room' : 'house',
-        bedrooms: isMinimal ? 1 : isHotel ? 1 : 3,
-        bathrooms: isMinimal ? 1 : isHotel ? 1 : 3,
-        deposit: isMinimal ? 150 : isHotel ? 300 : 650,
+        category: isHotel ? 'hotel' : isMinimal ? 'room' : isCrossPosted ? 'apartment' : 'house',
+        bedrooms: isMinimal ? 1 : isHotel ? 1 : isCrossPosted ? 2 : 3,
+        bathrooms: isMinimal ? 1 : isHotel ? 1 : isCrossPosted ? 1 : 3,
+        deposit: isMinimal ? 150 : isHotel ? 300 : isCrossPosted ? 500 : 650,
         min_lease: 6,
-        has_pool: isHotel || !isMinimal,
-        location: isMinimal ? 'Svay Dangkum' : isHotel ? 'Wat Bo' : 'Sala Kamreuk',
+        has_pool: isHotel || (!isMinimal && !isCrossPosted),
+        location: isCrossPosted ? 'BKK1' : isMinimal ? 'Svay Dangkum' : isHotel ? 'Wat Bo' : 'Sala Kamreuk',
         city: city || 'siem_reap',
         phone: isMinimal ? undefined : '089 899 084',
       };
@@ -160,6 +161,19 @@ describe('Facebook Scraper', () => {
       const listing = await parseFacebookPostText(hotelPost, defaultTarget, 'https://facebook.com/p/3');
       expect(listing).not.toBeNull();
       expect(listing!.category).toBe('hotel');
+    });
+
+    test('corrects city when the LLM confidently extracts a specific sangkat from the OTHER city (genuine cross-posting), even though the group is tagged siem_reap', async () => {
+      // Regression guard for the opposite failure mode of the "marketing text flip" bug:
+      // a post genuinely about a Phnom Penh property gets shared into a Siem-Reap-tagged
+      // group. The LLM's dedicated `location` field (which explicitly excludes marketing
+      // landmarks) says "BKK1" — a sangkat that only exists in Phnom Penh — so the listing's
+      // city must be corrected to phnom_penh even though target.city is siem_reap.
+      const crossPostedText = 'CROSSPOST_PP 2BR Condo for rent in BKK1 $500/month fully furnished';
+      const listing = await parseFacebookPostText(crossPostedText, defaultTarget, 'https://facebook.com/p/4');
+      expect(listing).not.toBeNull();
+      expect(listing!.location).toBe('BKK1');
+      expect(listing!.city).toBe('phnom_penh');
     });
   });
 

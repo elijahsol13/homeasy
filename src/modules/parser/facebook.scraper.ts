@@ -58,6 +58,7 @@ import {
 } from './extractor';
 import { cleanPhotoUrls, extractDirectContacts, formatDomesticPhone } from './normalizer';
 import { isNonRealEstateSpam } from './spam-detector';
+import { findCanonicalLocation } from '../../config/locations';
 
 // Apply stealth plugin
 chromium.use(stealthPlugin());
@@ -343,12 +344,31 @@ export async function parseFacebookPostText(
     llm?.deposit != null ? llm.deposit  // LLM takes priority
     : depositCents ? depositCents / 100 : undefined;
 
-  // The Facebook group is single-city and assigned at scrape time — always trust it.
-  // Only use text matching to find the SPECIFIC sangkat/district within that city; never
-  // let a marketing comparison ("cheaper than BKK1") flip the listing into the wrong city.
+  // The Facebook group is single-city and assigned at scrape time, so we default
+  // to trusting it. The regex heuristic fallback (extractLocation) stays
+  // RESTRICTED to that city — it does a dumb substring search over the whole
+  // text and would happily match a marketing comparison like "cheaper than
+  // BKK1" or "closer than Phnom Penh", flipping the city on a false signal.
   const locationResult = extractLocation(text, target.city);
   const location = llm?.location || locationResult?.location || undefined;
-  const city = target.city;
+  let city = target.city;
+
+  // However, the LLM's dedicated `location` field is NOT a dumb substring
+  // search — it is explicitly instructed to extract ONLY the actual physical
+  // sangkat/district and to put promotional "near X" / comparison text into
+  // `marketing_landmarks` instead. So if the LLM confidently names a SPECIFIC
+  // sangkat that only exists in the other city, that is real signal (a post
+  // genuinely cross-posted into the wrong-city group), not a marketing flip.
+  // Only ever trust llm.location for this — never the unrestricted heuristic.
+  if (llm?.location) {
+    const canonical = findCanonicalLocation(llm.location);
+    if (canonical && canonical.city !== city) {
+      console.log(
+        `  🌍 [City Fix] "${text.slice(0, 40)}" location "${llm.location}" resolves to ${canonical.city}, not group's ${target.city}. Correcting.`,
+      );
+      city = canonical.city;
+    }
+  }
   const type = extractType(text) ?? 'rent';
   const mapsUrl = llm?.maps_url || extractMapsUrl(text) || undefined;
   const directContacts = extractDirectContacts(text);
