@@ -36,6 +36,9 @@ function mockCleanProperty(overrides: Partial<CleanProperty> = {}): CleanPropert
     pet_friendly: false,
     primary_landmark: null,
     landmarks: [],
+    marketing_landmarks: [],
+    raw_text: null,
+    parse_warnings: [],
     latitude: null,
     longitude: null,
     property_type: null,
@@ -74,6 +77,7 @@ function mockDbProperty(overrides: Partial<Property> = {}): Property {
     created_at: new Date().toISOString(),
     posted_at: null,
     updated_at: new Date().toISOString(),
+    last_verified_at: null,
     ...overrides,
   };
 }
