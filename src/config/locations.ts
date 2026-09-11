@@ -195,7 +195,7 @@ export const CAMBODIA_LOCATIONS: LocationEntry[] = [
     khmerName: 'ជ្រោយចង្វារ',
     city: 'phnom_penh',
     administrativeType: 'khan',
-    aliases: ['chroy changvar', 'chroy changva', 'ocic'],
+    aliases: ['chroy changvar', 'chroy changva', 'chrouy changvar', 'chrouy changva', 'ocic'],
     googleMapsPlaceQuery: 'Khan Chroy Changvar, Phnom Penh, Cambodia',
   },
   {
@@ -203,7 +203,7 @@ export const CAMBODIA_LOCATIONS: LocationEntry[] = [
     khmerName: 'សែនសុខ',
     city: 'phnom_penh',
     administrativeType: 'khan',
-    aliases: ['sen sok', 'sensok', 'phnom penh thmey', 'aeon 2'],
+    aliases: ['sen sok', 'sensok', 'phnom penh thmey', 'aeon 2', 'teuk thla', 'tuek thla'],
     googleMapsPlaceQuery: 'Khan Sen Sok, Phnom Penh, Cambodia',
   },
   {
