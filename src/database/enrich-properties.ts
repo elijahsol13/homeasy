@@ -99,6 +99,7 @@ export interface EnrichmentStats {
 export function enrichPropertyRecord(prop: PropertyRecord): EnrichmentResult {
   const changes: Record<string, { oldVal: unknown; newVal: unknown }> = {};
   const patch: Partial<PropertyRecord> = {};
+  let needsTranslation = false;
   const text = `${prop.title} ${prop.description}`.trim();
   let deactivated = false;
   let deactivateReason: string | undefined;
@@ -123,8 +124,15 @@ export function enrichPropertyRecord(prop: PropertyRecord): EnrichmentResult {
       changes.is_active = { oldVal: 1, newVal: 0 };
       patch.is_active = 0;
     }
-    
-    // 1c. Check for daily rent
+
+    // 1c. Queue for translation when the title still contains Khmer, but
+    // continue extracting recoverable fields (bedrooms, pool, location, etc.)
+    // from the available text so the record is enriched even before re-parse.
+    if (/[\u1780-\u17FF]/.test(prop.title)) {
+      needsTranslation = true;
+    }
+
+    // 1d. Check for daily rent
     if (/\b(?:per night|\/night|មួយយប់|per day|\/day|មួយថ្ងៃ)\b/i.test(text) && prop.price !== null && prop.price < 5000) {
       return {
         updated: true,
@@ -135,16 +143,6 @@ export function enrichPropertyRecord(prop: PropertyRecord): EnrichmentResult {
       };
     }
 
-    // 1d. Check for Khmer title
-    if (/[\u1780-\u17FF]/.test(prop.title)) {
-      return {
-        updated: true,
-        deactivated: false,
-        needsTranslation: true,
-        changes: {},
-        patch: {},
-      };
-    }
   }
 
   // 1c. Sanitize photos array through cleanPhotoUrls
@@ -399,8 +397,10 @@ export function enrichPropertyRecord(prop: PropertyRecord): EnrichmentResult {
     patch.source_url = fixedUrl;
   }
 
-  const updated = Object.keys(changes).length > 0;
-  return { updated, deactivated, deactivateReason, changes, patch };
+  let updated = Object.keys(changes).length > 0;
+  if (needsTranslation) updated = true;
+
+  return { updated, deactivated, deactivateReason, changes, patch, needsTranslation };
 }
 
 // ─── Database Batch Runner ───────────────────────────────────────────────────
