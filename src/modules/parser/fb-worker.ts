@@ -9,6 +9,56 @@ export interface FetchedFbPost {
     postUrl: string;
     text: string;
     photos: string[];
+    /**
+     * Structured data from a "GroupCommerceProductItem" attachment
+     * (FB "Sell Something" format): formatted price + declared location.
+     */
+    commerce?: { priceText: string; locationText: string };
+}
+
+/**
+ * Deep-searches the Relay JSON for a GroupCommerceProductItem node — FB posts
+ * created via the "Sell" flow carry a structured `formatted_price` and
+ * `location_text` that never appear in the free-form message body.
+ */
+export function extractCommerceAttachment(obj: unknown): { priceText: string; locationText: string } | null {
+    const stack: unknown[] = [obj];
+    while (stack.length > 0) {
+        const curr = stack.pop();
+        if (curr && typeof curr === 'object' && !Array.isArray(curr)) {
+            const node = curr as Record<string, unknown>;
+            if (
+                node.__typename === 'GroupCommerceProductItem' ||
+                (node.formatted_price && typeof node.formatted_price === 'object')
+            ) {
+                const priceNode = node.formatted_price as Record<string, unknown> | undefined;
+                const locNode = node.location_text as Record<string, unknown> | undefined;
+                const priceText = typeof priceNode?.text === 'string' ? priceNode.text : '';
+                const locationText = typeof locNode?.text === 'string' ? locNode.text : '';
+                if (priceText || locationText) {
+                    return { priceText, locationText };
+                }
+            }
+            for (const key of Object.keys(node)) {
+                if (node[key] && typeof node[key] === 'object') stack.push(node[key]);
+            }
+        } else if (Array.isArray(curr)) {
+            for (const item of curr) stack.push(item);
+        }
+    }
+    return null;
+}
+
+/** Parses "100 000 ฿" / "$800" / "៛1,200,000" style strings into amount + currency code. */
+export function parseFormattedPrice(priceText: string): { amount: number; currency: string } | null {
+    if (!priceText) return null;
+    const currency = /฿|บาท|\bTHB\b/i.test(priceText)
+        ? 'THB'
+        : /៛|\bKHR\b|riel/i.test(priceText)
+          ? 'KHR'
+          : 'USD';
+    const num = parseFloat(priceText.replace(/[^0-9.]/g, ''));
+    return isNaN(num) || num <= 0 ? null : { amount: num, currency };
 }
 
 /**
@@ -71,7 +121,9 @@ export async function fetchPostTextAnonymous(postUrl: string): Promise<FetchedFb
         }
         const photos = cleanPhotoUrls(extractedPhotos);
 
-        return { postUrl, text: postText, photos };
+        const commerce = extractCommerceAttachment(data) ?? undefined;
+
+        return { postUrl, text: postText, photos, commerce };
     } catch (e: any) {
         dumpErrorHtml(postUrl, html, 'parse_error');
         console.warn(`[Worker] Parse error on ${postUrl}: ${e.message}`);
@@ -87,7 +139,7 @@ export async function fetchPostTextAnonymous(postUrl: string): Promise<FetchedFb
 export async function fetchPostAnonymous(postUrl: string, target: FBGroupTarget): Promise<RawListing | null> {
     const fetched = await fetchPostTextAnonymous(postUrl);
     if (!fetched) return null;
-    return parseFacebookPostText(fetched.text, target, fetched.postUrl, fetched.photos);
+    return parseFacebookPostText(fetched.text, target, fetched.postUrl, fetched.photos, undefined, undefined, fetched.commerce);
 }
 
 function dumpErrorHtml(url: string, html: string, reason: string) {

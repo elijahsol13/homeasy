@@ -1,6 +1,6 @@
 import type { DatabaseSync } from 'node:sqlite';
 import type { CityKey, PropertyCategory } from '../../config/settings';
-import { extractCoordinatesFromMapsUrl, getSangkatCentroid, getFallbackCoordinates } from '../../config/locations';
+import { extractCoordinatesFromMapsUrl, getSangkatCentroid } from '../../config/locations';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -49,6 +49,14 @@ export interface Property {
   pet_friendly?: boolean;
   primary_landmark?: string | null;
   landmarks?: string[];
+  /** Promotional "5 min to X" references — never treated as physical location. */
+  marketing_landmarks?: string[];
+  /** Original un-normalized post text, kept for re-parsing/debugging. */
+  raw_text?: string | null;
+  /** Machine-readable extraction issue codes (e.g. 'price_missing'). */
+  parse_warnings?: string[];
+  /** ISO timestamp of the last source-page re-verification. */
+  last_verified_at?: string | null;
   latitude?: number | null;
   longitude?: number | null;
   property_type?: string | null;
@@ -67,11 +75,14 @@ interface PropertyRow
     | 'restrictions'
     | 'pet_friendly'
     | 'landmarks'
+    | 'marketing_landmarks'
     | 'electricity'
     | 'water'
     | 'cleaning'
     | 'primary_landmark'
     | 'amenities'
+    | 'raw_text'
+    | 'parse_warnings'
   > {
   has_pool: 0 | 1;
   photos: string;
@@ -86,11 +97,15 @@ interface PropertyRow
   pet_friendly?: 0 | 1;
   primary_landmark?: string | null;
   landmarks?: string | null;
+  marketing_landmarks?: string | null;
+  raw_text?: string | null;
+  parse_warnings?: string | null;
+  last_verified_at?: string | null;
   property_type?: string | null;
   amenities?: string | null;
 }
 
-function rowToProperty(row: PropertyRow): Property {
+export function rowToProperty(row: PropertyRow): Property {
   let imagePhashes: string[] = [];
   try {
     if (row.image_phashes) {
@@ -129,6 +144,24 @@ function rowToProperty(row: PropertyRow): Property {
     parsedAmenities = [];
   }
 
+  let parsedMarketingLandmarks: string[] = [];
+  try {
+    if (row.marketing_landmarks) {
+      parsedMarketingLandmarks = JSON.parse(row.marketing_landmarks) as string[];
+    }
+  } catch {
+    parsedMarketingLandmarks = [];
+  }
+
+  let parsedWarnings: string[] = [];
+  try {
+    if (row.parse_warnings) {
+      parsedWarnings = JSON.parse(row.parse_warnings) as string[];
+    }
+  } catch {
+    parsedWarnings = [];
+  }
+
   return {
     ...row,
     has_pool: Boolean(row.has_pool),
@@ -146,6 +179,10 @@ function rowToProperty(row: PropertyRow): Property {
     pet_friendly: Boolean(row.pet_friendly),
     primary_landmark: row.primary_landmark ?? null,
     landmarks: parsedLandmarks,
+    marketing_landmarks: parsedMarketingLandmarks,
+    raw_text: row.raw_text ?? null,
+    parse_warnings: parsedWarnings,
+    last_verified_at: row.last_verified_at ?? null,
     latitude: row.latitude !== undefined && row.latitude !== null ? Number(row.latitude) : null,
     longitude: row.longitude !== undefined && row.longitude !== null ? Number(row.longitude) : null,
     property_type: row.property_type ?? null,
@@ -166,6 +203,9 @@ export type CreatePropertyInput = Omit<
   | 'posted_at'
   | 'restrictions'
   | 'landmarks'
+  | 'marketing_landmarks'
+  | 'raw_text'
+  | 'parse_warnings'
   | 'pet_friendly'
   | 'electricity'
   | 'water'
@@ -185,6 +225,9 @@ export type CreatePropertyInput = Omit<
   pet_friendly?: boolean | number;
   primary_landmark?: string | null;
   landmarks?: string[] | string | null;
+  marketing_landmarks?: string[] | string | null;
+  raw_text?: string | null;
+  parse_warnings?: string[] | string | null;
   property_type?: string | null;
   amenities?: string[];
 };
@@ -236,6 +279,16 @@ export class PropertiesRepository {
     const amenitiesJson = Array.isArray(input.amenities)
       ? JSON.stringify(input.amenities)
       : '[]';
+    const marketingLandmarksJson = Array.isArray(input.marketing_landmarks)
+      ? JSON.stringify(input.marketing_landmarks)
+      : typeof input.marketing_landmarks === 'string'
+        ? input.marketing_landmarks
+        : '[]';
+    const parseWarningsJson = Array.isArray(input.parse_warnings)
+      ? JSON.stringify(input.parse_warnings)
+      : typeof input.parse_warnings === 'string'
+        ? input.parse_warnings
+        : '[]';
 
     const result = this.db
       .prepare(
@@ -243,10 +296,10 @@ export class PropertiesRepository {
            (hash, title, description, price, currency, type, category,
             bedrooms, bathrooms, deposit, min_lease, has_pool, location, city,
             maps_url, source_url, photos, image_phash, image_phashes, direct_contact, original_url, posted_at, updated_at,
-            electricity, water, cleaning, restrictions, pet_friendly, primary_landmark, landmarks, latitude, longitude, is_active,
+            electricity, water, cleaning, restrictions, pet_friendly, primary_landmark, landmarks, marketing_landmarks, raw_text, parse_warnings, latitude, longitude, is_active,
             property_type, amenities)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%SZ', 'now'),
-                 ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                 ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         input.hash,
@@ -278,6 +331,9 @@ export class PropertiesRepository {
         petFriendlyVal,
         input.primary_landmark ?? null,
         landmarksJson,
+        marketingLandmarksJson,
+        input.raw_text ?? null,
+        parseWarningsJson,
         lat,
         lng,
         isActiveVal,
@@ -286,13 +342,6 @@ export class PropertiesRepository {
       );
 
     const newId = result.lastInsertRowid as number;
-
-    if (lat === null || lng === null) {
-      const fallback = getFallbackCoordinates(input.location, input.city, newId);
-      this.db
-        .prepare('UPDATE properties SET latitude = ?, longitude = ? WHERE id = ?')
-        .run(fallback.lat, fallback.lng, newId);
-    }
 
     const row = this.db
       .prepare('SELECT * FROM properties WHERE id = ?')
@@ -379,6 +428,9 @@ export class PropertiesRepository {
       price?: number;
       phone?: string;
       location?: string;
+      description?: string;
+      raw_text?: string;
+      parse_warnings?: string[];
       maps_url?: string;
       posted_at?: string | null;
       source_url?: string;
@@ -389,6 +441,7 @@ export class PropertiesRepository {
       pet_friendly?: boolean | number;
       primary_landmark?: string | null;
       landmarks?: string[] | string | null;
+      marketing_landmarks?: string[] | string | null;
       latitude?: number | null;
       longitude?: number | null;
     },
@@ -427,11 +480,6 @@ export class PropertiesRepository {
         newLng = coords.longitude;
       }
     }
-    if (newLat === null || newLng === null) {
-      const fallback = getFallbackCoordinates(newLocation, existing.city, id);
-      newLat = fallback.lat;
-      newLng = fallback.lng;
-    }
 
     let newPostedAt = existing.posted_at;
     if (update.posted_at) {
@@ -461,6 +509,23 @@ export class PropertiesRepository {
           : typeof update.landmarks === 'string'
             ? update.landmarks
             : '[]';
+    const newMarketingLandmarks =
+      existing.marketing_landmarks && existing.marketing_landmarks.length > 0
+        ? JSON.stringify(existing.marketing_landmarks)
+        : Array.isArray(update.marketing_landmarks)
+          ? JSON.stringify(update.marketing_landmarks)
+          : typeof update.marketing_landmarks === 'string'
+            ? update.marketing_landmarks
+            : '[]';
+    const newDescription = update.description && update.description.length > 0
+      ? update.description
+      : existing.description;
+    const newRawText = update.raw_text ?? existing.raw_text ?? null;
+    const newParseWarnings = Array.isArray(update.parse_warnings)
+      ? JSON.stringify(update.parse_warnings)
+      : existing.parse_warnings && existing.parse_warnings.length > 0
+        ? JSON.stringify(existing.parse_warnings)
+        : '[]';
 
     this.db
       .prepare(
@@ -479,6 +544,10 @@ export class PropertiesRepository {
              pet_friendly = ?,
              primary_landmark = ?,
              landmarks = ?,
+             marketing_landmarks = ?,
+             description = ?,
+             raw_text = ?,
+             parse_warnings = ?,
              updated_at = (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
          WHERE id = ?`,
       )
@@ -497,10 +566,83 @@ export class PropertiesRepository {
         newPetFriendly,
         newPrimaryLandmark,
         newLandmarks,
+        newMarketingLandmarks,
+        newDescription,
+        newRawText,
+        newParseWarnings,
         id,
       );
 
     return this.getPropertyById(id);
+  }
+
+  /**
+   * Records a successful re-verification pass — drives smart-queue cadence.
+   */
+  markVerified(id: number): void {
+    this.db
+      .prepare(
+        `UPDATE properties
+         SET last_verified_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
+         WHERE id = ?`,
+      )
+      .run(id);
+  }
+
+  /**
+   * Direct field updates used by the verifier (price sync, corrected location).
+   * Unlike bumpAndMerge this applies the value as-is — the verifier only calls
+   * it when the source page proved a change.
+   */
+  updateVerifiedFields(
+    id: number,
+    fields: { price?: number; location?: string; city?: CityKey },
+  ): void {
+    const sets: string[] = [];
+    const args: Array<number | string> = [];
+    if (fields.price !== undefined) { sets.push('price = ?'); args.push(fields.price); }
+    if (fields.location !== undefined) { sets.push('location = ?'); args.push(fields.location); }
+    if (fields.city !== undefined) { sets.push('city = ?'); args.push(fields.city); }
+    if (sets.length === 0) return;
+    sets.push(`updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')`);
+    this.db
+      .prepare(`UPDATE properties SET ${sets.join(', ')} WHERE id = ?`)
+      .run(...args, id);
+  }
+
+  /**
+   * Smart-queue selection: active listings due for re-verification.
+   *  - fresh (<7 days old):  re-check every 12h
+   *  - mid   (7–30 days):    every 72h
+   *  - old   (>30 days):     every 7d
+   * Never-verified listings (NULL) are always due and sort first.
+   */
+  findDueForVerification(limit = 50): Property[] {
+    const rows = this.db
+      .prepare(
+        `SELECT * FROM properties
+         WHERE is_active = 1
+           AND (
+             last_verified_at IS NULL
+             OR (
+               COALESCE(posted_at, created_at) >= datetime('now', '-7 days')
+               AND last_verified_at <= datetime('now', '-12 hours')
+             )
+             OR (
+               COALESCE(posted_at, created_at) < datetime('now', '-7 days')
+               AND COALESCE(posted_at, created_at) >= datetime('now', '-30 days')
+               AND last_verified_at <= datetime('now', '-72 hours')
+             )
+             OR (
+               COALESCE(posted_at, created_at) < datetime('now', '-30 days')
+               AND last_verified_at <= datetime('now', '-7 days')
+             )
+           )
+         ORDER BY last_verified_at IS NOT NULL ASC, last_verified_at ASC
+         LIMIT ?`,
+      )
+      .all(limit) as unknown as PropertyRow[];
+    return rows.map(rowToProperty);
   }
 
   /**

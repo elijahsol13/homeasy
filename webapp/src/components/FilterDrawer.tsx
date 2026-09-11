@@ -67,6 +67,7 @@ export const FilterDrawer: React.FC<FilterDrawerProps> = ({
       minPrice: undefined,
       maxPrice: undefined,
       bedrooms: undefined,
+      bathrooms: undefined,
       hasPool: undefined,
       minLeaseMax: undefined,
       query: undefined,
@@ -175,34 +176,67 @@ export const FilterDrawer: React.FC<FilterDrawerProps> = ({
             </div>
           </div>
 
-          {/* Budget Max Slider */}
+          {/* Budget Min / Max Presets */}
           <div>
             <div className="flex items-center justify-between mb-2">
               <label className="text-xs font-bold uppercase tracking-wider text-zinc-400">
-                Max Budget
+                Budget
               </label>
               <span className="text-sm font-bold text-sky-600 dark:text-sky-400">
-                {draft.maxPrice ? `$${draft.maxPrice}` : 'Any Price'}
+                {draft.minPrice || draft.maxPrice
+                  ? `${draft.minPrice ? `$${draft.minPrice}` : '$0'} – ${draft.maxPrice ? `$${draft.maxPrice}` : 'Any'}`
+                  : 'Any Price'}
               </span>
             </div>
-            <div className="flex gap-2 mb-2">
-              {[250, 400, 600, 1000, 2000].map((preset) => (
-                <button
-                  key={preset}
-                  type="button"
-                  onClick={() => {
-                    triggerHaptic('selection');
-                    setDraft((p) => ({ ...p, maxPrice: p.maxPrice === preset ? undefined : preset }));
-                  }}
-                  className={`flex-1 py-1.5 rounded-lg text-xs font-semibold border ${
-                    draft.maxPrice === preset
-                      ? 'bg-sky-50 dark:bg-sky-950 text-sky-600 dark:text-sky-400 border-sky-500'
-                      : 'bg-zinc-50 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400 border-zinc-200 dark:border-zinc-700'
-                  }`}
-                >
-                  ${preset}
-                </button>
-              ))}
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <span className="text-[10px] font-semibold uppercase tracking-wide text-zinc-400 block mb-1.5">
+                  Min
+                </span>
+                <div className="flex flex-wrap gap-1.5">
+                  {[150, 300, 500, 800].map((preset) => (
+                    <button
+                      key={preset}
+                      type="button"
+                      onClick={() => {
+                        triggerHaptic('selection');
+                        setDraft((p) => ({ ...p, minPrice: p.minPrice === preset ? undefined : preset }));
+                      }}
+                      className={`px-2.5 py-1.5 rounded-lg text-xs font-semibold border ${
+                        draft.minPrice === preset
+                          ? 'bg-sky-50 dark:bg-sky-950 text-sky-600 dark:text-sky-400 border-sky-500'
+                          : 'bg-zinc-50 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400 border-zinc-200 dark:border-zinc-700'
+                      }`}
+                    >
+                      ${preset}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div>
+                <span className="text-[10px] font-semibold uppercase tracking-wide text-zinc-400 block mb-1.5">
+                  Max
+                </span>
+                <div className="flex flex-wrap gap-1.5">
+                  {[250, 400, 600, 1000, 2000].map((preset) => (
+                    <button
+                      key={preset}
+                      type="button"
+                      onClick={() => {
+                        triggerHaptic('selection');
+                        setDraft((p) => ({ ...p, maxPrice: p.maxPrice === preset ? undefined : preset }));
+                      }}
+                      className={`px-2.5 py-1.5 rounded-lg text-xs font-semibold border ${
+                        draft.maxPrice === preset
+                          ? 'bg-sky-50 dark:bg-sky-950 text-sky-600 dark:text-sky-400 border-sky-500'
+                          : 'bg-zinc-50 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400 border-zinc-200 dark:border-zinc-700'
+                      }`}
+                    >
+                      ${preset}
+                    </button>
+                  ))}
+                </div>
+              </div>
             </div>
           </div>
 
@@ -236,6 +270,77 @@ export const FilterDrawer: React.FC<FilterDrawerProps> = ({
                 );
               })}
             </div>
+          </div>
+
+          {/* Bathrooms */}
+          <div>
+            <label className="text-xs font-bold uppercase tracking-wider text-zinc-400 block mb-2">
+              Bathrooms
+            </label>
+            <div className="flex gap-2">
+              {[
+                { val: undefined, label: 'Any' },
+                { val: [1], label: '1' },
+                { val: [2], label: '2' },
+                { val: [3, 4, 5, 6, 7, 8, 9], label: '3+' },
+              ].map((opt) => {
+                const isSelected =
+                  opt.val === undefined
+                    ? !draft.bathrooms || draft.bathrooms.length === 0
+                    : JSON.stringify(draft.bathrooms) === JSON.stringify(opt.val);
+                return (
+                  <button
+                    key={opt.label}
+                    type="button"
+                    onClick={() => {
+                      triggerHaptic('selection');
+                      setDraft((p) => ({ ...p, bathrooms: opt.val }));
+                    }}
+                    className={`flex-1 py-2 rounded-xl text-xs font-semibold border transition-all ${
+                      isSelected
+                        ? 'bg-sky-500 text-white border-sky-500 shadow-xs'
+                        : 'bg-zinc-50 dark:bg-zinc-800 text-zinc-700 dark:text-zinc-300 border-zinc-200 dark:border-zinc-700/60'
+                    }`}
+                  >
+                    {opt.label}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* Min Lease Requirement */}
+          <div>
+            <label className="text-xs font-bold uppercase tracking-wider text-zinc-400 block mb-2">
+              Lease Requirement
+            </label>
+            <div className="grid grid-cols-4 gap-2">
+              {[
+                { val: undefined, label: 'Any' },
+                { val: 3, label: '≤ 3 mo' },
+                { val: 6, label: '≤ 6 mo' },
+                { val: 12, label: '≤ 12 mo' },
+              ].map((opt) => (
+                <button
+                  key={opt.label}
+                  type="button"
+                  onClick={() => {
+                    triggerHaptic('selection');
+                    setDraft((p) => ({ ...p, minLeaseMax: opt.val }));
+                  }}
+                  className={`py-2 rounded-xl text-xs font-semibold border transition-all ${
+                    draft.minLeaseMax === opt.val
+                      ? 'bg-sky-500 text-white border-sky-500 shadow-xs'
+                      : 'bg-zinc-50 dark:bg-zinc-800 text-zinc-700 dark:text-zinc-300 border-zinc-200 dark:border-zinc-700/60'
+                  }`}
+                >
+                  {opt.label}
+                </button>
+              ))}
+            </div>
+            <p className="text-[10px] text-zinc-400 mt-1.5">
+              Show listings that require a lease of at most this length.
+            </p>
           </div>
 
           {/* Pool Toggle */}

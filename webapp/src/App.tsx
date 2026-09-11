@@ -89,6 +89,7 @@ export const App: React.FC = () => {
     Boolean(filters.minPrice),
     Boolean(filters.maxPrice),
     Boolean(filters.bedrooms && filters.bedrooms.length > 0),
+    Boolean(filters.bathrooms && filters.bathrooms.length > 0),
     Boolean(filters.hasPool),
     Boolean(filters.minLeaseMax),
     Boolean(filters.query && filters.query.trim().length > 0),

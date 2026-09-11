@@ -3,6 +3,7 @@ import { runBot } from './bot';
 import { runScraper } from './scraper';
 import { createContainer } from './container';
 import { createBot } from './modules/bot/bot';
+import { USER_COMMANDS } from './modules/bot/commands';
 import { runMigrations } from './database/migrate';
 import { startWorker, stopWorker } from './services/scheduler';
 import { closeDatabase } from './database/db';
@@ -38,17 +39,7 @@ async function main(): Promise<void> {
   // Start sequential worker
   startWorker(container, 12);
 
-  await bot.api.setMyCommands([
-    { command: 'start', description: 'Start HomEasy & open main menu' },
-    { command: 'search', description: '🎙️ / ✍️ AI Voice & Text Search' },
-    { command: 'menu', description: 'Open main menu & search options' },
-    { command: 'app', description: '📱 Open interactive map & catalog' },
-    { command: 'myfilters', description: 'View & manage your search alerts' },
-    { command: 'favorites', description: 'View saved listings' },
-    { command: 'stop', description: 'Pause notifications' },
-    { command: 'admin', description: '👑 [Admin] Admin Control Panel' },
-    { command: 'stats', description: '📊 [Admin] View bot statistics' },
-  ]);
+  await bot.api.setMyCommands([...USER_COMMANDS]);
 
   if (env.WEBAPP_URL && env.WEBAPP_URL.startsWith('https://')) {
     try {

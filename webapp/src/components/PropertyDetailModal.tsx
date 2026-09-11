@@ -12,6 +12,7 @@ import {
   Sparkles,
   ExternalLink,
   Map,
+  MessageCircle,
 } from 'lucide-react';
 import type { PropertyDTO } from '../types';
 import { triggerHaptic, openExternalUrl } from '../services/telegram';
@@ -139,12 +140,20 @@ export const PropertyDetailModal: React.FC<PropertyDetailModalProps> = ({
             </h2>
 
             <div className="flex items-baseline gap-2 mt-2">
-              <span className="text-3xl font-extrabold text-zinc-900 dark:text-zinc-50">
-                ${property.priceUsd}
-              </span>
-              <span className="text-sm text-zinc-500 dark:text-zinc-400">
-                {property.type === 'rent' ? '/month' : ''}
-              </span>
+              {property.priceUsd > 0 ? (
+                <>
+                  <span className="text-3xl font-extrabold text-zinc-900 dark:text-zinc-50">
+                    ${property.priceUsd}
+                  </span>
+                  <span className="text-sm text-zinc-500 dark:text-zinc-400">
+                    {property.type === 'rent' ? '/month' : ''}
+                  </span>
+                </>
+              ) : (
+                <span className="text-sm font-semibold text-zinc-500 dark:text-zinc-400 bg-zinc-100 dark:bg-zinc-800 px-3 py-1.5 rounded-lg">
+                  Price on request — contact the agent
+                </span>
+              )}
             </div>
           </div>
 
@@ -236,6 +245,20 @@ export const PropertyDetailModal: React.FC<PropertyDetailModalProps> = ({
                 </div>
               )}
             </div>
+
+            {/* Amenities chips */}
+            {property.specs.amenities.length > 0 && (
+              <div className="flex flex-wrap gap-1.5 pt-1">
+                {property.specs.amenities.map((a, i) => (
+                  <span
+                    key={i}
+                    className="px-2.5 py-1 rounded-lg bg-zinc-100 dark:bg-zinc-800 text-zinc-700 dark:text-zinc-300 text-[11px] font-medium"
+                  >
+                    {a}
+                  </span>
+                ))}
+              </div>
+            )}
           </div>
 
           {/* House Rules & Restrictions */}
@@ -277,6 +300,31 @@ export const PropertyDetailModal: React.FC<PropertyDetailModalProps> = ({
                   </button>
                 ))}
               </div>
+            </div>
+          )}
+
+          {/* Advertised Nearby (marketing claims — unverified) */}
+          {property.specs.marketingLandmarks.length > 0 && (
+            <div className="space-y-2">
+              <h3 className="text-sm font-bold text-zinc-900 dark:text-zinc-100 uppercase tracking-wider">
+                Advertised Nearby
+              </h3>
+              <div className="flex flex-wrap gap-2">
+                {property.specs.marketingLandmarks.map((l) => (
+                  <button
+                    key={l.id}
+                    type="button"
+                    onClick={() => openExternalUrl(l.link)}
+                    className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg border border-dashed border-zinc-300 dark:border-zinc-600 text-zinc-600 dark:text-zinc-400 text-xs font-medium hover:bg-zinc-50 dark:hover:bg-zinc-800 transition-colors"
+                  >
+                    <span>📣 {l.name}</span>
+                    <ExternalLink className="w-3 h-3 text-zinc-400" />
+                  </button>
+                ))}
+              </div>
+              <p className="text-[10px] text-zinc-400">
+                Proximity claimed by the advertiser — not verified.
+              </p>
             </div>
           )}
 
@@ -339,6 +387,27 @@ export const PropertyDetailModal: React.FC<PropertyDetailModalProps> = ({
               <span>View Original Listing ↗</span>
             </a>
           ) : null}
+
+          {property.contact.whatsappLink && (
+            <a
+              href={property.contact.whatsappLink}
+              target="_blank"
+              rel="noopener noreferrer"
+              onClick={(e) => {
+                triggerHaptic('light');
+                try {
+                  posthog.capture('contact_lead_clicked', { propertyId: property.id, channel: 'whatsapp' });
+                } catch {
+                  // ignore
+                }
+                openExternalUrl(property.contact.whatsappLink!, e);
+              }}
+              className="p-3 bg-emerald-50 dark:bg-emerald-950/50 hover:bg-emerald-100 text-emerald-600 dark:text-emerald-400 rounded-xl shadow-xs active:scale-95 transition-all flex items-center justify-center cursor-pointer"
+              aria-label="WhatsApp"
+            >
+              <MessageCircle className="w-5 h-5" />
+            </a>
+          )}
 
           {property.contact.phone && (
             <button

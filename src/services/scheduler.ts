@@ -131,10 +131,13 @@ export class ScraperWorker {
       const enrichStats = runEnrichment(undefined, this.container.alertService);
       console.log(`✅ [Worker] Enrichment complete. Enriched: ${enrichStats.totalUpdated}, Spam culled: ${enrichStats.deactivatedSpam}`);
 
-      // Step 3: Link Health Verification (auto-cull 404s & expired posts)
-      console.log('🔗 [Worker] Running link health verification on active listings...');
-      const verifyStats = await this.container.linkVerifierService.verifyBatch(50);
-      console.log(`✅ [Worker] Link verification complete: ${verifyStats.checked} checked, ${verifyStats.deactivated} dead listings deactivated.`);
+      // Step 3: Smart-Queue Re-Verification (age-based cadence: 12h/72h/7d)
+      console.log('🔗 [Worker] Running smart-queue listing verification...');
+      const verifyStats = await this.container.linkVerifierService.verifyBatch(60);
+      console.log(
+        `✅ [Worker] Verification complete: ${verifyStats.checked} checked, ` +
+        `${verifyStats.deactivated} deactivated, ${verifyStats.updated} price updates, ${verifyStats.reingested} re-parsed.`,
+      );
 
       // Step 4: SQLite Query Planner Optimization
       try {
@@ -142,6 +145,9 @@ export class ScraperWorker {
       } catch (e) {
         console.warn('⚠️ [Worker] PRAGMA optimize warning:', e);
       }
+
+      // Step 5: Daily parse-issues report to admins
+      await this.sendParseIssuesReport();
 
       this.lastMaintenanceAt = Date.now();
     } catch (err: unknown) {
@@ -272,7 +278,22 @@ export class ScraperWorker {
 
         this.hourlyStats.cyclesCompleted++;
 
-        // ── 4. Hourly Heartbeat Notification ────────────────────────────────
+        // ── 4. Continuous Re-Verification (smart queue, small per-cycle quota) ─
+        // Age cadence is enforced inside findDueForVerification: fresh ads get
+        // re-checked ~twice a day across cycles, old ones weekly.
+        try {
+          const verify = await this.container.linkVerifierService.verifyBatch(15);
+          if (verify.deactivated > 0 || verify.updated > 0 || verify.reingested > 0) {
+            console.log(
+              `🔗 [Worker] Verify cycle: ${verify.checked} checked, ${verify.deactivated} dead, ` +
+              `${verify.updated} price updates, ${verify.reingested} re-parsed.`,
+            );
+          }
+        } catch (err) {
+          console.warn('⚠️ [Worker] Verify cycle failed:', err instanceof Error ? err.message : String(err));
+        }
+
+        // ── 5. Hourly Heartbeat Notification ────────────────────────────────
         await this.checkAndSendHeartbeat();
       } catch (fatalCycleError: unknown) {
         const msg = fatalCycleError instanceof Error ? fatalCycleError.message : String(fatalCycleError);
@@ -378,6 +399,72 @@ export class ScraperWorker {
       this.lastHeartbeatAt = Date.now();
     } catch (err: unknown) {
       console.error('[Worker] Failed to send hourly heartbeat:', err);
+    }
+  }
+
+  /**
+   * Aggregates `parse_warnings` collected by the ingestor over the last 24h
+   * (plus an all-time histogram) and reports the top extraction issues to
+   * admins — this is the feedback loop for tuning scrapers/prompts.
+   */
+  private async sendParseIssuesReport(): Promise<void> {
+    try {
+      const rows = this.container.db
+        .prepare(
+          `SELECT parse_warnings, created_at FROM properties
+           WHERE parse_warnings IS NOT NULL AND parse_warnings != '[]'`,
+        )
+        .all() as unknown as Array<{ parse_warnings: string; created_at: string }>;
+
+      if (rows.length === 0) return;
+
+      const dayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+      const allTime = new Map<string, number>();
+      const last24h = new Map<string, number>();
+      const unresolvedLocations = new Map<string, number>();
+
+      for (const row of rows) {
+        let codes: string[] = [];
+        try {
+          codes = JSON.parse(row.parse_warnings) as string[];
+        } catch {
+          continue;
+        }
+        const isRecent = (row.created_at ?? '') >= dayAgo;
+        for (const code of codes) {
+          const key = code.split(':')[0] ?? code;
+          allTime.set(key, (allTime.get(key) ?? 0) + 1);
+          if (isRecent) last24h.set(key, (last24h.get(key) ?? 0) + 1);
+          if (key === 'location_unrecognized' || key === 'commerce_location_unresolved') {
+            const val = code.split(':').slice(1).join(':');
+            if (val) unresolvedLocations.set(val, (unresolvedLocations.get(val) ?? 0) + 1);
+          }
+        }
+      }
+
+      const fmt = (m: Map<string, number>) =>
+        [...m.entries()]
+          .sort((a, b) => b[1] - a[1])
+          .slice(0, 8)
+          .map(([k, v]) => `  • <code>${k}</code> — ${v}`)
+          .join('\n');
+
+      const topUnresolved = [...unresolvedLocations.entries()]
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 10)
+        .map(([v, c]) => `  • ${v} (×${c})`)
+        .join('\n');
+
+      const message =
+        `🧪 <b>Parse Issues Report</b> (daily)\n\n` +
+        `<b>Last 24h:</b>\n${fmt(last24h) || '  • none'}\n\n` +
+        `<b>All-time:</b>\n${fmt(allTime)}\n` +
+        (topUnresolved ? `\n<b>Top unresolved locations:</b>\n${topUnresolved}` : '');
+
+      await this.container.notifierService.notifyAdmins(message);
+      console.log('🧪 [Worker] Parse issues report sent to admins.');
+    } catch (err) {
+      console.warn('⚠️ [Worker] Parse issues report failed:', err);
     }
   }
 

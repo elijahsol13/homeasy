@@ -1,5 +1,5 @@
 import type { DatabaseSync } from 'node:sqlite';
-import type { Property } from './properties.repo';
+import { rowToProperty, type Property } from './properties.repo';
 
 export interface Favorite {
   user_id: number;
@@ -44,15 +44,9 @@ export class FavoritesRepository {
          WHERE uf.user_id = ?
          ORDER BY uf.saved_at DESC`,
       )
-      .all(userId) as unknown as Array<
-      Omit<Property, 'photos' | 'direct_contact'> & { photos: string; direct_contact: string }
-    >;
+      .all(userId) as unknown as Parameters<typeof rowToProperty>[0][];
 
-    return rows.map((row) => ({
-      ...row,
-      photos: JSON.parse(row.photos) as string[],
-      direct_contact: JSON.parse(row.direct_contact) as Property['direct_contact'],
-    }));
+    return rows.map(rowToProperty);
   }
 
   getFavoriteCount(userId: number): number {

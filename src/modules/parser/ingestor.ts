@@ -17,7 +17,11 @@ import {
 } from './extractor';
 import { extractCleaning, extractRestrictions } from '../../services/notifier';
 import { findLandmarksInText } from '../../config/landmarks';
-import { extractCoordinatesFromMapsUrl } from '../../config/locations';
+import {
+  extractCoordinatesFromMapsUrl,
+  findCanonicalLocation,
+  isCoordinateInSanityBounds,
+} from '../../config/locations';
 import type { PropertiesRepository } from '../../database/repositories/properties.repo';
 import { checkDuplicate, computeListingPhashes } from '../matcher/deduplicator';
 import type { MatcherService } from '../matcher/matcher';
@@ -49,49 +53,30 @@ export function computeContentHash(fields: {
 
 // ─── Normalization pipeline ───────────────────────────────────────────────────
 
+/** Approximate THB → USD rate for price conversion (marketplace ads priced in baht). */
+const THB_PER_USD = 35.5;
+
 export function normalizeRawToClean(
   raw: ReturnType<typeof RawListingSchema.parse>,
 ): CleanProperty | null {
+  // Extraction source: prefer the preserved raw post text — it still contains
+  // price strings, map links, and location hints that AI normalization may
+  // have stripped from `description`.
+  const rawText = raw.raw_text?.trim() ? raw.raw_text : (raw.description ?? '');
   const combinedText = [raw.title, raw.description, raw.location, raw.city]
     .filter(Boolean)
     .join(' ');
+  const extractionText = [raw.title, rawText, raw.location, raw.city]
+    .filter(Boolean)
+    .join(' ');
+
+  const warnings: string[] = [];
 
   const title = raw.title ? normalizeText(raw.title) : 'Real Estate Listing';
   const description = raw.description ? normalizeText(raw.description) : '';
 
-  // ── Price ──────────────────────────────────────────────────────────────────
-  let priceCents = 0;
-  let currency: 'USD' | 'KHR' = 'USD';
-
-  // If price is a strict number, it likely came directly from the LLM or DB. Trust it completely.
-  if (typeof raw.price === 'number') {
-    currency = (raw.currency ?? 'USD').toUpperCase() === 'KHR' ? 'KHR' : 'USD';
-    priceCents = currency === 'KHR' ? Math.round((raw.price / 4_100) * 100) : Math.round(raw.price * 100);
-  } else if (raw.price !== undefined) {
-    const priceStr = String(raw.price) + ' ' + (raw.currency ?? '');
-    const extracted = extractPrice(priceStr);
-
-    if (extracted) {
-      priceCents = extracted.amountCents;
-      currency = extracted.currency;
-    } else {
-      const num = parseFloat(String(raw.price).replace(/[^0-9.]/g, ''));
-      if (!isNaN(num)) {
-        const curr = (raw.currency ?? 'USD').toUpperCase();
-        currency = curr === 'KHR' ? 'KHR' : 'USD';
-        priceCents =
-          currency === 'KHR' ? Math.round((num / 4_100) * 100) : Math.round(num * 100);
-      }
-    }
-  } else {
-    const extracted = extractPrice(combinedText);
-    if (extracted) {
-      priceCents = extracted.amountCents;
-      currency = extracted.currency;
-    }
-  }
-
   // ── Type ───────────────────────────────────────────────────────────────────
+  // Computed before price: currency sanity rules differ for rent vs sale.
   const rawType = raw.type?.toLowerCase();
   const type: 'rent' | 'sale' =
     rawType === 'sale'
@@ -99,6 +84,84 @@ export function normalizeRawToClean(
       : rawType === 'rent'
         ? 'rent'
         : (extractType(combinedText) ?? 'rent');
+
+  // ── Price ──────────────────────────────────────────────────────────────────
+  // Declared currency is unreliable on both platforms (FB posters pick whatever,
+  // K24 defaults to USD). Resolved by magnitude:
+  //   rent + amount < 10,000              → USD (even if marked KHR/riel)
+  //   rent + amount ≥ 50,000, no "$"      → KHR @ 4,000
+  //   explicit THB markers (฿/บาท/baht)   → THB @ ~35.5
+  //   sale                                → USD unless explicit riel markers
+  const toUsdCents = (n: number, cur: 'USD' | 'KHR' | 'THB'): number =>
+    cur === 'KHR'
+      ? Math.round((n / 4_000) * 100)
+      : cur === 'THB'
+        ? Math.round((n / THB_PER_USD) * 100)
+        : Math.round(n * 100);
+
+  let amount: number | null = null;
+  let declaredCurrency: string | null = null;
+  let priceSourceText = '';
+
+  if (typeof raw.price === 'number' && raw.price > 0) {
+    amount = raw.price;
+    declaredCurrency = raw.currency ?? null;
+  } else if (raw.price !== undefined && raw.price !== null) {
+    const str = String(raw.price);
+    const num = parseFloat(str.replace(/[^0-9.]/g, ''));
+    if (!isNaN(num) && num > 0) {
+      amount = num;
+      declaredCurrency = raw.currency ?? null;
+      priceSourceText = `${str} ${raw.currency ?? ''}`;
+    }
+  }
+
+  if (amount === null) {
+    const extracted = extractPrice(extractionText);
+    if (extracted) {
+      amount = extracted.rawAmount;
+      declaredCurrency = extracted.currency;
+      priceSourceText = extractionText;
+    }
+  }
+
+  if (amount === null && raw.price_hint !== undefined && raw.price_hint > 0) {
+    amount = raw.price_hint;
+    declaredCurrency = raw.price_hint_currency ?? 'USD';
+  }
+
+  let priceCents = 0;
+  const currency: 'USD' | 'KHR' = 'USD';
+
+  if (amount !== null && amount > 0) {
+    const priceHaystack = [priceSourceText, String(raw.price ?? ''), raw.currency ?? '', rawText]
+      .join(' ');
+    const hasThbMarker =
+      /฿|บาท|\bbaht\b/i.test(priceHaystack) ||
+      String(declaredCurrency ?? '').toUpperCase() === 'THB';
+    const hasDollarSign = /\$\s*\d|\bUSD\b/i.test(priceSourceText) ||
+      String(declaredCurrency ?? '').toUpperCase() === 'USD';
+    const hasKhrMarker = /៛|\briel\b|\bKHR\b/i.test(priceHaystack);
+
+    let finalCur: 'USD' | 'KHR' | 'THB';
+    if (hasThbMarker && !hasDollarSign) {
+      finalCur = 'THB';
+    } else if (type === 'rent') {
+      finalCur = amount >= 50_000 && !hasDollarSign ? 'KHR' : 'USD';
+      // $10k+/mo rent is virtually always a mis-tagged sale or a currency error.
+      if (amount >= 10_000 && finalCur !== 'KHR') {
+        warnings.push('price_suspicious');
+      }
+    } else {
+      finalCur = hasKhrMarker && !hasDollarSign && amount >= 500_000 ? 'KHR' : 'USD';
+    }
+
+    priceCents = toUsdCents(amount, finalCur);
+    if (finalCur === 'THB') warnings.push('currency_converted:THB');
+    if (finalCur === 'KHR') warnings.push('currency_converted:KHR');
+  }
+
+  if (priceCents === 0) warnings.push('price_missing');
 
   // ── Category ───────────────────────────────────────────────────────────────
   const extractedCat = extractCategory(combinedText);
@@ -159,11 +222,37 @@ export function normalizeRawToClean(
     }
   } else if (raw.location && raw.location.trim().length > 0 && raw.location.toLowerCase() !== 'null') {
     location = normalizeText(raw.location);
+    warnings.push(`location_unrecognized:${raw.location.trim().slice(0, 40)}`);
   }
+
+  // Platform-provided commerce location (FB "Sell" attachments): use only as a
+  // fallback when nothing else resolved — and only when it canonically resolves
+  // inside our scope (it can name out-of-scope cities like Battambang).
+  if (!location && raw.commerce_location) {
+    const comm = findCanonicalLocation(raw.commerce_location);
+    if (comm) {
+      location = comm.canonicalName;
+      if (!detectedCity) city = comm.city;
+    } else {
+      warnings.push(`commerce_location_unresolved:${raw.commerce_location.trim().slice(0, 40)}`);
+    }
+  }
+  if (!location) warnings.push('location_missing');
 
   const photos = cleanPhotoUrls(raw.photos);
 
-  const mapsUrl = raw.maps_url ?? extractMapsUrl(combinedText);
+  // Google Maps link: prefer explicit field, then scan the RAW post text
+  // (AI normalization may strip links from the cleaned description).
+  let mapsUrl = raw.maps_url ?? extractMapsUrl(rawText) ?? extractMapsUrl(combinedText);
+
+  // Trust-but-verify: when the link carries parseable coordinates they must land
+  // inside the listing's city bounds — otherwise the pin is bogus and we drop it.
+  const linkCoords = mapsUrl ? extractCoordinatesFromMapsUrl(mapsUrl) : null;
+  if (linkCoords && !isCoordinateInSanityBounds(linkCoords.latitude, linkCoords.longitude, city)) {
+    warnings.push('maps_rejected_out_of_bounds');
+    mapsUrl = null;
+  }
+
   const sourceUrl = raw.source_url ?? raw.url ?? '';
 
   // ── Deposit & Min Lease & Pool ─────────────────────────────────────────────
@@ -209,16 +298,22 @@ export function normalizeRawToClean(
     ? raw.pet_friendly
     : !hasPetRestriction && /\b(?:pet friendly|pets allowed)\b/i.test(combinedText);
   const landmarkEntries = findLandmarksInText(combinedText, city);
-  const baseLandmarks = landmarkEntries.map((l) => l.canonicalName);
-  const marketing = raw.marketing_landmarks || [];
-  const landmarks = Array.from(new Set([...baseLandmarks, ...marketing]));
-  const primaryLandmark = baseLandmarks[0] ?? null;
+  // Physical landmarks only — marketing claims ("5 min to Pub Street") are kept
+  // separate in marketing_landmarks and never feed location/matching logic.
+  const landmarks = landmarkEntries.map((l) => l.canonicalName);
+  const marketingLandmarks = Array.from(new Set(raw.marketing_landmarks || []));
+  const primaryLandmark = landmarks[0] ?? null;
 
-  const coords = mapsUrl ? extractCoordinatesFromMapsUrl(mapsUrl) : null;
+  const coords = linkCoords;
   const rawLat = raw.latitude !== undefined && raw.latitude !== null ? parseFloat(String(raw.latitude)) : NaN;
   const rawLng = raw.longitude !== undefined && raw.longitude !== null ? parseFloat(String(raw.longitude)) : NaN;
-  const latitude = coords ? coords.latitude : (!isNaN(rawLat) ? rawLat : null);
-  const longitude = coords ? coords.longitude : (!isNaN(rawLng) ? rawLng : null);
+  const latOk =
+    !isNaN(rawLat) && !isNaN(rawLng) && isCoordinateInSanityBounds(rawLat, rawLng, city);
+  const latitude = coords ? coords.latitude : latOk ? rawLat : null;
+  const longitude = coords ? coords.longitude : latOk ? rawLng : null;
+  if (!isNaN(rawLat) && !isNaN(rawLng) && !latOk) {
+    warnings.push('coords_rejected_out_of_bounds');
+  }
 
   return {
     title,
@@ -249,10 +344,13 @@ export function normalizeRawToClean(
     pet_friendly: petFriendly,
     primary_landmark: primaryLandmark,
     landmarks,
+    marketing_landmarks: marketingLandmarks,
     latitude,
     longitude,
     property_type: raw.property_type ?? null,
     amenities: raw.amenities ?? [],
+    raw_text: raw.raw_text ?? rawText,
+    parse_warnings: warnings,
   };
 }
 
@@ -309,6 +407,36 @@ export class IngestionService {
     clean.image_phashes = imagePhashes;
     clean.image_phash = imagePhashes[0] ?? null;
 
+    // ── Step 1.5: Source URL match — same ad re-scraped after an edit (price
+    // drop, text change) produces a different content hash, so without this
+    // early check a verified re-fetch could insert a duplicate. ────────────────
+    const existingBySource = clean.source_url
+      ? this.propertiesRepo.findBySourceUrl(clean.source_url)
+      : undefined;
+    if (existingBySource) {
+      this.propertiesRepo.bumpAndMerge(existingBySource.id, {
+        price: clean.price,
+        phone: clean.direct_contact?.phone,
+        location: clean.location,
+        maps_url: clean.maps_url ?? undefined,
+        posted_at: clean.posted_at,
+        source_url: clean.source_url ?? undefined,
+        landmarks: clean.landmarks,
+        marketing_landmarks: clean.marketing_landmarks,
+        description: clean.description,
+        raw_text: clean.raw_text ?? undefined,
+        parse_warnings: clean.parse_warnings,
+      });
+      console.log(`  ✨ [Smart Merge] Re-scraped source matched listing #${existingBySource.id} — merged updates`);
+      return {
+        status: 'duplicate',
+        duplicateOfId: existingBySource.id,
+        image_phash: clean.image_phash,
+        image_phashes: clean.image_phashes,
+        reason: `Source URL match with listing #${existingBySource.id}`,
+      };
+    }
+
     // ── Step 2: High-Accuracy Scoring-Based Deduplication Check ────────────────
     const recentCandidates = this.propertiesRepo.findRecentPropertiesForDedup(clean.city, clean.location, 50);
     const dedupResult = checkDuplicate(clean, recentCandidates);
@@ -323,6 +451,11 @@ export class IngestionService {
           maps_url: clean.maps_url ?? undefined,
           posted_at: clean.posted_at,
           source_url: clean.source_url ?? undefined,
+          landmarks: clean.landmarks,
+          marketing_landmarks: clean.marketing_landmarks,
+          description: clean.description,
+          raw_text: clean.raw_text ?? undefined,
+          parse_warnings: clean.parse_warnings,
         });
         console.log(`  ✨ [Smart Merge] Bumped & enriched canonical listing #${dedupResult.duplicateOfId}`);
       }
@@ -355,6 +488,11 @@ export class IngestionService {
         maps_url: clean.maps_url ?? undefined,
         posted_at: clean.posted_at,
         source_url: clean.source_url ?? undefined,
+        landmarks: clean.landmarks,
+        marketing_landmarks: clean.marketing_landmarks,
+        description: clean.description,
+        raw_text: clean.raw_text ?? undefined,
+        parse_warnings: clean.parse_warnings,
       });
       console.log(`  ✨ [Smart Merge] Bumped & enriched canonical listing #${existingByHash.id}`);
       return {

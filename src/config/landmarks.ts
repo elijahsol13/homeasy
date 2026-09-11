@@ -332,3 +332,14 @@ export function findLandmarksInText(text: string, city: CityKey): LandmarkEntry[
 
   return matched;
 }
+
+/**
+ * Resolves a stored canonical landmark name (from `properties.landmarks` /
+ * `properties.marketing_landmarks`) back to its catalog entry.
+ * Returns undefined for names not present in the catalog.
+ */
+export function getLandmarkByCanonicalName(name: string): LandmarkEntry | undefined {
+  if (!name) return undefined;
+  const norm = normalizeText(name);
+  return CAMBODIA_LANDMARKS.find((e) => normalizeText(e.canonicalName) === norm);
+}

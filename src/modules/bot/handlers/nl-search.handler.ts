@@ -90,7 +90,7 @@ function renderCriteriaMessage(criteria: NLSearchCriteria, matchingCount: number
     kb.text(`🔍 View Listings (${matchingCount})`, 'cb:ai:show').row();
   }
   kb.text('✅ Save Search Alert', 'cb:ai:save').row();
-  kb.text('✏️ Adjust Filters', 'cb:ai:edit')
+  kb.text('✏️ Adjust Criteria', 'cb:ai:edit')
     .text('🔄 New Search', 'cb:ai:reset');
 
   return { text, keyboard: kb };
@@ -262,6 +262,7 @@ export function createNLSearchHandler(container: AppContainer): Composer<MyConte
       maxPrice: maxPriceCents,
       bedrooms: draft.bedrooms ?? undefined,
       hasPool: draft.requires_pool || undefined,
+      petFriendly: draft.pet_friendly || undefined,
       locations: draft.locations?.length ? draft.locations : undefined,
       primaryLandmark: draft.primary_landmark ?? undefined,
       limit: 3,
@@ -326,6 +327,7 @@ export function createNLSearchHandler(container: AppContainer): Composer<MyConte
       maxPrice: maxPriceCents,
       bedrooms: draft.bedrooms ?? undefined,
       hasPool: draft.requires_pool || undefined,
+      petFriendly: draft.pet_friendly || undefined,
       locations: draft.locations?.length ? draft.locations : undefined,
       primaryLandmark: draft.primary_landmark ?? undefined,
       limit: 3,
@@ -435,10 +437,21 @@ export function createNLSearchHandler(container: AppContainer): Composer<MyConte
       {
         parse_mode: 'HTML',
         reply_markup: new InlineKeyboard()
-          .text('◀️ Keep Current', 'cb:filter:pool')
+          .text('◀️ Back to Results', 'cb:ai:back')
           .text('❌ Cancel', 'cb:filter:cancel'),
       },
     );
+  });
+
+  // Returns from the "Adjust Parameters" prompt to the still-visible criteria card
+  handler.callbackQuery('cb:ai:back', async (ctx) => {
+    ctx.session.wizardStep = 'idle';
+    try {
+      await ctx.deleteMessage();
+    } catch {
+      // Message may already be gone; safe to ignore
+    }
+    await ctx.answerCallbackQuery();
   });
 
   handler.callbackQuery('cb:ai:reset', async (ctx) => {
@@ -548,7 +561,7 @@ async function handleSearchCriteriaResult(ctx: MyContext, criteria: NLSearchCrit
       {
         parse_mode: 'HTML',
         reply_markup: new InlineKeyboard()
-          .text('🛠 Step-by-Step Wizard', 'cb:menu:new_filter')
+          .text('🛠 Step-by-Step Wizard', 'cb:filter:wizard:start')
           .row()
           .text('🏠 Main Menu', 'cb:menu:main'),
       },
@@ -566,6 +579,7 @@ async function handleSearchCriteriaResult(ctx: MyContext, criteria: NLSearchCrit
     max_price: criteria.max_price ?? undefined,
     bedrooms: criteria.bedrooms ?? [],
     requires_pool: criteria.requires_pool ?? false,
+    pet_friendly: criteria.pet_friendly ?? undefined,
     min_lease_preferred: criteria.min_lease_preferred ?? null,
     locations: criteria.location ? [criteria.location] : [],
     primary_landmark: criteria.primary_landmark ?? null,
@@ -582,6 +596,7 @@ async function handleSearchCriteriaResult(ctx: MyContext, criteria: NLSearchCrit
     maxPrice: maxPriceCents,
     bedrooms: criteria.bedrooms ?? undefined,
     hasPool: criteria.requires_pool || undefined,
+    petFriendly: criteria.pet_friendly || undefined,
     primaryLandmark: criteria.primary_landmark ?? undefined,
     limit: 1,
   });

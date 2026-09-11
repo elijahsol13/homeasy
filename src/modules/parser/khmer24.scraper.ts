@@ -230,7 +230,7 @@ async function fetchListingUrlsFromFeed(
  *
  * Falls back to DOM extraction if JSON-LD is missing or malformed.
  */
-async function scrapeListingDetail(ctx: BrowserContext, target: ScrapeTarget, url: string): Promise<RawListing | null> {
+export async function scrapeListingDetail(ctx: BrowserContext, target: ScrapeTarget, url: string): Promise<RawListing | null> {
   const page = await ctx.newPage();
   let listing: RawListing | null = null;
 
@@ -301,6 +301,7 @@ async function scrapeListingDetail(ctx: BrowserContext, target: ScrapeTarget, ur
       listing = {
         title: extracted.title,
         description: extracted.description,
+        raw_text: extracted.description,
         price: extracted.price,
         currency: extracted.currency as 'USD' | 'KHR',
         type: target.type ?? 'rent',
@@ -312,6 +313,28 @@ async function scrapeListingDetail(ctx: BrowserContext, target: ScrapeTarget, ur
         url,
         source_url: url,
       };
+
+      // JSON-LD sometimes omits offers.price — fall back to a DOM scan of the
+      // header block (the <p> right under the title carries the price).
+      if (!listing.price) {
+        const domPriceText = await page.evaluate(() => {
+          const priceRe = /(?:\$|USD|KHR|៛|US\$)\s*\d[\d,.]*|\d[\d,.]*\s*(?:USD|KHR|៛|\$)/i;
+          const headerRoot =
+            document.querySelector('article header') ||
+            document.querySelector('article') ||
+            document.querySelector('main');
+          if (!headerRoot) return '';
+          for (const el of Array.from(headerRoot.querySelectorAll('p, span, div'))) {
+            if (el.children.length > 0) continue;
+            const t = (el.textContent || '').trim();
+            if (t.length <= 40 && priceRe.test(t)) return t;
+          }
+          const el = document.querySelector('[class*="text-error-500"]') || document.querySelector('[class*="price"]');
+          return el?.textContent?.trim() || '';
+        });
+        const domPrice = parseRawPrice(domPriceText);
+        if (domPrice) listing.price = domPrice;
+      }
     } else {
       // ── Fallback: DOM extraction (CSS selectors + visible text) ────────────
       // Wait for h1 to confirm page rendered
@@ -320,11 +343,32 @@ async function scrapeListingDetail(ctx: BrowserContext, target: ScrapeTarget, ur
       const domData = await page.evaluate(() => {
         const h1 = document.querySelector('h1')?.textContent?.trim() || '';
 
-        // Price: Khmer24 uses text-error-500 for the price text
-        const priceEl =
-          document.querySelector('[class*="text-error-500"]') ||
-          document.querySelector('[class*="price"]');
-        const priceText = priceEl?.textContent?.trim() || '';
+        // Price: sits in the article header block, same container as the title —
+        // the <p> sibling right below the h1 (per site layout), historically
+        // styled text-error-500. Try semantic scan first, then class heuristics.
+        const priceRe = /(?:\$|USD|KHR|៛|US\$)\s*\d[\d,.]*|\d[\d,.]*\s*(?:USD|KHR|៛|\$)/i;
+        let priceText = '';
+        const headerRoot =
+          document.querySelector('article header') ||
+          document.querySelector('article') ||
+          document.querySelector('main');
+        if (headerRoot) {
+          const nodes = Array.from(headerRoot.querySelectorAll('p, span, div'));
+          for (const el of nodes) {
+            if (el.children.length > 0) continue; // leaf nodes only
+            const t = (el.textContent || '').trim();
+            if (t.length <= 40 && priceRe.test(t)) {
+              priceText = t;
+              break;
+            }
+          }
+        }
+        if (!priceText) {
+          const priceEl =
+            document.querySelector('[class*="text-error-500"]') ||
+            document.querySelector('[class*="price"]');
+          priceText = priceEl?.textContent?.trim() || '';
+        }
 
         // Description: whitespace-break-spaces paragraph is the post body
         const descEl = document.querySelector('[class*="whitespace-break-spaces"]');
@@ -353,6 +397,7 @@ async function scrapeListingDetail(ctx: BrowserContext, target: ScrapeTarget, ur
       listing = {
         title: domData.h1,
         description: domData.description,
+        raw_text: domData.description,
         price: parseRawPrice(domData.priceText),
         currency: 'USD',
         type: target.type ?? 'rent',
@@ -521,7 +566,9 @@ export async function enrichListingsWithLLM(listings: RawListing[]): Promise<Raw
       ...listing,
       title: llm.title_en?.trim() || listing.title,
       description: llm.description_en || listing.description,
-      // Khmer24's own JSON-LD price/photos/phone are already reliable — never override those.
+      // Khmer24's own JSON-LD price/photos/phone are already reliable — never
+      // override them; only accept the LLM price when scraping yielded none.
+      price: listing.price ?? llm.price ?? undefined,
       // (llm.category === 'land' already handled above.)
       category,
       city,

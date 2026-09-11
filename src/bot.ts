@@ -1,6 +1,7 @@
 import 'dotenv/config';
 import { createContainer } from './container';
 import { createBot } from './modules/bot/bot';
+import { USER_COMMANDS } from './modules/bot/commands';
 import { runMigrations } from './database/migrate';
 import { closeDatabase } from './database/db';
 import { env } from './config/env';
@@ -23,17 +24,7 @@ export async function runBot(): Promise<void> {
   container.notifierService.setApi(bot.api);
   container.alertService.setApi(bot.api);
 
-  await bot.api.setMyCommands([
-    { command: 'start', description: 'Start HomEasy & open main menu' },
-    { command: 'search', description: '🎙️ / ✍️ AI Voice & Text Search' },
-    { command: 'menu', description: 'Open main menu & search options' },
-    { command: 'app', description: '📱 Open interactive map & catalog' },
-    { command: 'myfilters', description: 'View & manage your search alerts' },
-    { command: 'favorites', description: 'View saved listings' },
-    { command: 'stop', description: 'Pause notifications' },
-    { command: 'admin', description: '👑 [Admin] Admin Control Panel' },
-    { command: 'stats', description: '📊 [Admin] View bot statistics' },
-  ]);
+  await bot.api.setMyCommands([...USER_COMMANDS]);
 
   if (env.WEBAPP_URL && env.WEBAPP_URL.startsWith('https://')) {
     try {

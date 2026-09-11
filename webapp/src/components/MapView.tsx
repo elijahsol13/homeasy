@@ -23,6 +23,7 @@ export const MapView: React.FC<MapViewProps> = ({ city, onSelectProperty, onSele
 
   const [markers, setMarkers] = useState<MapMarkerDTO[]>([]);
   const [selectedMarker, setSelectedMarker] = useState<MapMarkerDTO | null>(null);
+  const [zoomedCluster, setZoomedCluster] = useState<{ location: string; count: number } | null>(null);
   const [loading, setLoading] = useState(true);
   const debounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -90,6 +91,7 @@ export const MapView: React.FC<MapViewProps> = ({ city, onSelectProperty, onSele
   // Initial fetch / city change fetch
   useEffect(() => {
     setSelectedMarker(null);
+    setZoomedCluster(null);
     setLoading(true);
     if (mapInstanceRef.current) {
       fetchMarkersForCurrentBounds();
@@ -110,76 +112,83 @@ export const MapView: React.FC<MapViewProps> = ({ city, onSelectProperty, onSele
 
       let customIcon: L.DivIcon;
 
-      if (item.isExact !== false && !item.count) {
-        // Individual exact property pin (blue price tag: $350)
+      const isCluster = item.isExact === false || Boolean(item.count);
+
+      if (!isCluster) {
+        // Individual exact property pin — small sharp house pin with price
         customIcon = L.divIcon({
           className: 'custom-map-pin',
           html: `
-            <div style="
-              background: #0284c7;
-              color: #ffffff;
-              font-weight: 700;
-              font-size: 11px;
-              padding: 3px 7px;
-              border-radius: 8px;
-              box-shadow: 0 4px 6px rgba(0,0,0,0.25);
-              display: inline-flex;
-              align-items: center;
-              white-space: nowrap;
-              border: 2px solid #ffffff;
-              transform: translate(-50%, -50%);
-              cursor: pointer;
-            ">
-              $${item.priceUsd}
+            <div style="transform: translate(-50%, -90%); cursor: pointer; text-align: center;">
+              <div style="
+                background: #0284c7;
+                color: #ffffff;
+                font-size: 14px;
+                width: 30px;
+                height: 30px;
+                border-radius: 50% 50% 50% 4px;
+                transform: rotate(-45deg);
+                box-shadow: 0 3px 5px rgba(0,0,0,0.3);
+                border: 2px solid #ffffff;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+              "><span style="transform: rotate(45deg);">🏠</span></div>
+              <div style="
+                margin-top: 2px;
+                background: #ffffff;
+                color: #0284c7;
+                font-weight: 700;
+                font-size: 9px;
+                padding: 0 4px;
+                border-radius: 4px;
+                box-shadow: 0 1px 3px rgba(0,0,0,0.25);
+                white-space: nowrap;
+                display: inline-block;
+              ">$${item.priceUsd}</div>
             </div>
           `,
-          iconSize: [40, 20],
-          iconAnchor: [20, 10],
+          iconSize: [40, 46],
+          iconAnchor: [20, 23],
         });
       } else {
-        // Sangkat neighborhood cluster with count badge on the pin cap / head!
+        // Sangkat cluster bubble — big round marker with the listings count,
+        // visually distinct (teal) from the exact-pin blue.
+        const count = item.count ?? 0;
         customIcon = L.divIcon({
           className: 'sangkat-cluster-pin',
           html: `
-            <div style="position: relative; display: inline-flex; align-items: center; transform: translate(-50%, -50%); cursor: pointer;">
-              <!-- Cap / Badge on the head of the pin with count -->
-              <span style="
-                position: absolute;
-                top: -8px;
-                right: -8px;
-                background: #ef4444;
-                color: #ffffff;
-                font-size: 10px;
-                font-weight: 800;
-                padding: 1px 6px;
-                border-radius: 9999px;
-                box-shadow: 0 2px 4px rgba(0,0,0,0.3);
-                border: 1.5px solid #ffffff;
-                z-index: 10;
-              ">${item.count}+</span>
-              
-              <!-- Main Sangkat Pill -->
+            <div style="transform: translate(-50%, -50%); cursor: pointer; text-align: center;">
               <div style="
                 background: #0f766e;
                 color: #ffffff;
-                font-weight: 700;
-                font-size: 11px;
-                padding: 4px 9px;
-                border-radius: 12px;
-                box-shadow: 0 4px 6px rgba(0,0,0,0.25);
+                font-weight: 800;
+                font-size: 14px;
+                width: 44px;
+                height: 44px;
+                border-radius: 9999px;
+                box-shadow: 0 4px 8px rgba(0,0,0,0.3);
+                border: 3px solid #ffffff;
                 display: inline-flex;
                 align-items: center;
-                gap: 4px;
+                justify-content: center;
+              ">${count}</div>
+              <div style="
+                margin-top: 3px;
+                background: rgba(15, 118, 110, 0.92);
+                color: #ffffff;
+                font-weight: 700;
+                font-size: 9px;
+                padding: 1px 6px;
+                border-radius: 6px;
+                box-shadow: 0 1px 3px rgba(0,0,0,0.25);
                 white-space: nowrap;
-                border: 2px solid #ffffff;
-              ">
-                <span>📍 ${item.location}</span>
-                <span style="opacity: 0.85; font-size: 10px;">from $${item.priceUsd}</span>
-              </div>
+                display: inline-block;
+              ">${item.location}</div>
             </div>
           `,
-          iconSize: [60, 24],
-          iconAnchor: [30, 12],
+          iconSize: [70, 70],
+          iconAnchor: [35, 35],
         });
       }
 
@@ -189,7 +198,18 @@ export const MapView: React.FC<MapViewProps> = ({ city, onSelectProperty, onSele
 
       marker.on('click', () => {
         triggerHaptic('light');
-        setSelectedMarker(item);
+        if (isCluster) {
+          // Zoom into the district; the "no exact address" banner follows.
+          setSelectedMarker(null);
+          setZoomedCluster({ location: item.location, count: item.count ?? 0 });
+          mapInstanceRef.current?.flyTo(
+            [item.coordinates!.lat, item.coordinates!.lng],
+            15,
+            { duration: 0.6 },
+          );
+        } else {
+          setSelectedMarker(item);
+        }
       });
 
       marker.addTo(markersLayerRef.current!);
@@ -224,6 +244,39 @@ export const MapView: React.FC<MapViewProps> = ({ city, onSelectProperty, onSele
       {loading && (
         <div className="absolute top-4 left-1/2 -translate-x-1/2 z-20 bg-white/90 dark:bg-zinc-800/90 backdrop-blur-md px-4 py-1.5 rounded-full text-xs font-semibold shadow-md text-zinc-700 dark:text-zinc-200">
           Loading map pins...
+        </div>
+      )}
+
+      {/* Floating banner: district zoomed — N listings have no exact address */}
+      {zoomedCluster && !loading && (
+        <div className="absolute top-4 inset-x-4 z-20 flex justify-center animate-in slide-in-from-top duration-200">
+          <div className="bg-white/95 dark:bg-zinc-800/95 backdrop-blur-md rounded-2xl shadow-lg border border-teal-200 dark:border-teal-800 px-4 py-2.5 flex items-center gap-3 max-w-full">
+            <div className="flex-1 min-w-0">
+              <div className="text-[11px] font-semibold text-zinc-700 dark:text-zinc-200 truncate">
+                {zoomedCluster.location}: {zoomedCluster.count} listing{zoomedCluster.count === 1 ? '' : 's'} without an exact address
+              </div>
+              {onSelectLocation && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    triggerHaptic('medium');
+                    onSelectLocation(zoomedCluster.location);
+                  }}
+                  className="text-[11px] font-bold text-teal-600 dark:text-teal-400 hover:underline"
+                >
+                  View as list →
+                </button>
+              )}
+            </div>
+            <button
+              type="button"
+              onClick={() => setZoomedCluster(null)}
+              className="text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-200 text-sm font-bold px-1"
+              aria-label="Dismiss"
+            >
+              ✕
+            </button>
+          </div>
         </div>
       )}
 

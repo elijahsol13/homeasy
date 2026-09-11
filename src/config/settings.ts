@@ -80,6 +80,8 @@ export const BUDGET_RANGES = [
   { label: '$300 – $500', min: 300, max: 500 },
   { label: '$500 – $800', min: 500, max: 800 },
   { label: '$800 – $1,200', min: 800, max: 1_200 },
+  { label: '$1,200 – $2,000', min: 1_200, max: 2_000 },
+  { label: 'Over $2,000', min: 2_000, max: null },
 ] as const;
 
 export type BudgetRange = (typeof BUDGET_RANGES)[number];

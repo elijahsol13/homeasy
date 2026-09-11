@@ -795,14 +795,18 @@ async function runGeminiEnrichment(db: any, limit?: number): Promise<void> {
       const baseLandmarks = (aiResult?.landmarks && aiResult.landmarks.length > 0)
         ? aiResult.landmarks
         : regexLandmarks.map((l) => l.canonicalName);
-      const marketing = aiResult?.marketing_landmarks || [];
-      const finalLandmarks = Array.from(new Set([...baseLandmarks, ...marketing]));
-      
-      if (finalLandmarks.length > 0) {
-        patch.landmarks = JSON.stringify(finalLandmarks);
+      const marketing = Array.from(new Set(aiResult?.marketing_landmarks || []));
+
+      // Physical landmarks and marketing claims stay in separate columns —
+      // marketing text must never influence location/matching.
+      if (baseLandmarks.length > 0) {
+        patch.landmarks = JSON.stringify(baseLandmarks);
         if (!row.primary_landmark && baseLandmarks.length > 0) {
           patch.primary_landmark = baseLandmarks[0];
         }
+      }
+      if (marketing.length > 0) {
+        patch.marketing_landmarks = JSON.stringify(marketing);
       }
 
       const finalPropType = aiResult?.property_type || regexPropType;

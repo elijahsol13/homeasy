@@ -54,6 +54,9 @@ export async function fetchProperties(
   if (filters.bedrooms && filters.bedrooms.length > 0) {
     params.set('bedrooms', filters.bedrooms.join(','));
   }
+  if (filters.bathrooms && filters.bathrooms.length > 0) {
+    params.set('bathrooms', filters.bathrooms.join(','));
+  }
   if (filters.hasPool !== undefined) {
     params.set('has_pool', filters.hasPool ? 'true' : 'false');
   }

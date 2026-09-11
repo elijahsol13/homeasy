@@ -92,8 +92,9 @@ export function favoritesListKeyboard(
   const slice = properties.slice(start, start + PAGE_SIZE);
 
   slice.forEach((prop) => {
-    const price = prop.price / 100;
-    const label = `🏠 ${prop.title.slice(0, 28)} — $${price.toLocaleString('en-US')}`;
+    const priceLabel =
+      prop.price > 0 ? `$${(prop.price / 100).toLocaleString('en-US')}` : 'price on request';
+    const label = `🏠 ${prop.title.slice(0, 28)} — ${priceLabel}`;
     kb.text(label, `cb:fav:view:${prop.id}`).row();
   });
 

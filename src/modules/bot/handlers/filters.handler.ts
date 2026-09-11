@@ -75,6 +75,113 @@ export function parseCustomBudgetInput(text: string): { min?: number; max?: numb
   return null;
 }
 
+// ─── Wizard step prompts ──────────────────────────────────────────────────────
+
+const WIZARD_ORDER: readonly WizardStep[] = [
+  'filter:type',
+  'filter:category',
+  'filter:city',
+  'filter:locations',
+  'filter:budget',
+  'filter:bedrooms',
+  'filter:pool',
+  'filter:lease',
+];
+
+function isRoomLike(draft: FilterDraft): boolean {
+  return draft.category === 'room' || draft.category === 'hotel';
+}
+
+function isStepSkipped(draft: FilterDraft, step: WizardStep): boolean {
+  if (step === 'filter:bedrooms') return isRoomLike(draft);
+  if (step === 'filter:lease') return draft.type === 'sale';
+  return false;
+}
+
+function stepHeader(draft: FilterDraft, step: WizardStep, icon: string, title: string): string {
+  let num = 0;
+  let total = 0;
+  for (const s of WIZARD_ORDER) {
+    if (isStepSkipped(draft, s)) continue;
+    total++;
+    if (s === step) num = total;
+  }
+  return `${icon} <b>Step ${num} / ${total} — ${title}</b>`;
+}
+
+function wizardStepPrompt(
+  draft: FilterDraft,
+  step: WizardStep,
+): { text: string; keyboard: InlineKeyboard } {
+  switch (step) {
+    case 'filter:category':
+      return {
+        text:
+          `✅ <b>${draft.type === 'rent' ? 'For Rent' : 'For Sale'}</b> selected.\n\n` +
+          `${stepHeader(draft, step, '🏢', 'Property Category')}\n\nWhat category of property are you looking for?`,
+        keyboard: categoryKeyboard(),
+      };
+    case 'filter:city':
+      return {
+        text:
+          `✅ <b>Category:</b> ${
+            CATEGORY_OPTIONS.find((c) => c.value === draft.category)?.label ?? 'Any'
+          }\n\n` +
+          `${stepHeader(draft, step, '🌆', 'City')}\n\nWhich city are you looking in?`,
+        keyboard: cityKeyboard(),
+      };
+    case 'filter:locations': {
+      const city = draft.city ?? 'siem_reap';
+      return {
+        text:
+          `✅ <b>${CITIES[city]}</b> selected.\n\n` +
+          `${stepHeader(draft, step, '📍', 'Districts / Sangkats')}\n\n` +
+          `Pick specific areas or tap <b>Any Area</b> for the whole city. Tap <b>✅ Done</b> when ready.`,
+        keyboard: locationsKeyboard(city, draft.locations),
+      };
+    }
+    case 'filter:budget':
+    case 'filter:budget:custom':
+      return {
+        text:
+          `✅ <b>Areas:</b> ${draft.locations.length > 0 ? draft.locations.join(', ') : 'All Areas'}\n\n` +
+          `${stepHeader(draft, 'filter:budget', '💰', 'Monthly Budget')}\n\n` +
+          `Select a preset range or <b>type your custom budget directly</b> (e.g. <code>150-300</code>, <code>under 250</code>, or <code>200</code>):`,
+        keyboard: budgetKeyboard(),
+      };
+    case 'filter:bedrooms':
+      return {
+        text:
+          `✅ <b>Budget:</b> ${buildPriceRangeLabel(draft.min_price ?? null, draft.max_price ?? null)}\n\n` +
+          `${stepHeader(draft, step, '🛏', 'Bedrooms')}\n\n` +
+          `Select one or more bedroom options (e.g. Studio and 1 BR), or tap <b>Any</b>:`,
+        keyboard: bedroomsKeyboard(draft.bedrooms ?? []),
+      };
+    case 'filter:pool': {
+      const prev = isRoomLike(draft)
+        ? `✅ <b>Budget:</b> ${buildPriceRangeLabel(draft.min_price ?? null, draft.max_price ?? null)}`
+        : `✅ <b>Bedrooms:</b> ${formatBedroomsLabel(draft.bedrooms)}`;
+      return {
+        text: `${prev}\n\n${stepHeader(draft, step, '🏊', 'Swimming Pool')}\n\nDo you require a swimming pool?`,
+        keyboard: poolKeyboard(isRoomLike(draft)),
+      };
+    }
+    case 'filter:lease':
+      return {
+        text:
+          `✅ <b>Pool:</b> ${draft.requires_pool ? 'Required 🏊' : 'Any'}\n\n` +
+          `${stepHeader(draft, step, '⏱️', 'Lease Term')}\n\nWhat is your preferred lease duration?`,
+        keyboard: leaseKeyboard(),
+      };
+    case 'filter:type':
+    default:
+      return {
+        text: `${stepHeader(draft, 'filter:type', '🏠', 'Listing Type')}\n\nAre you looking to rent or buy?`,
+        keyboard: typeKeyboard(),
+      };
+  }
+}
+
 // ─── Wizard entry ─────────────────────────────────────────────────────────────
 
 export async function startFilterWizard(ctx: MyContext): Promise<void> {
@@ -105,11 +212,11 @@ export async function startFilterWizard(ctx: MyContext): Promise<void> {
   ctx.session.wizardStep = 'filter:type';
   ctx.session.filterDraft = { locations: [], bedrooms: [], requires_pool: false };
 
-  await sendOrEdit(
-    ctx,
-    '🏠 <b>Step 1 / 8 — Listing Type</b>\n\nAre you looking to rent or buy?',
-    { parse_mode: 'HTML' as const, reply_markup: typeKeyboard() },
-  );
+  const prompt = wizardStepPrompt(ctx.session.filterDraft, 'filter:type');
+  await sendOrEdit(ctx, prompt.text, {
+    parse_mode: 'HTML' as const,
+    reply_markup: prompt.keyboard,
+  });
 }
 
 // ─── Filter list display ──────────────────────────────────────────────────────
@@ -249,92 +356,19 @@ export async function handleFilterCallback(ctx: MyContext, data: string): Promis
 
   if (data.startsWith('cb:filter:back:')) {
     const targetStep = data.replace('cb:filter:back:', '') as WizardStep;
-    ctx.session.wizardStep = targetStep;
 
-    switch (targetStep) {
-      case 'filter:type':
-        await ctx.editMessageText('🏠 <b>Step 1 / 8 — Listing Type</b>\n\nAre you looking to rent or buy?', {
-          parse_mode: 'HTML',
-          reply_markup: typeKeyboard(),
-        });
-        break;
+    // Going "back" from pool in a room/hotel flow means returning to budget
+    const effectiveStep =
+      targetStep === 'filter:pool' && isRoomLike(draft) ? 'filter:budget' : targetStep;
 
-      case 'filter:category':
-        await ctx.editMessageText(
-          `✅ <b>${draft.type === 'rent' ? 'For Rent' : 'For Sale'}</b> selected.\n\n` +
-            `🏢 <b>Step 2 / 8 — Property Category</b>\n\nWhat category of property are you looking for?`,
-          { parse_mode: 'HTML', reply_markup: categoryKeyboard() },
-        );
-        break;
+    if (effectiveStep === 'filter:locations' && !draft.city) draft.city = 'siem_reap';
+    ctx.session.wizardStep = effectiveStep;
 
-      case 'filter:city':
-        await ctx.editMessageText(
-          `✅ <b>Category:</b> ${
-            CATEGORY_OPTIONS.find((c) => c.value === draft.category)?.label ?? 'Any'
-          }\n\n` + `🌆 <b>Step 3 / 8 — City</b>\n\nWhich city are you looking in?`,
-          { parse_mode: 'HTML', reply_markup: cityKeyboard() },
-        );
-        break;
-
-      case 'filter:locations':
-        if (!draft.city) draft.city = 'siem_reap';
-        await ctx.editMessageText(
-          `✅ <b>${CITIES[draft.city]}</b> selected.\n\n` +
-            `📍 <b>Step 4 / 8 — Districts / Sangkats</b>\n\n` +
-            `Pick specific areas or tap <b>Any Area</b> for the whole city. Tap <b>✅ Done</b> when ready.`,
-          { parse_mode: 'HTML', reply_markup: locationsKeyboard(draft.city, draft.locations) },
-        );
-        break;
-
-      case 'filter:budget':
-        await ctx.editMessageText(
-          `✅ <b>Areas:</b> ${draft.locations.length > 0 ? draft.locations.join(', ') : 'All Areas'}\n\n` +
-            `💰 <b>Step 5 / 8 — Monthly Budget</b>\n\n` +
-            `Select a preset range or <b>type your custom budget directly</b> (e.g. <code>150-300</code>, <code>under 250</code>, or <code>200</code>):`,
-          { parse_mode: 'HTML', reply_markup: budgetKeyboard() },
-        );
-        break;
-
-      case 'filter:bedrooms':
-        await ctx.editMessageText(
-          `✅ <b>Budget:</b> ${buildPriceRangeLabel(draft.min_price ?? null, draft.max_price ?? null)}\n\n` +
-            `🛏 <b>Step 6 / 8 — Bedrooms</b>\n\n` +
-            `Select one or more bedroom options (e.g. 1 and 2 BR), or tap <b>Any</b>:`,
-          { parse_mode: 'HTML', reply_markup: bedroomsKeyboard(draft.bedrooms ?? []) },
-        );
-        break;
-
-      case 'filter:pool':
-        if (draft.category === 'room' || draft.category === 'hotel') {
-          ctx.session.wizardStep = 'filter:budget';
-          await ctx.editMessageText(
-            `✅ <b>Areas:</b> ${draft.locations.length > 0 ? draft.locations.join(', ') : 'All Areas'}\n\n` +
-              `💰 <b>Step 5 / 8 — Monthly Budget</b>\n\n` +
-              `Select a preset range or <b>type your custom budget directly</b> (e.g. <code>150-300</code>, <code>under 250</code>, or <code>200</code>):`,
-            { parse_mode: 'HTML', reply_markup: budgetKeyboard() },
-          );
-        } else {
-          await ctx.editMessageText(
-            `✅ <b>Bedrooms:</b> ${formatBedroomsLabel(draft.bedrooms)}\n\n` +
-              `🏊 <b>Step 7 / 8 — Swimming Pool</b>\n\nDo you require a swimming pool?`,
-            { parse_mode: 'HTML', reply_markup: poolKeyboard(false) },
-          );
-        }
-        break;
-
-      case 'filter:lease':
-        await ctx.editMessageText(
-          `✅ <b>Pool:</b> ${draft.requires_pool ? 'Required 🏊' : 'Any'}\n\n` +
-            `⏱️ <b>Step 8 / 8 — Lease Term</b>\n\nWhat is your preferred lease duration?`,
-          { parse_mode: 'HTML', reply_markup: leaseKeyboard() },
-        );
-        break;
-
-      default:
-        await startFilterWizard(ctx);
-        break;
-    }
-
+    const prompt = wizardStepPrompt(draft, effectiveStep);
+    await ctx.editMessageText(prompt.text, {
+      parse_mode: 'HTML',
+      reply_markup: prompt.keyboard,
+    });
     await ctx.answerCallbackQuery();
     return;
   }
@@ -462,15 +496,11 @@ export async function handleFilterCallback(ctx: MyContext, data: string): Promis
   // ── Step 1: filter:type ────────────────────────────────────────────────────
 
   if (step === 'filter:type' && data.startsWith('cb:filter:type:')) {
-    const type = data.replace('cb:filter:type:', '') as 'rent' | 'sale';
-    draft.type = type;
+    draft.type = data.replace('cb:filter:type:', '') as 'rent' | 'sale';
     ctx.session.wizardStep = 'filter:category';
 
-    await ctx.editMessageText(
-      `✅ <b>${type === 'rent' ? 'For Rent' : 'For Sale'}</b> selected.\n\n` +
-        `🏢 <b>Step 2 / 8 — Property Category</b>\n\nWhat category of property are you looking for?`,
-      { parse_mode: 'HTML', reply_markup: categoryKeyboard() },
-    );
+    const prompt = wizardStepPrompt(draft, 'filter:category');
+    await ctx.editMessageText(prompt.text, { parse_mode: 'HTML', reply_markup: prompt.keyboard });
     await ctx.answerCallbackQuery();
     return;
   }
@@ -485,11 +515,8 @@ export async function handleFilterCallback(ctx: MyContext, data: string): Promis
     }
 
     ctx.session.wizardStep = 'filter:city';
-    await ctx.editMessageText(
-      `✅ <b>Category:</b> ${catOpt?.label ?? 'Any'}\n\n` +
-        `🌆 <b>Step 3 / 8 — City</b>\n\nWhich city are you looking in?`,
-      { parse_mode: 'HTML', reply_markup: cityKeyboard() },
-    );
+    const prompt = wizardStepPrompt(draft, 'filter:city');
+    await ctx.editMessageText(prompt.text, { parse_mode: 'HTML', reply_markup: prompt.keyboard });
     await ctx.answerCallbackQuery();
     return;
   }
@@ -502,12 +529,8 @@ export async function handleFilterCallback(ctx: MyContext, data: string): Promis
     draft.locations = [];
     ctx.session.wizardStep = 'filter:locations';
 
-    await ctx.editMessageText(
-      `✅ <b>${CITIES[city]}</b> selected.\n\n` +
-        `📍 <b>Step 4 / 8 — Districts / Sangkats</b>\n\n` +
-        `Pick specific areas or tap <b>Any Area</b> for the whole city. Tap <b>✅ Done</b> when ready.`,
-      { parse_mode: 'HTML', reply_markup: locationsKeyboard(city, draft.locations) },
-    );
+    const prompt = wizardStepPrompt(draft, 'filter:locations');
+    await ctx.editMessageText(prompt.text, { parse_mode: 'HTML', reply_markup: prompt.keyboard });
     await ctx.answerCallbackQuery();
     return;
   }
@@ -527,14 +550,8 @@ export async function handleFilterCallback(ctx: MyContext, data: string): Promis
 
     if (data === 'cb:filter:loc:done') {
       ctx.session.wizardStep = 'filter:budget';
-      const locLabel = draft.locations.length > 0 ? draft.locations.join(', ') : 'All Areas';
-
-      await ctx.editMessageText(
-        `✅ <b>Areas:</b> ${locLabel}\n\n` +
-          `💰 <b>Step 5 / 8 — Monthly Budget</b>\n\n` +
-          `Select a preset range or <b>type your custom budget directly</b> (e.g. <code>150-300</code>, <code>under 250</code>, or <code>200</code>):`,
-        { parse_mode: 'HTML', reply_markup: budgetKeyboard() },
-      );
+      const prompt = wizardStepPrompt(draft, 'filter:budget');
+      await ctx.editMessageText(prompt.text, { parse_mode: 'HTML', reply_markup: prompt.keyboard });
       await ctx.answerCallbackQuery();
       return;
     }
@@ -585,11 +602,8 @@ export async function handleFilterCallback(ctx: MyContext, data: string): Promis
 
   if (step === 'filter:budget:custom' && data === 'cb:filter:budget:back') {
     ctx.session.wizardStep = 'filter:budget';
-    await ctx.editMessageText(
-      '💰 <b>Step 5 / 8 — Monthly Budget</b>\n\n' +
-        'Select a preset range or <b>type your custom budget directly</b> (e.g. <code>150-300</code>, <code>under 250</code>, or <code>200</code>):',
-      { parse_mode: 'HTML', reply_markup: budgetKeyboard() },
-    );
+    const prompt = wizardStepPrompt(draft, 'filter:budget');
+    await ctx.editMessageText(prompt.text, { parse_mode: 'HTML', reply_markup: prompt.keyboard });
     await ctx.answerCallbackQuery();
     return;
   }
@@ -609,26 +623,13 @@ export async function handleFilterCallback(ctx: MyContext, data: string): Promis
       }
     }
 
-    if (draft.category === 'room' || draft.category === 'hotel') {
-      draft.bedrooms = [1];
-      ctx.session.wizardStep = 'filter:pool';
-      await ctx.editMessageText(
-        `✅ <b>Budget:</b> ${buildPriceRangeLabel(draft.min_price ?? null, draft.max_price ?? null)}\n\n` +
-          `🏊 <b>Step 7 / 8 — Swimming Pool</b>\n\nDo you require a swimming pool?`,
-        { parse_mode: 'HTML', reply_markup: poolKeyboard(true) },
-      );
-      await ctx.answerCallbackQuery();
-      return;
-    }
+    const nextStep: WizardStep = isRoomLike(draft) ? 'filter:pool' : 'filter:bedrooms';
+    if (isRoomLike(draft)) draft.bedrooms = [1];
+    if (nextStep === 'filter:bedrooms' && !draft.bedrooms) draft.bedrooms = [];
+    ctx.session.wizardStep = nextStep;
 
-    ctx.session.wizardStep = 'filter:bedrooms';
-    if (!draft.bedrooms) draft.bedrooms = [];
-    await ctx.editMessageText(
-      `✅ <b>Budget:</b> ${buildPriceRangeLabel(draft.min_price ?? null, draft.max_price ?? null)}\n\n` +
-        `🛏 <b>Step 6 / 8 — Bedrooms</b>\n\n` +
-        `Select one or more bedroom options (e.g. 1 and 2 BR), or tap <b>Any</b>:`,
-      { parse_mode: 'HTML', reply_markup: bedroomsKeyboard(draft.bedrooms) },
-    );
+    const prompt = wizardStepPrompt(draft, nextStep);
+    await ctx.editMessageText(prompt.text, { parse_mode: 'HTML', reply_markup: prompt.keyboard });
     await ctx.answerCallbackQuery();
     return;
   }
@@ -661,11 +662,8 @@ export async function handleFilterCallback(ctx: MyContext, data: string): Promis
     if (data === 'cb:filter:beds:any') {
       draft.bedrooms = null;
       ctx.session.wizardStep = 'filter:pool';
-      await ctx.editMessageText(
-        `✅ <b>Bedrooms:</b> Any\n\n` +
-          `🏊 <b>Step 7 / 8 — Swimming Pool</b>\n\nDo you require a swimming pool?`,
-        { parse_mode: 'HTML', reply_markup: poolKeyboard() },
-      );
+      const prompt = wizardStepPrompt(draft, 'filter:pool');
+      await ctx.editMessageText(prompt.text, { parse_mode: 'HTML', reply_markup: prompt.keyboard });
       await ctx.answerCallbackQuery();
       return;
     }
@@ -675,13 +673,8 @@ export async function handleFilterCallback(ctx: MyContext, data: string): Promis
         draft.bedrooms = null;
       }
       ctx.session.wizardStep = 'filter:pool';
-      const bedsLabel = formatBedroomsLabel(draft.bedrooms);
-
-      await ctx.editMessageText(
-        `✅ <b>Bedrooms:</b> ${bedsLabel}\n\n` +
-          `🏊 <b>Step 7 / 8 — Swimming Pool</b>\n\nDo you require a swimming pool?`,
-        { parse_mode: 'HTML', reply_markup: poolKeyboard() },
-      );
+      const prompt = wizardStepPrompt(draft, 'filter:pool');
+      await ctx.editMessageText(prompt.text, { parse_mode: 'HTML', reply_markup: prompt.keyboard });
       await ctx.answerCallbackQuery();
       return;
     }
@@ -691,11 +684,8 @@ export async function handleFilterCallback(ctx: MyContext, data: string): Promis
     if (!isNaN(idx)) {
       draft.bedrooms = idx === 0 ? null : [idx - 1];
       ctx.session.wizardStep = 'filter:pool';
-      await ctx.editMessageText(
-        `✅ <b>Bedrooms:</b> ${formatBedroomsLabel(draft.bedrooms)}\n\n` +
-          `🏊 <b>Step 7 / 8 — Swimming Pool</b>\n\nDo you require a swimming pool?`,
-        { parse_mode: 'HTML', reply_markup: poolKeyboard() },
-      );
+      const prompt = wizardStepPrompt(draft, 'filter:pool');
+      await ctx.editMessageText(prompt.text, { parse_mode: 'HTML', reply_markup: prompt.keyboard });
       await ctx.answerCallbackQuery();
       return;
     }
@@ -722,11 +712,8 @@ export async function handleFilterCallback(ctx: MyContext, data: string): Promis
     }
 
     ctx.session.wizardStep = 'filter:lease';
-    await ctx.editMessageText(
-      `✅ <b>Pool:</b> ${draft.requires_pool ? 'Required 🏊' : 'Any'}\n\n` +
-        `⏱️ <b>Step 8 / 8 — Lease Term</b>\n\nWhat is your preferred lease duration?`,
-      { parse_mode: 'HTML', reply_markup: leaseKeyboard() },
-    );
+    const prompt = wizardStepPrompt(draft, 'filter:lease');
+    await ctx.editMessageText(prompt.text, { parse_mode: 'HTML', reply_markup: prompt.keyboard });
     await ctx.answerCallbackQuery();
     return;
   }
@@ -945,26 +932,13 @@ export function createFiltersHandler(_container: AppContainer): Composer<MyConte
     draft.min_price = parsed.min;
     draft.max_price = parsed.max;
 
-    if (draft.category === 'room' || draft.category === 'hotel') {
-      draft.bedrooms = [1];
-      ctx.session.wizardStep = 'filter:pool';
-      await ctx.reply(
-        `✅ <b>Budget:</b> ${buildPriceRangeLabel(draft.min_price ?? null, draft.max_price ?? null)}\n\n` +
-          `🏊 <b>Step 7 / 8 — Swimming Pool</b>\n\nDo you require a swimming pool?`,
-        { parse_mode: 'HTML', reply_markup: poolKeyboard(true) },
-      );
-      return;
-    }
+    const nextStep: WizardStep = isRoomLike(draft) ? 'filter:pool' : 'filter:bedrooms';
+    if (isRoomLike(draft)) draft.bedrooms = [1];
+    if (nextStep === 'filter:bedrooms' && !draft.bedrooms) draft.bedrooms = [];
+    ctx.session.wizardStep = nextStep;
 
-    ctx.session.wizardStep = 'filter:bedrooms';
-    if (!draft.bedrooms) draft.bedrooms = [];
-
-    await ctx.reply(
-      `✅ <b>Budget:</b> ${buildPriceRangeLabel(draft.min_price ?? null, draft.max_price ?? null)}\n\n` +
-        `🛏 <b>Step 6 / 8 — Bedrooms</b>\n\n` +
-        `Select one or more bedroom options (e.g. 1 and 2 BR), or tap <b>Any</b>:`,
-      { parse_mode: 'HTML', reply_markup: bedroomsKeyboard(draft.bedrooms) },
-    );
+    const prompt = wizardStepPrompt(draft, nextStep);
+    await ctx.reply(prompt.text, { parse_mode: 'HTML', reply_markup: prompt.keyboard });
   });
 
   return handler;

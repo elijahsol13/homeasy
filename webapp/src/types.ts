@@ -2,7 +2,6 @@ export type CityKey = 'siem_reap' | 'phnom_penh';
 
 export interface PropertyDTO {
   id: number;
-  hash: string;
   title: string;
   description: string;
   priceUsd: number;
@@ -30,7 +29,10 @@ export interface PropertyDTO {
     water: string | null;
     cleaning: string | null;
     restrictions: string[];
+    amenities: string[];
     landmarks: Array<{ id: string; name: string; link: string }>;
+    /** Promotional "5 min to X" claims from the ad — not verified facts. */
+    marketingLandmarks: Array<{ id: string; name: string; link: string }>;
   };
   contact: {
     phone?: string;
@@ -38,6 +40,8 @@ export interface PropertyDTO {
     phoneLink?: string;
     telegram?: string;
     telegramLink?: string;
+    whatsapp?: string;
+    whatsappLink?: string;
   };
   isFavorite?: boolean;
 }
@@ -78,6 +82,7 @@ export interface FilterState {
   minPrice?: number;
   maxPrice?: number;
   bedrooms?: number[];
+  bathrooms?: number[];
   hasPool?: boolean;
   minLeaseMax?: number;
   query?: string;
