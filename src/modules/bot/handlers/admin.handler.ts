@@ -1,4 +1,4 @@
-import { Composer, InlineKeyboard } from 'grammy';
+import { Composer } from 'grammy';
 import type { MyContext } from '../session';
 import type { AppContainer } from '../../../container';
 import { createDatabaseBackup } from '../../../database/backup';
@@ -395,117 +395,36 @@ export function createAdminHandler(container: AppContainer): Composer<MyContext>
     );
   });
 
-  // ─── Remote Visual Browser Authentication ───────────────────────────────────
-
-  function getBrowserAuthUrl(adminId: number, service: 'facebook' | 'khmer24'): string {
-    const token = container.remoteBrowserService.createSessionToken(adminId, service);
-    const baseUrl = env.API_PUBLIC_URL || env.WEBAPP_URL || `http://localhost:${env.API_PORT}`;
-    return `${baseUrl}/admin/remote-browser?token=${token}`;
-  }
-
-  handler.command('auth_fb', async (ctx) => {
+  handler.callbackQuery(/^cb:admin:review:(approve|reject):(\d+)$/, async (ctx) => {
     if (!isAdmin(ctx)) {
-      await ctx.reply('⛔ This command is for admins only.');
+      await ctx.answerCallbackQuery({ text: 'Admins only', show_alert: true });
       return;
     }
 
-    const fromId = ctx.from!.id;
-    const url = getBrowserAuthUrl(fromId, 'facebook');
-    const kb = new InlineKeyboard()
-      .text('💬 Auth in Telegram Chat (Recommended)', 'cb:admin:auth:fb_chat')
-      .row()
-      .url('🌐 Open Web Browser Stream', url)
-      .row()
-      .text('📥 Import fb_session.json', 'cb:admin:auth:fb_import')
-      .row()
-      .text('◀️ Admin Menu', 'cb:admin:menu');
+    const match = ctx.callbackQuery.data.match(/^cb:admin:review:(approve|reject):(\d+)$/);
+    if (!match) return;
+    const action = match[1];
+    const propertyId = Number(match[2]);
+    const updated = action === 'approve'
+      ? container.propertiesRepo.approvePendingProperty(propertyId)
+      : container.propertiesRepo.rejectPendingProperty(propertyId);
 
-    await ctx.reply(
-      '🔐 <b>Facebook Authorization Options (Residential Proxy)</b>\n\n' +
-        'Choose your preferred authorization method:\n\n' +
-        '1️⃣ <b>Telegram Chat (Recommended):</b> Step-by-step interactive login with real-time screenshots and auto-deleted passwords right here in chat.\n\n' +
-        '2️⃣ <b>Web Browser Stream:</b> Interactive streaming browser tab in mobile/desktop browser.\n\n' +
-        '3️⃣ <b>Import Session:</b> Send an existing <code>fb_session.json</code> file to the bot.\n\n' +
-        `<i>Web link (expires in 15m):</i>\n<code>${url}</code>`,
-      { parse_mode: 'HTML', reply_markup: kb },
-    );
-  });
-
-  handler.command('auth_k24', async (ctx) => {
-    if (!isAdmin(ctx)) {
-      await ctx.reply('⛔ This command is for admins only.');
-      return;
+    await ctx.answerCallbackQuery({
+      text: updated ? `Listing ${action}d` : 'Listing already reviewed or missing',
+      show_alert: !updated,
+    });
+    if (updated) {
+      if (action === 'approve') {
+        const property = container.propertiesRepo.getPropertyById(propertyId);
+        if (property?.is_active === 1) {
+          await container.matcherService.matchAndNotify(property).catch((err) => {
+            console.error('Approved listing match error:', err);
+          });
+        }
+      }
+      await ctx.editMessageReplyMarkup({ reply_markup: { inline_keyboard: [] } }).catch(() => {});
+      await ctx.reply(`${action === 'approve' ? 'Approved' : 'Rejected'} listing #${propertyId}.`);
     }
-
-    const fromId = ctx.from!.id;
-    const url = getBrowserAuthUrl(fromId, 'khmer24');
-    const kb = new InlineKeyboard()
-      .url('🌐 Open Khmer24 Browser', url)
-      .row()
-      .text('◀️ Admin Menu', 'cb:admin:menu');
-
-    await ctx.reply(
-      '🔐 <b>Khmer24 Remote Authorization</b>\n\n' +
-        'Click the button below to launch an interactive browser session in your mobile browser:\n' +
-        '• Session runs directly on the server (no proxy required).\n' +
-        '• Log in using your phone number / password.\n' +
-        '• Once logged in, session cookies are automatically saved.\n\n' +
-        `Direct Link:\n<code>${url}</code>\n\n` +
-        '<i>Link expires in 15 minutes.</i>',
-      { parse_mode: 'HTML', reply_markup: kb },
-    );
-  });
-
-  handler.callbackQuery(['admin:auth:fb', 'cb:admin:auth:fb'], async (ctx) => {
-    if (!isAdmin(ctx)) {
-      await ctx.answerCallbackQuery({ text: '⛔ Admins only', show_alert: true });
-      return;
-    }
-
-    await ctx.answerCallbackQuery();
-    const fromId = ctx.from.id;
-    const url = getBrowserAuthUrl(fromId, 'facebook');
-    const kb = new InlineKeyboard()
-      .text('💬 Auth in Telegram Chat (Recommended)', 'cb:admin:auth:fb_chat')
-      .row()
-      .url('🌐 Open Web Browser Stream', url)
-      .row()
-      .text('📥 Import fb_session.json', 'cb:admin:auth:fb_import')
-      .row()
-      .text('◀️ Admin Menu', 'cb:admin:menu');
-
-    await ctx.reply(
-      '🔐 <b>Facebook Authorization Options (Residential Proxy)</b>\n\n' +
-        'Choose your preferred authorization method:\n\n' +
-        '1️⃣ <b>Telegram Chat (Recommended):</b> Step-by-step interactive login with real-time screenshots and auto-deleted passwords right here in chat.\n\n' +
-        '2️⃣ <b>Web Browser Stream:</b> Interactive streaming browser tab in mobile/desktop browser.\n\n' +
-        '3️⃣ <b>Import Session:</b> Send an existing <code>fb_session.json</code> file to the bot.\n\n' +
-        `<i>Web link (expires in 15m):</i>\n<code>${url}</code>`,
-      { parse_mode: 'HTML', reply_markup: kb },
-    );
-  });
-
-  handler.callbackQuery(['admin:auth:k24', 'cb:admin:auth:k24'], async (ctx) => {
-    if (!isAdmin(ctx)) {
-      await ctx.answerCallbackQuery({ text: '⛔ Admins only', show_alert: true });
-      return;
-    }
-
-    await ctx.answerCallbackQuery();
-    const fromId = ctx.from.id;
-    const url = getBrowserAuthUrl(fromId, 'khmer24');
-    const kb = new InlineKeyboard()
-      .url('🌐 Open Khmer24 Browser', url)
-      .row()
-      .text('◀️ Admin Menu', 'cb:admin:menu');
-
-    await ctx.reply(
-      '🔐 <b>Khmer24 Authorization Session Ready</b>\n\n' +
-        'Tap the button below to authenticate with your Khmer24 account:\n' +
-        `<code>${url}</code>\n\n` +
-        '<i>Link expires in 15 minutes.</i>',
-      { parse_mode: 'HTML', reply_markup: kb },
-    );
   });
 
   return handler;

@@ -1,6 +1,6 @@
 import type { DatabaseSync } from 'node:sqlite';
 import type { CityKey, PropertyCategory } from '../../config/settings';
-import { extractCoordinatesFromMapsUrl, getSangkatCentroid } from '../../config/locations';
+import { canonicalizeLocation, extractCoordinatesFromMapsUrl, getSangkatCentroid } from '../../config/locations';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -26,9 +26,12 @@ export interface Property {
   deposit: number | null;
   /** Minimum lease in months (e.g. 1, 6, 12) */
   min_lease: number | null;
-  has_pool: boolean;
+  has_pool: boolean | null;
   location: string;
+  location_key?: string | null;
+  raw_location?: string | null;
   city: CityKey;
+  coordinate_precision?: 'exact' | 'district' | 'city';
   maps_url: string | null;
   source_url: string | null;
   photos: string[];
@@ -46,7 +49,7 @@ export interface Property {
   water?: string | null;
   cleaning?: string | null;
   restrictions?: string[];
-  pet_friendly?: boolean;
+  pet_friendly?: boolean | null;
   primary_landmark?: string | null;
   landmarks?: string[];
   /** Promotional "5 min to X" references — never treated as physical location. */
@@ -61,6 +64,8 @@ export interface Property {
   longitude?: number | null;
   property_type?: string | null;
   amenities?: string[];
+  review_status?: 'approved' | 'pending' | 'rejected';
+  review_reason?: string | null;
 }
 
 interface PropertyRow
@@ -84,7 +89,7 @@ interface PropertyRow
     | 'raw_text'
     | 'parse_warnings'
   > {
-  has_pool: 0 | 1;
+  has_pool: 0 | 1 | null;
   photos: string;
   direct_contact: string;
   image_phashes?: string | null;
@@ -94,7 +99,7 @@ interface PropertyRow
   water?: string | null;
   cleaning?: string | null;
   restrictions?: string | null;
-  pet_friendly?: 0 | 1;
+  pet_friendly?: 0 | 1 | null;
   primary_landmark?: string | null;
   landmarks?: string | null;
   marketing_landmarks?: string | null;
@@ -164,7 +169,7 @@ export function rowToProperty(row: PropertyRow): Property {
 
   return {
     ...row,
-    has_pool: Boolean(row.has_pool),
+    has_pool: row.has_pool === 1 ? true : row.has_pool === 0 ? false : null,
     photos: JSON.parse(row.photos || '[]') as string[],
     direct_contact: JSON.parse(row.direct_contact || '{}') as DirectContact,
     image_phashes: imagePhashes,
@@ -176,7 +181,7 @@ export function rowToProperty(row: PropertyRow): Property {
     water: row.water ?? null,
     cleaning: row.cleaning ?? null,
     restrictions: parsedRestrictions,
-    pet_friendly: Boolean(row.pet_friendly),
+    pet_friendly: row.pet_friendly === 1 ? true : row.pet_friendly === 0 ? false : null,
     primary_landmark: row.primary_landmark ?? null,
     landmarks: parsedLandmarks,
     marketing_landmarks: parsedMarketingLandmarks,
@@ -222,7 +227,7 @@ export type CreatePropertyInput = Omit<
   water?: string | null;
   cleaning?: string | null;
   restrictions?: string[] | string | null;
-  pet_friendly?: boolean | number;
+  pet_friendly?: boolean | null | number;
   primary_landmark?: string | null;
   landmarks?: string[] | string | null;
   marketing_landmarks?: string[] | string | null;
@@ -262,7 +267,8 @@ export class PropertiesRepository {
       : typeof input.landmarks === 'string'
         ? input.landmarks
         : '[]';
-    const petFriendlyVal = input.pet_friendly ? 1 : 0;
+    const hasPoolVal = input.has_pool === true ? 1 : input.has_pool === false ? 0 : null;
+    const petFriendlyVal = input.pet_friendly === true ? 1 : input.pet_friendly === false ? 0 : null;
 
     let lat = input.latitude ?? null;
     let lng = input.longitude ?? null;
@@ -274,6 +280,14 @@ export class PropertiesRepository {
       }
     }
 
+    const canonicalLocation = canonicalizeLocation(input.location, input.city);
+    const locationKey = input.location_key ?? canonicalLocation.key;
+    const locationName = canonicalLocation.name || input.location;
+    const locationCity = canonicalLocation.key ? canonicalLocation.city : input.city;
+    const rawLocation = input.raw_location ?? (locationName !== input.location ? input.location : null);
+    const coordinatePrecision = lat !== null && lng !== null
+      ? 'exact'
+      : locationKey ? 'district' : 'city';
     const isActiveVal = input.is_active !== undefined ? input.is_active : 1;
 
     const amenitiesJson = Array.isArray(input.amenities)
@@ -294,12 +308,16 @@ export class PropertiesRepository {
       .prepare(
         `INSERT INTO properties
            (hash, title, description, price, currency, type, category,
-            bedrooms, bathrooms, deposit, min_lease, has_pool, location, city,
+            bedrooms, bathrooms, deposit, min_lease, has_pool, location, location_key, raw_location, city, coordinate_precision,
             maps_url, source_url, photos, image_phash, image_phashes, direct_contact, original_url, posted_at, updated_at,
             electricity, water, cleaning, restrictions, pet_friendly, primary_landmark, landmarks, marketing_landmarks, raw_text, parse_warnings, latitude, longitude, is_active,
-            property_type, amenities)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%SZ', 'now'),
-                 ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            property_type, amenities, review_status, review_reason)
+         VALUES (?, ?, ?, ?, ?, ?, ?,
+                 ?, ?, ?, ?, ?,
+                 ?, ?, ?, ?, ?,
+                 ?, ?, ?, ?, ?,
+                 ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%SZ', 'now'),
+                 ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         input.hash,
@@ -313,9 +331,12 @@ export class PropertiesRepository {
         input.bathrooms ?? null,
         input.deposit ?? null,
         input.min_lease ?? null,
-        input.has_pool ? 1 : 0,
-        input.location,
-        input.city,
+        hasPoolVal,
+        locationName,
+        locationKey,
+        rawLocation,
+        locationCity,
+        coordinatePrecision,
         input.maps_url ?? null,
         input.source_url ?? null,
         JSON.stringify(input.photos ?? []),
@@ -339,6 +360,8 @@ export class PropertiesRepository {
         isActiveVal,
         input.property_type ?? null,
         amenitiesJson,
+        input.review_status ?? 'approved',
+        input.review_reason ?? null,
       );
 
     const newId = result.lastInsertRowid as number;
@@ -653,7 +676,7 @@ export class PropertiesRepository {
     const rows = this.db
       .prepare(
         `SELECT * FROM properties
-         WHERE city = ? AND (location LIKE ? OR location = ?) AND is_active = 1
+         WHERE city = ? AND (location LIKE ? OR location = ?) AND (is_active = 1 OR review_status = 'pending')
            AND COALESCE(updated_at, created_at) >= datetime('now', '-45 days')
          ORDER BY COALESCE(updated_at, created_at) DESC
          LIMIT ?`,
@@ -847,6 +870,7 @@ export class PropertiesRepository {
     } = {},
   ): Array<{
     location: string;
+    locationKey: string | null;
     count: number;
     minPriceUsd: number;
     maxPriceUsd: number;
@@ -866,15 +890,16 @@ export class PropertiesRepository {
     }
 
     const sql = `
-      SELECT location, COUNT(*) as count, MIN(price) as min_price, MAX(price) as max_price
+      SELECT MIN(location) as location, location_key, COUNT(*) as count, MIN(price) as min_price, MAX(price) as max_price
       FROM properties
       WHERE ${whereClauses.join(' AND ')}
-      GROUP BY location
+      GROUP BY COALESCE(location_key, city || ':' || location)
       ORDER BY count DESC
     `;
 
     const rows = this.db.prepare(sql).all(...params) as Array<{
       location: string;
+      location_key: string | null;
       count: number;
       min_price: number;
       max_price: number;
@@ -897,6 +922,7 @@ export class PropertiesRepository {
 
     const clusters: Array<{
       location: string;
+      locationKey: string | null;
       count: number;
       minPriceUsd: number;
       maxPriceUsd: number;
@@ -919,6 +945,7 @@ export class PropertiesRepository {
 
       clusters.push({
         location: r.location,
+        locationKey: r.location_key,
         count: r.count,
         minPriceUsd: Math.round(r.min_price / 100),
         maxPriceUsd: Math.round(r.max_price / 100),
@@ -941,10 +968,10 @@ export class PropertiesRepository {
   } {
     const locations = this.db
       .prepare(
-        `SELECT location, COUNT(*) as count
+        `SELECT MIN(location) as location, COUNT(*) as count
          FROM properties
          WHERE city = ? AND is_active = 1 AND location != ''
-         GROUP BY location
+         GROUP BY COALESCE(location_key, city || ':' || location)
          ORDER BY count DESC
          LIMIT 30`,
       )
@@ -976,6 +1003,27 @@ export class PropertiesRepository {
         maxPrice: priceRow?.maxPrice ?? 500000,
       },
     };
+  }
+
+  approvePendingProperty(id: number): boolean {
+    const result = this.db.prepare(
+      `UPDATE properties
+       SET review_status = 'approved', review_reason = NULL,
+           is_active = CASE WHEN photos IS NOT NULL AND photos != '[]' THEN 1 ELSE 0 END,
+           updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
+       WHERE id = ? AND review_status = 'pending'`,
+    ).run(id);
+    return result.changes > 0;
+  }
+
+  rejectPendingProperty(id: number): boolean {
+    const result = this.db.prepare(
+      `UPDATE properties
+       SET review_status = 'rejected', is_active = 0,
+           updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
+       WHERE id = ? AND review_status = 'pending'`,
+    ).run(id);
+    return result.changes > 0;
   }
 }
 

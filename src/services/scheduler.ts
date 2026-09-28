@@ -7,6 +7,7 @@ import type { AppContainer } from '../container';
 import { env } from '../config/env';
 import { parseProxyConfig } from '../modules/parser/proxy';
 import { getScraperSettings } from './settings';
+import { loadFacebookSafetyState } from '../modules/parser/fb-runtime';
 
 export interface ScraperCategoryStats {
   scraped: number;
@@ -221,8 +222,11 @@ export class ScraperWorker {
 
         // ── 3. Facebook Scraper ─────────────────────────────────────────────
         const settings = getScraperSettings();
+        const safetyState = loadFacebookSafetyState();
         if (!settings.facebookEnabled) {
-          console.log(`\n⏰ [Worker] Skipping Facebook scrape (Disabled in settings).`);
+          console.log(`\n⏰ [Worker] Skipping Facebook scrape (disabled in settings).`);
+        } else if (safetyState.status === 'blocked') {
+          console.log(`\n⛔ [Worker] Skipping Facebook scrape (safety-locked: ${safetyState.reason ?? 'manual login required'}).`);
         } else {
           console.log(`\n⏰ [Worker] Starting Facebook scrape at ${new Date().toISOString()}...`);
           const fbStart = Date.now();
@@ -236,7 +240,7 @@ export class ScraperWorker {
 
           const fbStats = await runFacebookScraper(this.container);
           const durationMs = Date.now() - fbStart;
-          const proxyInfo = parseProxyConfig(env.FB_PROXY)?.masked ?? null;
+          const proxyInfo = env.FB_PROXY_ENABLED ? (parseProxyConfig(env.FB_PROXY)?.masked ?? null) : null;
 
           if (fbStats) {
             this.hourlyStats.facebook.scraped += fbStats.totalScraped;
@@ -328,8 +332,8 @@ export class ScraperWorker {
       const rssMb = Math.round(mem.rss / 1024 / 1024);
       const heapUsedMb = Math.round(mem.heapUsed / 1024 / 1024);
 
-      const proxy = parseProxyConfig(env.FB_PROXY);
-      const proxyStatus = proxy ? `✅ Connected (${proxy.masked})` : '⚠️ Not configured';
+      const proxy = env.FB_PROXY_ENABLED ? parseProxyConfig(env.FB_PROXY) : undefined;
+      const proxyStatus = proxy ? `Enabled (${proxy.masked})` : 'Direct connection';
 
       // Usage analytics query
       let analyticsText = '';

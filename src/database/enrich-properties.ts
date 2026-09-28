@@ -14,14 +14,14 @@
 
 import { createDatabase, closeDatabase } from './db';
 import { runMigrations } from './migrate';
-import { cleanPhotoUrls, extractDirectContacts, formatDomesticPhone, normalizePhoneNumber } from '../modules/parser/normalizer';
+import { cleanPhotoUrls, extractDirectContacts } from '../modules/parser/normalizer';
 import { extractElectricity, extractWater, isExcessiveKhmer } from '../modules/parser/extractor';
 import { extractCleaning, extractRestrictions } from '../services/notifier';
 import { findLandmarksInText } from '../config/landmarks';
 import type { PropertyCategory } from '../config/settings';
 import type { AlertService } from '../services/alert.service';
 import { createContainer } from '../container';
-import { isNonRealEstateSpam, SPAM_REGEXES } from '../modules/parser/spam-detector';
+import { isNonRealEstateSpam } from '../modules/parser/spam-detector';
 export { isNonRealEstateSpam };
 import { translationRetryQueue } from '../modules/parser/facebook.scraper';
 

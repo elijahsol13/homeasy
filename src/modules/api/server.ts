@@ -1,6 +1,5 @@
 import fastify, { type FastifyInstance, type FastifyError } from 'fastify';
 import cors from '@fastify/cors';
-import fastifyWebsocket from '@fastify/websocket';
 import rateLimit from '@fastify/rate-limit';
 import type { AppContainer } from '../../container';
 import { env } from '../../config/env';
@@ -8,7 +7,6 @@ import { healthRoutes } from './routes/health.routes';
 import { propertiesRoutes } from './routes/properties.routes';
 import { filtersRoutes } from './routes/filters.routes';
 import { favoritesRoutes } from './routes/favorites.routes';
-import { remoteBrowserRoutes } from './routes/remote-browser.routes';
 import { webhookRoutes } from './routes/webhook.routes';
 
 export interface BuildServerOptions {
@@ -47,9 +45,6 @@ export async function buildApiServer(options: BuildServerOptions): Promise<Fasti
     }),
   });
 
-  // Enable WebSocket support for interactive browser streaming
-  await app.register(fastifyWebsocket);
-
   // Track TMA API requests for usage analytics
   app.addHook('onRequest', async (request) => {
     if (request.url.startsWith('/api/v1/')) {
@@ -72,7 +67,6 @@ export async function buildApiServer(options: BuildServerOptions): Promise<Fasti
   await app.register(propertiesRoutes, { container });
   await app.register(filtersRoutes, { container });
   await app.register(favoritesRoutes, { container });
-  await app.register(remoteBrowserRoutes, { container });
   await app.register(webhookRoutes, { container });
 
   // Custom 404 handler

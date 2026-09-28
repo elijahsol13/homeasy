@@ -1,0 +1,11 @@
+# Camoufox Playwright-server launcher — scripts/camoufox/serve.py
+#
+# Setup:
+#   python3 -m venv .venv-camoufox
+#   .venv-camoufox/bin/pip install -r scripts/camoufox/requirements.txt
+#   .venv-camoufox/bin/camoufox fetch          # downloads the patched Firefox
+#
+# The TS side spawns serve.py, reads the ws:// endpoint from stdout, and
+# connects with playwright's firefox.connect (src/modules/parser/camoufox-server.ts).
+# `geoip` extra is required for the --proxy path (timezone/locale alignment).
+camoufox[geoip]==0.5.6

@@ -1,6 +1,6 @@
 import type { FastifyPluginAsync } from 'fastify';
 import type { AppContainer } from '../../../container';
-import { CITIES, CATEGORY_OPTIONS, type CityKey } from '../../../config/settings';
+import { CATEGORY_OPTIONS, type CityKey } from '../../../config/settings';
 
 export const filtersRoutes: FastifyPluginAsync<{ container: AppContainer }> = async (fastify, opts) => {
   const { container } = opts;
@@ -10,16 +10,9 @@ export const filtersRoutes: FastifyPluginAsync<{ container: AppContainer }> = as
    * Metadata needed to render dynamic filter sheets in Mini App.
    */
   fastify.get('/api/v1/filters/metadata', async (request, reply) => {
-    const query = request.query as Record<string, string | undefined>;
-    const city = (query.city as CityKey) || 'siem_reap';
-
+    const city: CityKey = 'siem_reap';
     const meta = container.propertiesRepo.getMetadata(city);
-
-    const availableCities = (Object.keys(CITIES) as CityKey[]).map((key) => ({
-      key,
-      name: CITIES[key],
-      currency: 'USD',
-    }));
+    const availableCities = [{ key: 'siem_reap', name: 'Siem Reap', currency: 'USD' }];
 
     const categoryList = CATEGORY_OPTIONS.filter((cat) => cat.value !== null).map((cat) => {
       const match = meta.categories.find((c) => c.category === cat.value);

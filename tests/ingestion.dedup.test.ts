@@ -188,6 +188,7 @@ describe('Ingestion & Deduplication Engine', () => {
       price: 500,
       currency: 'USD',
       type: 'rent',
+      is_real_estate: true,
       category: 'house',
       location: testLocation,
       city: 'siem_reap',
@@ -225,6 +226,7 @@ describe('Ingestion & Deduplication Engine', () => {
         description: '2BR house for rent with pool',
         price: 510, // $510 vs $500 (2% diff -> +30 pts)
         type: 'rent',
+        is_real_estate: true,
         category: 'house', // (+15 pts)
         bedrooms: 2, // (+25 pts)
         bathrooms: 2,

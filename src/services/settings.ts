@@ -8,7 +8,7 @@ export interface ScraperSettings {
 }
 
 const defaultSettings: ScraperSettings = {
-  facebookEnabled: true,
+  facebookEnabled: false,
 };
 
 export function getScraperSettings(): ScraperSettings {

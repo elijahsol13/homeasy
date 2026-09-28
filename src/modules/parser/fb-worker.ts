@@ -1,8 +1,9 @@
 import fs from 'fs';
 import path from 'path';
 import crypto from 'crypto';
-import { RawListing } from './schemas';
-import { FBGroupTarget, parseFacebookPostText, extractStoriesFromGraphQL, extractPhotosFromStory } from './facebook.scraper';
+import type { RawListing } from './schemas';
+import type { FBGroupTarget } from './facebook.scraper';
+import { parseFacebookPostText, extractStoriesFromGraphQL, extractPhotosFromStory } from './facebook.scraper';
 import { cleanPhotoUrls } from './normalizer';
 
 export interface FetchedFbPost {
@@ -81,8 +82,8 @@ export async function fetchPostTextAnonymous(postUrl: string): Promise<FetchedFb
     try {
         const res = await fetch(postUrl, { headers });
         html = await res.text();
-    } catch (e: any) {
-        console.warn(`[Worker] HTTP failed for ${postUrl}: ${e.message}`);
+    } catch (e: unknown) {
+        console.warn(`[Worker] HTTP failed for ${postUrl}: ${e instanceof Error ? e.message : String(e)}`);
         return null;
     }
 
@@ -124,9 +125,9 @@ export async function fetchPostTextAnonymous(postUrl: string): Promise<FetchedFb
         const commerce = extractCommerceAttachment(data) ?? undefined;
 
         return { postUrl, text: postText, photos, commerce };
-    } catch (e: any) {
+    } catch (e: unknown) {
         dumpErrorHtml(postUrl, html, 'parse_error');
-        console.warn(`[Worker] Parse error on ${postUrl}: ${e.message}`);
+        console.warn(`[Worker] Parse error on ${postUrl}: ${e instanceof Error ? e.message : String(e)}`);
         return null;
     }
 }
@@ -152,27 +153,30 @@ function dumpErrorHtml(url: string, html: string, reason: string) {
     console.warn(`[Worker] Dumped unparseable HTML to ${file}`);
 }
 
-function extractText(obj: any): string | null {
+function extractText(obj: unknown): string | null {
     if (!obj) return null;
-    let foundText: string | null = null;
-    
+
     // recursive search for "message":{"text": "..."} or "story_body":{"text": "..."}
     const stack = [obj];
     while (stack.length > 0) {
         const curr = stack.pop();
         if (curr && typeof curr === 'object') {
-            if (curr.message && curr.message.text && typeof curr.message.text === 'string') {
-                return curr.message.text;
+            const record = curr as Record<string, unknown>;
+            const message = record.message as Record<string, unknown> | undefined;
+            const storyBody = record.story_body as Record<string, unknown> | undefined;
+            if (message && message.text && typeof message.text === 'string') {
+                return message.text;
             }
-            if (curr.story_body && curr.story_body.text && typeof curr.story_body.text === 'string') {
-                return curr.story_body.text;
+            if (storyBody && storyBody.text && typeof storyBody.text === 'string') {
+                return storyBody.text;
             }
-            for (const key of Object.keys(curr)) {
-                if (curr[key] && typeof curr[key] === 'object') {
-                    stack.push(curr[key]);
+            for (const key of Object.keys(record)) {
+                const value = record[key];
+                if (value && typeof value === 'object') {
+                    stack.push(value);
                 }
             }
         }
     }
-    return foundText;
+    return null;
 }

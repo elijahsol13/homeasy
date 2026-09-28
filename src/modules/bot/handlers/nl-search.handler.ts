@@ -538,7 +538,7 @@ function getOrRecoverDraft(ctx: MyContext): FilterDraft | null {
   if (ctx.session?.filterDraft?.city && ctx.session?.filterDraft?.type) {
     return ctx.session.filterDraft;
   }
-  const msgText = ctx.callbackQuery?.message?.text || (ctx.callbackQuery?.message as any)?.caption || '';
+  const msgText = ctx.callbackQuery?.message?.text || (ctx.callbackQuery?.message as { caption?: string } | undefined)?.caption || '';
   const recovered = extractDraftFromCriteriaText(msgText);
   if (recovered) {
     ctx.session.filterDraft = recovered;

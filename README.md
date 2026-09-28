@@ -2,7 +2,7 @@
 
 > Enterprise-grade real estate aggregator, notification bot, and interactive Telegram Mini App (TMA) for **Siem Reap** and **Phnom Penh**, Cambodia.
 >
-> Built with **TypeScript · Node.js 22+ (Native SQLite WAL) · grammY · Fastify · React / Vite · Playwright Stealth · Google Gemini · Sharp (pHash) · Cloudflare Zero Trust · Docker Compose**.
+> Built with **TypeScript · Node.js 22+ (Native SQLite WAL) · grammY · Fastify · React / Vite · Camoufox driven by Playwright · Google Gemini · Sharp (pHash) · Cloudflare Zero Trust · Docker Compose**.
 >
 > 🇷🇺 *Русская версия документации доступна в [README.ru.md](README.ru.md).*
 
@@ -55,14 +55,14 @@
 > 1. **No Unfiltered Contexts**: Never initialize Chromium and navigate (`page.goto`) without active route interception (`page.route` / `attachTrafficGuard`).
 > 2. **100% Binary Media Blocking**: Photo URLs are parsed as strings from GraphQL/REST JSON or DOM attributes. The browser **must NEVER download binary images or videos** over the proxy (saving 85%–95% of bandwidth).
 > 3. **Block Fonts, Styles & Telemetry**: Stylesheets, web fonts, and tracking beacons (`facebook.com/ajax/bz`, `pixel`, analytics, falco, speed telemetry) must be aborted unconditionally.
-> 4. **Persistent Disk Cache**: Browser cache (`data/browser_cache/http_cache`) persists immutable CDN JS bundles across runs, reducing warm group visits to as little as ~350 KB.
+> 4. **Pinned Device Identity**: Facebook login and scraping reuse one host-specific Camoufox fingerprint and storage state; each browser run starts with a cold HTTP cache.
 > 5. **Round-Robin Group Rotation**: Scrapes a sliding window of 5 groups per cycle (tracked via `data/scraper_state.json`) with an extended 110-minute inter-cycle pause (~12 cycles/day).
 > 6. **Intelligent Early Exit**: Chronologically halts pagination (`FB_EARLY_EXIT_THRESHOLD=3`) upon encountering consecutive posts already present in the database, with maximum 1 scroll per group (`FB_MAX_SCROLLS_PER_GROUP=1`).
 > 7. **Selective Proxying**: Only proxy domains that are geo-restricted (Facebook). Khmer24, internal services, AI models, and Telegram API never pass through paid proxies.
 
 ### 1. Trio-Container Architecture
 - **`homeasy-bot`**: Telegram Bot UI powered by `grammY`, natural language search (voice note / text query parsing with Gemini), interactive 8-step manual filter wizard, subscriptions, instant push alerts with multi-photo albums (up to 3 photos), and button-driven Admin Dashboard (`/admin`).
-- **`homeasy-scraper`**: Autonomous cyclic worker (~110-minute pause), Playwright Stealth with persistent disk cache, round-robin Facebook group batching, session monitoring, circuit breakers, and automatic garbage collection (`--expose-gc`).
+- **`homeasy-scraper`**: Sequential worker with HTTP-first Khmer24 extraction and pinned Camoufox Facebook sessions, round-robin group batching, persistent checkpoint safety lock, and automatic garbage collection (`--expose-gc`).
 - **`homeasy-api`**: High-throughput Fastify HTTP/WebSocket server serving the Telegram Mini App (TMA), map markers, search endpoints, and remote browser streaming.
 - **SQLite WAL**: Single unified database `data/homeasy.db` running in Write-Ahead Logging mode (14 automated migrations), enabling non-blocking concurrent reads and atomic transactional writes.
 
@@ -73,15 +73,12 @@
   - 100% original full-resolution photo URLs from sub-attachments and albums (`all_subattachments`).
   - Exact author metadata and Unix timestamps.
 
-### 3. Remote Visual Browser Authentication from Mobile
-- **Anti-ban protection**: Headless automated credential submission on Facebook triggers immediate checkpoint blocks.
-- **Interactive browser stream**: Admin generates a signed 15-minute HMAC-SHA256 session link (`/auth_fb` or via `/admin`).
-- **Low-latency mobile streaming**:
-  - Viewport optimized for mobile screens (`414x750`, iPhone Mobile Viewport).
-  - 45% JPEG compression with frame downsampling (`everyNthFrame: 2`), reducing network overhead from 180 KB to ~15 KB per frame.
-  - Client backpressure protection: automatically drops queued frames when the client connection lags.
-  - Quick-focus buttons (`👤 Username`, `🔑 Password`, `🚀 Sign In`) for hassle-free entry from mobile virtual keyboards.
-  - Session cookies persisted automatically to `data/fb_session.json` without container restarts.
+### 3. Attended Local Authentication and Fail-Closed Safety
+- Facebook credentials and 2FA are entered only by a human in a headed Camoufox window on the scraper host.
+- Login and scraping share the same pinned `data/fb_device.json` and `data/fb_session.json` identity.
+- `data/fb_runtime.lock` prevents concurrent login and scraper processes.
+- Checkpoint, login, recovery, or identity-confirmation pages persist a safety lock and stop future scheduled attempts.
+- Only a successful attended `npm run fb:login` clears the safety lock; Telegram credential entry, session upload, and remote browser streaming are not exposed.
 
 ### 4. Two-Tier Property Extractor (Regex Heuristics + 12-Model Gemini AI Cascade)
 - **Tier 1 (Instant Heuristics)**: Zero-cost instant regex extraction:
@@ -163,8 +160,11 @@ npm run reparse:listings -- --ai         # LLM enrichment with evaluation report
 npm run reparse:listings -- --fb         # Smooth Facebook crawl with anti-throttling delay
 npm run reparse:listings -- --khmer24    # Update Khmer24 listings with all full-res photos
 
-# Local manual Facebook login through residential proxy
+# Local manual Facebook login on the direct Cambodian connection
 npm run fb:login
+
+# One-group, one-scroll smoke run that does not advance round-robin state
+npm run scrape:fb:smoke -- --group=0
 
 # Telegram Webhook Management (with secret_token protection)
 npm run webhook:info                     # Check current webhook URL, error state & pending updates
@@ -178,7 +178,7 @@ docker compose up -d --build
 ---
 
 ## 🔒 Security & Reliability
-1. **Token Authentication**: Remote browser session tokens are cryptographically signed using HMAC-SHA256 with the bot token secret and have a strict 15-minute validity window.
-2. **RAM Guardrails**: `docker-compose.yml` enforces strict memory constraints (API: 150M, Bot: 200M, Scraper: 750M) to guarantee stability on 1 GB RAM servers (such as AWS t3.micro).
-3. **Scraper Safety**: Upon detecting checkpoints, CAPTCHA challenges, or session invalidation, the scraper halts execution immediately and delivers an actionable alert to administrators.
+1. **Local Authentication Only**: Facebook credentials, 2FA, and storage state are never accepted through Telegram or an HTTP endpoint.
+2. **RAM Guardrails**: `docker-compose.yml` enforces strict memory constraints (Bot: 200M, Scraper: 750M, API: 350M).
+3. **Scraper Safety**: Checkpoints and session invalidation persist a fail-closed lock; scheduled scraping remains stopped until a successful attended local login.
 4. **Webhook `secret_token` Invariant**: When running in webhook mode, the endpoint (`/api/v1/telegram/webhook`) enforces timing-safe verification of the `X-Telegram-Bot-Api-Secret-Token` header configured during `setWebhook`. Any request lacking this header or carrying an invalid token is aborted with `401 Unauthorized` before body parsing or bot handler execution, neutralizing spoofed JSON payloads.

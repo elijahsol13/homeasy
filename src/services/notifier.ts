@@ -2,7 +2,7 @@ import { Api, type InlineKeyboard } from 'grammy';
 import type { Property } from '../database/repositories/properties.repo';
 import { CITIES, KHR_TO_USD_RATE, RATE_LIMIT } from '../config/settings';
 import { listingActionKeyboard, getTelegramContactLink } from '../modules/bot/keyboards/listing.keyboard';
-import { formatPhoneNumber, formatDomesticPhone, formatInternationalPhone } from '../modules/parser/normalizer';
+import { formatDomesticPhone, formatInternationalPhone } from '../modules/parser/normalizer';
 import {
   crossValidateLocation,
   extractCoordinatesFromMapsUrl,
@@ -26,7 +26,7 @@ export function formatPrice(priceCents: number, currency: 'USD' | 'KHR'): string
   return `$${usd.toLocaleString('en-US', { minimumFractionDigits: 0 })}`;
 }
 
-function escapeHtml(text: string): string {
+export function escapeHtml(text: string): string {
   return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 

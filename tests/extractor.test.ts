@@ -10,9 +10,23 @@ import {
   recordModelSuccess,
   resetCircuitBreakers,
   getModelBreaker,
+  prepareLlmInput,
 } from '../src/modules/parser/extractor';
 
 describe('Extractor: Cambodian Utilities & Property Types', () => {
+  describe('LLM input preparation', () => {
+    test('removes duplicate lines and Facebook UI noise without removing Khmer text', () => {
+      const input = 'ផ្ទះជួល ស្លក្រាម\n$350/month\n$350/month\nLike\nComment\nPhone 012 345 678';
+      expect(prepareLlmInput(input)).toBe('ផ្ទះជួល ស្លក្រាម\n$350/month\nPhone 012 345 678');
+    });
+
+    test('bounds oversized text while preserving its tail', () => {
+      const prepared = prepareLlmInput(`start ${'x'.repeat(9000)} phone 012345678`, 8000);
+      expect(prepared.length).toBeLessThanOrEqual(8003);
+      expect(prepared).toContain('phone 012345678');
+    });
+  });
+
   describe('Electricity Extraction', () => {
     test('extracts Included / Free electricity', () => {
       expect(extractElectricity('Apartment with free electricity and wifi')).toBe('Included');

@@ -33,7 +33,9 @@ export function saveGroupState(groupId: string, state: FBGroupState) {
     if (fs.existsSync(STATE_FILE)) {
         try {
             stateMap = JSON.parse(fs.readFileSync(STATE_FILE, 'utf8'));
-        } catch (e) {}
+        } catch (e) {
+            // Ignore malformed state file; start with empty state map.
+        }
     }
     stateMap[groupId] = state;
     fs.writeFileSync(STATE_FILE, JSON.stringify(stateMap, null, 2));

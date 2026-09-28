@@ -18,9 +18,9 @@ export const propertiesRoutes: FastifyPluginAsync<{ container: AppContainer }> =
     async (request, reply) => {
       const query = request.query as Record<string, string | undefined>;
 
-      const city = (query.city as CityKey) || undefined;
+      const city: CityKey = 'siem_reap';
       const category = query.category || undefined;
-      const type = (query.type as 'rent' | 'sale') || undefined;
+      const type = 'rent' as const;
 
       // Price in USD -> convert to USD cents
       const minPrice = query.min_price ? Math.max(0, parseInt(query.min_price, 10) * 100) : undefined;
@@ -131,9 +131,9 @@ export const propertiesRoutes: FastifyPluginAsync<{ container: AppContainer }> =
    */
   fastify.get('/api/v1/properties/map', async (request, reply) => {
     const query = request.query as Record<string, string | undefined>;
-    const city = (query.city as CityKey) || 'siem_reap';
+    const city: CityKey = 'siem_reap';
     const category = query.category || undefined;
-    const type = (query.type as 'rent' | 'sale') || undefined;
+    const type = 'rent' as const;
     const limit = query.limit ? Math.min(500, parseInt(query.limit, 10)) : 300;
 
     let bounds: MapBoundingBox | undefined = undefined;

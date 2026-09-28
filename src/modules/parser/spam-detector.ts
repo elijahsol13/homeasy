@@ -65,15 +65,31 @@ export function isNonRealEstateSpam(
 ): { isSpam: boolean; reason?: string } {
   const combined = `${title} ${description}`.trim();
 
-  // Exclude real estate posts that merely mention walking distance to airport or coffee shops
-  if (/\b(?:apartment|villa|condo|house for rent|room for rent)\b/i.test(title)) {
-    return { isSpam: false };
-  }
+  let score = 0;
+  const evidence: string[] = [];
 
   for (const regex of SPAM_REGEXES) {
     if (regex.test(combined)) {
-      return { isSpam: true, reason: `Matched spam regex: ${regex}` };
+      score += 4;
+      evidence.push(`spam:${regex}`);
     }
+  }
+
+  if (/\b(?:apartment|villa|condo|house for rent|room for rent|studio)\b/i.test(title)) {
+    score -= 2;
+    evidence.push('residential_title');
+  }
+  if (/\b(?:per month|monthly|\/month|month rent|long[ -]?term|lease)\b/i.test(combined)) {
+    score -= 2;
+    evidence.push('monthly_rental');
+  }
+  if (/\b\d+\s*(?:bed(?:room)?s?|br)|\b\d+\s*(?:bath(?:room)?s?|wc)\b/i.test(combined)) {
+    score -= 1;
+    evidence.push('property_specs');
+  }
+
+  if (score >= 4) {
+    return { isSpam: true, reason: `Spam evidence score ${score}: ${evidence.join(', ')}` };
   }
 
   // Pure land sales (we only list residential properties: apartments, houses, rooms)

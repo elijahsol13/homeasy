@@ -2,7 +2,7 @@
 
 > Корпоративный агрегатор недвижимости, система оповещений и интерактивное Telegram Mini App (TMA) для **Сиемреапа** и **Пномпеня**, Камбоджа.
 >
-> Стек: **TypeScript · Node.js 22+ (Native SQLite WAL) · grammY · Fastify · React / Vite · Playwright Stealth · Google Gemini 2.5 / 3.5 Flash Lite · Sharp (pHash) · Cloudflare Zero Trust · Docker Compose**.
+> Стек: **TypeScript · Node.js 22+ (Native SQLite WAL) · grammY · Fastify · React / Vite · Camoufox под управлением Playwright · Google Gemini · Sharp (pHash) · Cloudflare Zero Trust · Docker Compose**.
 
 ---
 
@@ -53,15 +53,15 @@
 > 1. **Запрет нефильтрованных контекстов**: Запрещено запускать Chromium и переходить по URL (`page.goto`) без активного роутинга (`page.route` / `attachTrafficGuard`).
 > 2. **100% блокировка бинарных медиа (фото, видео, аудио)**: URL фото извлекаются строками из JSON API (GraphQL) или DOM-атрибутов. Сам браузер **никогда не должен скачивать бинарники изображений и видео** (экономия 85–95% трафика на страницу!).
 > 3. **Блокировка шрифтов, стилей и телеметрии**: Шрифты, CSS и аналитические маяки (`facebook.com/ajax/bz`, `facebook.com/tr/`, Google Analytics, пиксели, falco, speed telemetry) блокируются безусловно.
-> 4. **Персистентный дисковый кэш**: Дисковый кэш браузера (`data/browser_cache/http_cache`) сохраняет неизменяемые JS-библиотеки Facebook между запусками, снижая вес прогретых групп до ~350 КБ.
+> 4. **Закреплённая identity**: Ручной вход и scraper используют один host-specific Camoufox fingerprint и storage state; каждый новый browser process начинает с холодным HTTP-кэшем.
 > 5. **Ротация групп Round-Robin**: Обход скользящим окном по 5 групп за цикл (с сохранением курсора в `data/scraper_state.json`) с увеличенной паузой между циклами 110 минут (~12 циклов в сутки).
 > 6. **Интеллектуальный Early Exit**: Досрочная остановка пагинации (`FB_EARLY_EXIT_THRESHOLD=3`) при встрече идущих подряд дубликатов с лимитом не более 1 скролла на группу (`FB_MAX_SCROLLS_PER_GROUP=1`).
-> 7. **Селективное проксирование**: Через резидентный прокси направляются только запросы к целевым заблокированным сервисам (Facebook). Khmer24, внутренние сервисы, AI API и Telegram API никогда не идут через платный прокси.
+> 7. **Direct-by-default**: Facebook работает через локальный камбоджийский IP; proxy включается только явно. Khmer24, внутренние сервисы, AI API и Telegram API никогда не наследуют Facebook proxy.
 
 ### 1. Архитектура трех контейнеров (Trio-Container Architecture)
 - **`homeasy-bot`**: Поллинг и UI Telegram-бота (grammY), интерактивный визард поиска, подписки, мгновенные пуш-уведомления с медиа-альбомами (до 3 фото), панель администратора `/admin`.
-- **`homeasy-scraper`**: Автономный циклический воркер (~110-минутная пауза), Playwright Stealth с персистентным дисковым кэшем, ротацией групп Facebook, контролем сессий, circuit breakers, автоматическая сборка мусора (`--expose-gc`).
-- **`homeasy-api`**: Высокопроизводительный HTTP/WebSocket сервер (Fastify), обслуживающий Telegram Mini App (TMA) и WebSocket-сессии удаленного стриминга браузера.
+- **`homeasy-scraper`**: Последовательный воркер с HTTP-first Khmer24, закреплённой Camoufox-сессией Facebook, persistent checkpoint lock и ротацией групп.
+- **`homeasy-api`**: Fastify HTTP API для Telegram Mini App без удалённого доступа к браузеру и сессиям.
 - **SQLite WAL**: Единая база данных `data/homeasy.db` в режиме Write-Ahead Logging (14 накатываемых миграций) с поддержкой параллельного неблокирующего чтения и безопасных транзакций.
 
 ### 2. Скрапинг Facebook через перехват GraphQL (Relay Comet Interception)
@@ -71,15 +71,12 @@
   - 100% оригинальных URL фотографий высокого разрешения из вложений и подальбомов (`all_subattachments`).
   - Точные Unix-таймштампы и ID авторов.
 
-### 3. Удаленная визуальная авторизация со смартфона (Remote Browser Streaming)
-- **Критический закон**: Автоматизированный headless-ввод паролей в Facebook категорически запрещен (триггерит моментальный бан).
-- **Решение**: Команда `/auth_fb` или кнопка в `/admin` генерирует криптографически подписанный HMAC-SHA256 токен и ссылку на веб-интерфейс.
-- **Оптимизированный мобильный стриминг**:
-  - Viewport переключен на компактный `414x750` (iPhone Mobile Viewport).
-  - Сжатие JPEG 45% с прореживанием кадров (`everyNthFrame: 2`) — трафик снижен со 180 КБ до ~15 КБ/кадр.
-  - Механизм Backpressure: сервер сбрасывает устаревшие кадры при перегрузке буфера клиента, исключая лаг ввода.
-  - Кнопки быстрого фокуса (`👤 Username`, `🔑 Password`, `🚀 Sign In`) для мгновенного ввода с экранной клавиатуры смартфона.
-  - Сохранение сессии в `data/fb_session.json` без перезапуска сервисов.
+### 3. Локальная ручная авторизация и fail-closed защита
+- Логин, пароль и 2FA вводятся человеком только в headed Camoufox на scraper host.
+- Login и scraper используют одни `data/fb_device.json` и `data/fb_session.json`.
+- `data/fb_runtime.lock` запрещает одновременный login и scraping.
+- Checkpoint и identity challenge сохраняют persistent safety lock и останавливают scheduler.
+- Снять lock может только успешный локальный `npm run fb:login`; удалённый браузер и импорт cookies через Telegram отсутствуют.
 
 ### 4. Двухуровневый экстрактор (Heuristic Regex + Gemini AI Cascade из 12 моделей)
 - **Tier 1 (Instant Heuristics)**: Бесплатный мгновенный разбор регулярными выражениями:
@@ -123,7 +120,7 @@ homeasy/
 │   │   ├── matcher/         # Движок скоринга и сопоставления с подписками пользователей
 │   │   └── parser/          # Скраперы (GraphQL FB, Khmer24 Stealth), экстракторы, прокси
 │   └── services/
-│       ├── remote-browser.service.ts # Playwright CDP screencast движок
+│       ├── scheduler.ts     # Последовательный планировщик и safety gates
 │       ├── scheduler.ts     # Последовательный планировщик (Khmer24 -> FB -> GC -> Maintenance)
 │       └── notifier.ts      # Формирование карточек и рассылка пушей в Telegram
 ├── scripts/
@@ -155,8 +152,11 @@ npm run reparse:listings -- --ai         # Обогащение через Gemin
 npm run reparse:listings -- --fb         # Плавный обход постов Facebook (30-60с задержки)
 npm run reparse:listings -- --khmer24    # Обновление карточек Khmer24 со всеми фото
 
-# Ручная локальная авторизация Facebook через резидентный прокси
+# Ручная локальная авторизация Facebook через прямой камбоджийский IP
 npm run fb:login
+
+# Smoke test одной группы и одного scroll без сдвига round-robin cursor
+npm run scrape:fb:smoke -- --group=0
 
 # Запуск в Docker
 docker compose up -d --build
@@ -165,7 +165,7 @@ docker compose up -d --build
 ---
 
 ## 🔒 Безопасность и отказоустойчивость
-1. **Защита токенов**: Сессионные токены удаленного браузера подписываются через HMAC-SHA256 ключом `BOT_TOKEN` и имеют ограниченный TTL (15 минут).
+1. **Только локальная авторизация**: Facebook credentials, 2FA и storage state не принимаются через Telegram или HTTP API.
 2. **Лимиты памяти**: В `docker-compose.yml` заданы жесткие лимиты памяти (API: 150M, Bot: 200M, Scraper: 750M), предотвращающие OOM на серверах с 1 GB RAM (AWS t3.micro).
 3. **Безопасность учетных записей**: При обнаружении любых признаков капчи или чекпоинта скрапер немедленно останавливает обход и отправляет тревожное уведомление администратору.
 

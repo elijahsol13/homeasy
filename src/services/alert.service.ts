@@ -71,5 +71,24 @@ export class AlertService {
     console.error(`🚨 [CRITICAL] ${msg}`);
     await this.broadcast('🚨 [CRITICAL]', msg);
   }
+
+  async reviewProperty(propertyId: number, message: string): Promise<void> {
+    if (!this.api || this.adminIds.length === 0) return;
+    for (const adminId of this.adminIds) {
+      try {
+        await this.api.sendMessage(adminId, message, {
+          parse_mode: 'HTML',
+          reply_markup: {
+            inline_keyboard: [[
+              { text: 'Approve', callback_data: `cb:admin:review:approve:${propertyId}` },
+              { text: 'Reject', callback_data: `cb:admin:review:reject:${propertyId}` },
+            ]],
+          },
+        });
+      } catch (err) {
+        console.warn(`[AlertService] Failed to deliver review #${propertyId} to admin ${adminId}:`, err);
+      }
+    }
+  }
 }
 

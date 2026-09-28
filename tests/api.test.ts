@@ -93,19 +93,19 @@ describe('Telegram Mini App (TMA) Backend API', () => {
 
     container.propertiesRepo.insertProperty({
       hash: 'test_hash_3',
-      title: 'Studio Room in BKK1 Phnom Penh',
-      description: 'Affordable studio near Aeon 1.',
-      price: 25000, // $250
+      title: 'Studio Room in Sla Kram',
+      description: 'Affordable studio near the market.',
+      price: 45000, // $450
       currency: 'USD',
       type: 'rent',
       category: 'room',
       bedrooms: 0,
       bathrooms: 1,
-      deposit: 25000,
+      deposit: 45000,
       min_lease: 1,
       has_pool: false,
-      location: 'BKK1',
-      city: 'phnom_penh',
+      location: 'Sla Kram',
+      city: 'siem_reap',
       maps_url: null,
       source_url: 'https://khmer24.com/p-333',
       original_url: 'https://khmer24.com/p-333',
@@ -215,7 +215,7 @@ describe('Telegram Mini App (TMA) Backend API', () => {
       expect(first).toHaveProperty('contact');
     });
 
-    it('filters properties by city', async () => {
+    it('keeps the public catalog scoped to Siem Reap during the MVP', async () => {
       const res = await app.inject({
         method: 'GET',
         url: '/api/v1/properties?city=phnom_penh',
@@ -223,9 +223,8 @@ describe('Telegram Mini App (TMA) Backend API', () => {
 
       expect(res.statusCode).toBe(200);
       const body = res.json();
-      expect(body.total).toBe(1);
-      expect(body.items[0].city).toBe('phnom_penh');
-      expect(body.items[0].location).toBe('BKK1');
+      expect(body.total).toBe(3);
+      expect(body.items.every((item: { city: string; type: string }) => item.city === 'siem_reap' && item.type === 'rent')).toBe(true);
     });
 
     it('filters properties by price range and pool', async () => {
@@ -249,8 +248,8 @@ describe('Telegram Mini App (TMA) Backend API', () => {
 
       expect(res.statusCode).toBe(200);
       const body = res.json();
-      expect(body.items[0].priceUsd).toBe(250);
-      expect(body.items[1].priceUsd).toBe(350);
+      expect(body.items[0].priceUsd).toBe(350);
+      expect(body.items[1].priceUsd).toBe(450);
       expect(body.items[2].priceUsd).toBe(1200);
     });
 
@@ -316,7 +315,7 @@ describe('Telegram Mini App (TMA) Backend API', () => {
       expect(res.statusCode).toBe(200);
       const body = res.json();
       expect(body.city).toBe('siem_reap');
-      expect(body.count).toBe(2);
+      expect(body.count).toBe(3);
       expect(body.markers[0]).toHaveProperty('coordinates');
       expect(body.markers[0]).toHaveProperty('priceUsd');
       expect(body.markers[0].isExact).toBe(true);
@@ -325,17 +324,18 @@ describe('Telegram Mini App (TMA) Backend API', () => {
     it('returns Sangkat cluster markers for non-GPS properties', async () => {
       const res = await app.inject({
         method: 'GET',
-        url: '/api/v1/properties/map?city=phnom_penh',
+        url: '/api/v1/properties/map?city=siem_reap',
       });
 
       expect(res.statusCode).toBe(200);
       const body = res.json();
-      expect(body.city).toBe('phnom_penh');
-      // Property 3 in BKK1 has no maps_url / GPS coordinates, so it forms a Sangkat cluster
-      expect(body.count).toBe(1);
-      expect(body.markers[0].isExact).toBe(false);
-      expect(body.markers[0].count).toBe(1);
-      expect(body.markers[0].location).toBe('BKK1');
+      expect(body.city).toBe('siem_reap');
+      // Property 3 in Sla Kram has no maps_url / GPS coordinates, so it forms a Sangkat cluster
+      expect(body.count).toBe(3);
+      const cluster = body.markers.find((m: { isExact: boolean; location: string }) => !m.isExact && m.location === 'Sla Kram');
+      expect(cluster).toBeDefined();
+      expect(cluster.isExact).toBe(false);
+      expect(cluster.count).toBe(1);
     });
   });
 
@@ -351,7 +351,7 @@ describe('Telegram Mini App (TMA) Backend API', () => {
       expect(res.statusCode).toBe(200);
       const body = res.json();
       expect(body.currentCity).toBe('siem_reap');
-      expect(body.cities.length).toBeGreaterThanOrEqual(2);
+      expect(body.cities.length).toBe(1);
       expect(body.locations.some((l: { name: string }) => l.name === 'Sala Kamreuk')).toBe(true);
       expect(body.priceRange.minUsd).toBe(350);
       expect(body.priceRange.maxUsd).toBe(1200);
@@ -416,28 +416,10 @@ describe('Telegram Mini App (TMA) Backend API', () => {
     });
   });
 
-  // ─── 8. Tiered Rate Limiting ──────────────────────────────────────────────────
-
-  describe('Tiered Rate Limiting Protection', () => {
-    it('enforces heavy route rate limit (max 5 req/min on /admin/remote-browser)', async () => {
-      // Perform 5 requests (allowed)
-      for (let i = 0; i < 5; i++) {
-        const res = await app.inject({
-          method: 'GET',
-          url: '/admin/remote-browser?token=invalid_test_token',
-        });
-        // 401 or 400 is expected for invalid token, but not 429 yet
-        expect(res.statusCode).not.toBe(429);
-      }
-
-      // 6th request must be rejected with 429 Too Many Requests
-      const blockedRes = await app.inject({
-        method: 'GET',
-        url: '/admin/remote-browser?token=invalid_test_token',
-      });
-      expect(blockedRes.statusCode).toBe(429);
-      expect(blockedRes.json()).toHaveProperty('error', 'Too Many Requests');
-      expect(blockedRes.json().message).toContain('Too many remote browser connection attempts');
+  describe('Removed remote authentication surface', () => {
+    it('does not expose the remote browser endpoint', async () => {
+      const response = await app.inject({ method: 'GET', url: '/admin/remote-browser?token=test' });
+      expect(response.statusCode).toBe(404);
     });
   });
 });

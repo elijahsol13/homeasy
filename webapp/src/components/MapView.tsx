@@ -1,14 +1,17 @@
 import React, { useEffect, useRef, useState } from 'react';
 import L from 'leaflet';
-import type { CityKey, MapMarkerDTO, PropertyDTO } from '../types';
+import type { CityKey, MapFocusRequest, MapMarkerDTO, PropertyDTO } from '../types';
 import { fetchMapMarkers, fetchPropertyById } from '../services/api';
 import { triggerHaptic } from '../services/telegram';
-import { ChevronRight, Waves, MapPin } from 'lucide-react';
+import { ArrowLeft, ChevronRight, Waves, MapPin } from 'lucide-react';
 
 interface MapViewProps {
   city: CityKey;
   onSelectProperty: (property: PropertyDTO) => void;
   onSelectLocation?: (locationName: string) => void;
+  focusRequest?: MapFocusRequest | null;
+  onFocusHandled?: () => void;
+  onBackToProperty?: () => void;
 }
 
 const CITY_COORDS: Record<CityKey, [number, number]> = {
@@ -16,7 +19,14 @@ const CITY_COORDS: Record<CityKey, [number, number]> = {
   phnom_penh: [11.5564, 104.9282],
 };
 
-export const MapView: React.FC<MapViewProps> = ({ city, onSelectProperty, onSelectLocation }) => {
+export const MapView: React.FC<MapViewProps> = ({
+  city,
+  onSelectProperty,
+  onSelectLocation,
+  focusRequest,
+  onFocusHandled,
+  onBackToProperty,
+}) => {
   const mapContainerRef = useRef<HTMLDivElement>(null);
   const mapInstanceRef = useRef<L.Map | null>(null);
   const markersLayerRef = useRef<L.LayerGroup | null>(null);
@@ -173,22 +183,10 @@ export const MapView: React.FC<MapViewProps> = ({ city, onSelectProperty, onSele
                 align-items: center;
                 justify-content: center;
               ">${count}</div>
-              <div style="
-                margin-top: 3px;
-                background: rgba(15, 118, 110, 0.92);
-                color: #ffffff;
-                font-weight: 700;
-                font-size: 9px;
-                padding: 1px 6px;
-                border-radius: 6px;
-                box-shadow: 0 1px 3px rgba(0,0,0,0.25);
-                white-space: nowrap;
-                display: inline-block;
-              ">${item.location}</div>
             </div>
           `,
-          iconSize: [70, 70],
-          iconAnchor: [35, 35],
+          iconSize: [50, 50],
+          iconAnchor: [25, 25],
         });
       }
 
@@ -216,6 +214,36 @@ export const MapView: React.FC<MapViewProps> = ({ city, onSelectProperty, onSele
     });
   }, [markers]);
 
+  useEffect(() => {
+    if (!focusRequest || focusRequest.city !== city || !mapInstanceRef.current) return;
+    const target = focusRequest.coordinatePrecision === 'exact'
+      ? markers.find((marker) => marker.id === focusRequest.propertyId)
+      : markers.find((marker) =>
+          focusRequest.locationKey
+            ? marker.locationKey === focusRequest.locationKey && marker.isExact === false
+            : marker.location === focusRequest.location && marker.isExact === false,
+        );
+    const coordinates = target?.coordinates ?? focusRequest.coordinates;
+    if (!coordinates) return;
+
+    mapInstanceRef.current.flyTo(
+      [coordinates.lat, coordinates.lng],
+      focusRequest.coordinatePrecision === 'exact' ? 17 : 15,
+      { duration: 0.7 },
+    );
+
+    if (!target) return;
+
+    if (target.isExact === false || target.count) {
+      setSelectedMarker(null);
+      setZoomedCluster({ location: target.location, count: target.count ?? 0 });
+    } else if (target) {
+      setZoomedCluster(null);
+      setSelectedMarker(target);
+    }
+    onFocusHandled?.();
+  }, [city, focusRequest, markers, onFocusHandled]);
+
   const handleCardClick = async () => {
     if (!selectedMarker) return;
     triggerHaptic('medium');
@@ -239,6 +267,20 @@ export const MapView: React.FC<MapViewProps> = ({ city, onSelectProperty, onSele
     <div className="relative w-full h-[calc(100vh-140px)]">
       {/* Map DOM element */}
       <div ref={mapContainerRef} className="w-full h-full" />
+
+      {onBackToProperty && (
+        <button
+          type="button"
+          onClick={() => {
+            triggerHaptic('light');
+            onBackToProperty();
+          }}
+          className="absolute top-4 left-4 z-30 w-11 h-11 rounded-full bg-white/95 dark:bg-zinc-800/95 backdrop-blur-md border border-zinc-200 dark:border-zinc-700 shadow-lg flex items-center justify-center text-zinc-700 dark:text-zinc-100 active:scale-95 transition-all"
+          aria-label="Back to property"
+        >
+          <ArrowLeft className="w-5 h-5" />
+        </button>
+      )}
 
       {/* Loading pill */}
       {loading && (

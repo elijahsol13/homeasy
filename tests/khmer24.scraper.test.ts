@@ -1,4 +1,5 @@
 import { toHighResImageUrl, KHMER24_TARGETS } from '../src/modules/parser/khmer24.scraper';
+import { parseKhmer24DetailHtml } from '../src/modules/parser/khmer24-http';
 
 describe('Khmer24 API Scraper', () => {
   describe('toHighResImageUrl', () => {
@@ -27,15 +28,32 @@ describe('Khmer24 API Scraper', () => {
     });
   });
 
-  describe('KHMER24_TARGETS configuration', () => {
-    test('has 10 targets covering Siem Reap and Phnom Penh', () => {
-      expect(KHMER24_TARGETS).toHaveLength(10);
+  describe('HTTP detail parser', () => {
+    test('extracts a listing from Product JSON-LD', () => {
+      const html = `<script type="application/ld+json">${JSON.stringify({
+        '@type': 'Product',
+        name: 'Apartment for rent',
+        description: 'Central apartment',
+        image: ['https://images.khmer24.co/a.jpg'],
+        offers: {
+          price: '350.00',
+          priceCurrency: 'USD',
+          seller: { telephone: ['012345678'], address: { streetAddress: 'BKK1' } },
+        },
+      })}</script>`;
+      const listing = parseKhmer24DetailHtml(html, 'https://www.khmer24.com/en/test-adid-1', {
+        category: 'apartment',
+        city: 'phnom_penh',
+        type: 'rent',
+      });
+      expect(listing).toMatchObject({ title: 'Apartment for rent', price: 350, phone: '012345678', location: 'BKK1' });
     });
+  });
 
-    test('covers both siem_reap and phnom_penh cities', () => {
-      const cities = new Set(KHMER24_TARGETS.map((t) => t.city));
-      expect(cities.has('siem_reap')).toBe(true);
-      expect(cities.has('phnom_penh')).toBe(true);
+  describe('KHMER24_TARGETS configuration', () => {
+    test('has three Siem Reap monthly-rental targets for the MVP', () => {
+      expect(KHMER24_TARGETS).toHaveLength(3);
+      expect(KHMER24_TARGETS.every((target) => target.city === 'siem_reap' && target.type === 'rent')).toBe(true);
     });
 
     test('covers house, apartment, and room categories', () => {
@@ -45,19 +63,12 @@ describe('Khmer24 API Scraper', () => {
       expect(categories).toContain('room');
     });
 
-    test('covers both rent and sale types', () => {
-      const types = KHMER24_TARGETS.map((t) => t.type);
-      expect(types).toContain('rent');
-      expect(types).toContain('sale');
-    });
-
     test('category slugs match expected Khmer24 API slugs', () => {
       const slugs = KHMER24_TARGETS.map((t) => t.categorySlug);
       expect(slugs).toContain('house-for-rent');
       expect(slugs).toContain('apartment-for-rent');
       expect(slugs).toContain('room-for-rent');
-      expect(slugs).toContain('house-for-sale');
-      expect(slugs).toContain('condo-for-sale');
+      expect(slugs.some((slug) => slug.includes('sale'))).toBe(false);
     });
   });
 });

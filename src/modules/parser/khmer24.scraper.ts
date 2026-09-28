@@ -13,22 +13,26 @@
 
 import path from 'path';
 import fs from 'fs';
-import { chromium } from 'playwright-extra';
-import stealthPlugin from 'puppeteer-extra-plugin-stealth';
 import type { Browser, BrowserContext, Page } from 'playwright';
 import type { RawListing } from './schemas';
 import { runMigrations } from '../../database/migrate';
 import type { AppContainer } from '../../container';
 import { createContainer } from '../../container';
-import type { PropertyCategory, CityKey } from '../../config/settings';
+import type { PropertyCategory } from '../../config/settings';
 import { extractListingsBatchWithLLM, categoryFromPropertyType, isExcessiveKhmer, type LLMExtractedListing } from './extractor';
 import { isNonRealEstateSpam } from './spam-detector';
 import { findCanonicalLocation } from '../../config/locations';
+import { launchCamoufox, type CamoufoxBrowser } from './camoufox-server';
+import { attachTrafficGuard } from './traffic-guard';
+import {
+  Khmer24HttpFallbackError,
+  fetchKhmer24Html,
+  parseKhmer24DetailHtml as parseKhmer24HttpDetail,
+  parseKhmer24FeedHtml,
+} from './khmer24-http';
 
 export const K24_SESSION_PATH = path.join(process.cwd(), 'data', 'k24_session.json');
-
-// Apply stealth plugin once at module load
-chromium.use(stealthPlugin());
+export const K24_DEVICE_PATH = path.join(process.cwd(), 'data', 'k24_device.json');
 
 export class Khmer24SessionExpiredError extends Error {
   constructor(message: string) {
@@ -49,23 +53,9 @@ export interface ScrapeTarget {
 }
 
 export const KHMER24_TARGETS: ScrapeTarget[] = [
-  // ─── Siem Reap Rentals ───────────────────────────────────────────────────────
   { name: 'Siem Reap — Houses for Rent', category: 'house', city: 'siem_reap', type: 'rent', categorySlug: 'house-for-rent', locationSlug: 'siem-reap' },
   { name: 'Siem Reap — Apartments & Condos for Rent', category: 'apartment', city: 'siem_reap', type: 'rent', categorySlug: 'apartment-for-rent', locationSlug: 'siem-reap' },
   { name: 'Siem Reap — Rooms for Rent', category: 'room', city: 'siem_reap', type: 'rent', categorySlug: 'room-for-rent', locationSlug: 'siem-reap' },
-
-  // ─── Siem Reap Sales ────────────────────────────────────────────────────────
-  { name: 'Siem Reap — Houses for Sale', category: 'house', city: 'siem_reap', type: 'sale', categorySlug: 'house-for-sale', locationSlug: 'siem-reap' },
-  { name: 'Siem Reap — Condos for Sale', category: 'apartment', city: 'siem_reap', type: 'sale', categorySlug: 'condo-for-sale', locationSlug: 'siem-reap' },
-
-  // ─── Phnom Penh Rentals ─────────────────────────────────────────────────────
-  { name: 'Phnom Penh — Houses for Rent', category: 'house', city: 'phnom_penh', type: 'rent', categorySlug: 'house-for-rent', locationSlug: 'phnom-penh' },
-  { name: 'Phnom Penh — Apartments for Rent', category: 'apartment', city: 'phnom_penh', type: 'rent', categorySlug: 'apartment-for-rent', locationSlug: 'phnom-penh' },
-  { name: 'Phnom Penh — Rooms for Rent', category: 'room', city: 'phnom_penh', type: 'rent', categorySlug: 'room-for-rent', locationSlug: 'phnom-penh' },
-
-  // ─── Phnom Penh Sales ───────────────────────────────────────────────────────
-  { name: 'Phnom Penh — Houses for Sale', category: 'house', city: 'phnom_penh', type: 'sale', categorySlug: 'house-for-sale', locationSlug: 'phnom-penh' },
-  { name: 'Phnom Penh — Condos for Sale', category: 'apartment', city: 'phnom_penh', type: 'sale', categorySlug: 'condo-for-sale', locationSlug: 'phnom-penh' },
 ];
 
 function buildFeedPageUrl(target: ScrapeTarget): string {
@@ -90,27 +80,7 @@ async function checkCloudflareBlock(page: Page, url: string) {
  * but ALLOWS scripts and XHR so Nuxt/Vue can hydrate the page.
  */
 async function setupRelaxedTrafficGuard(page: Page) {
-  await page.route('**/*', (route) => {
-    const type = route.request().resourceType();
-    const url = route.request().url().toLowerCase();
-
-    // Блокируем ТОЛЬКО тяжелый медиа-контент и шрифты (экономит 95% трафика)
-    if (['image', 'media', 'font'].includes(type)) {
-      return route.abort();
-    }
-    // Блокируем только очевидную стороннюю аналитику
-    if (
-      url.includes('google-analytics') || 
-      url.includes('googletagmanager') ||
-      url.includes('doubleclick') || 
-      url.includes('onesignal')
-    ) {
-      return route.abort();
-    }
-    
-    // Пропускаем всё остальное (scripts, fetch, xhr, document, stylesheet)
-    return route.continue();
-  });
+  await attachTrafficGuard(page);
 }
 
 /**
@@ -149,7 +119,7 @@ async function fetchListingUrlsFromFeed(
       if (!el) return [];
       try {
         const raw: unknown[] = JSON.parse(el.textContent || '[]');
-        function r(v: unknown): unknown { return typeof v === 'number' ? raw[v as number] : v; }
+        const r = (v: unknown): unknown => typeof v === 'number' ? raw[v] : v;
 
         // Find feed object: has {total, limit, data} keys
         for (let i = 0; i < raw.length; i++) {
@@ -431,11 +401,7 @@ export async function scrapeTargetWithBrowser(
   console.log(`\n🔎 Scraping [${target.name}]...`);
   const listings: RawListing[] = [];
 
-  const contextOptions: Parameters<Browser['newContext']>[0] = {
-    userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-    viewport: { width: 1280, height: 800 },
-    extraHTTPHeaders: { 'Accept-Language': 'en-US,en;q=0.9' },
-  };
+  const contextOptions: Parameters<Browser['newContext']>[0] = {};
 
   if (fs.existsSync(K24_SESSION_PATH)) {
     contextOptions.storageState = K24_SESSION_PATH;
@@ -463,6 +429,28 @@ export async function scrapeTargetWithBrowser(
 
   console.log(`  ✅ Successfully extracted ${listings.length} listings from [${target.name}]`);
   return listings;
+}
+
+export async function scrapeTargetHttpFirst(
+  target: ScrapeTarget,
+  getFallbackBrowser: () => Promise<Browser>,
+  maxListings = 15,
+): Promise<RawListing[]> {
+  try {
+    const feedHtml = await fetchKhmer24Html(buildFeedPageUrl(target));
+    const urls = parseKhmer24FeedHtml(feedHtml, maxListings);
+    const listings: RawListing[] = [];
+    for (const url of urls) {
+      const detailHtml = await fetchKhmer24Html(url);
+      listings.push(parseKhmer24HttpDetail(detailHtml, url, target));
+      await new Promise((resolve) => setTimeout(resolve, Math.random() * 1000 + 500));
+    }
+    return listings;
+  } catch (error) {
+    if (!(error instanceof Khmer24HttpFallbackError)) throw error;
+    console.warn(`  ⚠️ [HTTP] ${error.message}; using one Camoufox fallback for [${target.name}].`);
+    return scrapeTargetWithBrowser(await getFallbackBrowser(), target, maxListings);
+  }
 }
 
 // ─── AI-First Enrichment (micro-batched, same model cascade as Facebook) ─────
@@ -519,9 +507,11 @@ export async function enrichListingsWithLLM(listings: RawListing[]): Promise<Raw
   candidates.forEach((listing, idx) => {
     const llm = llmResults.get(idx);
     if (!llm) {
-      // Batch call failed or omitted this item — ingest with original scraped text
-      // rather than dropping it.
-      enriched.push(listing);
+      enriched.push({
+        ...listing,
+        review_status: 'pending',
+        review_reason: 'LLM extraction unavailable',
+      });
       return;
     }
 
@@ -529,6 +519,10 @@ export async function enrichListingsWithLLM(listings: RawListing[]): Promise<Raw
       console.log(`  ⏩ [Skipped - Not Residential Real Estate] "${(listing.title ?? '').slice(0, 40)}"`);
       return;
     }
+    const reviewStatus: 'approved' | 'pending' = llm.is_real_estate === true ? 'approved' : 'pending';
+    const reviewReason = reviewStatus === 'pending'
+      ? llm.admission_reason || 'LLM admission decision missing or uncertain'
+      : undefined;
     if (isExcessiveKhmer(llm.description_en)) {
       console.log(`  ⏩ [Skipped - Low Translation Quality] "${(listing.title ?? '').slice(0, 40)}"`);
       return;
@@ -587,6 +581,8 @@ export async function enrichListingsWithLLM(listings: RawListing[]): Promise<Raw
       pet_friendly: llm.pet_friendly ?? listing.pet_friendly,
       marketing_landmarks: (llm.marketing_landmarks && llm.marketing_landmarks.length > 0) ? llm.marketing_landmarks : listing.marketing_landmarks,
       amenities: (llm.discovered_amenities && llm.discovered_amenities.length > 0) ? llm.discovered_amenities : listing.amenities,
+      review_status: reviewStatus,
+      review_reason: reviewReason,
     });
   });
 
@@ -635,27 +631,19 @@ export async function runKhmer24Scraper(containerInstance?: AppContainer): Promi
   let totalInserted = 0;
   let totalDuplicates = 0;
   let totalErrors = 0;
-  let browser: Browser | null = null;
+  const browserHolder: { camoufox: CamoufoxBrowser | null } = { camoufox: null };
 
   try {
-    const isLocal = process.argv.includes('--local');
-    const proxyConfig = (!isLocal && process.env.PROXY_URL) ? { server: process.env.PROXY_URL } : undefined;
-    
-    browser = await chromium.launch({
-      headless: true, // You can switch this to false for debugging
-      proxy: proxyConfig,
-      args: [
-        '--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage',
-        '--disable-gpu', '--no-zygote', '--disable-extensions',
-        '--disable-default-apps', '--mute-audio', '--disable-background-networking',
-        '--disable-blink-features=AutomationControlled', '--disable-infobars',
-        '--js-flags=--max-old-space-size=128',
-      ],
-    });
+    const getFallbackBrowser = async (): Promise<Browser> => {
+      if (!browserHolder.camoufox) {
+        browserHolder.camoufox = await launchCamoufox({ headless: true, devicePath: K24_DEVICE_PATH });
+      }
+      return browserHolder.camoufox.browser;
+    };
 
     for (const target of KHMER24_TARGETS) {
       try {
-        const rawListings = await scrapeTargetWithBrowser(browser, target, 10);
+        const rawListings = await scrapeTargetHttpFirst(target, getFallbackBrowser, 10);
         totalScraped += rawListings.length;
         const listings = await enrichListingsWithLLM(rawListings);
 
@@ -695,7 +683,7 @@ export async function runKhmer24Scraper(containerInstance?: AppContainer): Promi
   } catch (err: unknown) {
     console.error('💥 Fatal scraper error:', err instanceof Error ? err.message : String(err));
   } finally {
-    if (browser) await browser.close().catch(() => {});
+    if (browserHolder.camoufox) await browserHolder.camoufox.close().catch(() => {});
     await container.notifierService.flushNotificationQueue().catch((err) => console.error('[Notifier] Flush error:', err));
   }
 

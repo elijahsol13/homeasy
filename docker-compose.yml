@@ -27,7 +27,7 @@ services:
         max-size: "10m"
         max-file: "3"
 
-  # ─── Playwright Headless Scraper Worker ─────────────────────────────────────
+  # ─── Camoufox Scraper Worker ────────────────────────────────────────────────
   scraper:
     build:
       context: .

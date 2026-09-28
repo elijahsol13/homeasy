@@ -9,8 +9,8 @@ import {
   extractRestrictions,
 } from '../../services/notifier';
 import { findLandmarksInText, getLandmarkByCanonicalName, type LandmarkEntry } from '../../config/landmarks';
-import { extractCoordinatesFromMapsUrl, getFallbackCoordinates } from '../../config/locations';
-import { formatDomesticPhone, formatPhoneNumber, normalizePhoneNumber } from '../parser/normalizer';
+import { extractCoordinatesFromMapsUrl } from '../../config/locations';
+import { formatDomesticPhone, normalizePhoneNumber } from '../parser/normalizer';
 
 export interface PropertyDTO {
   id: number;
@@ -25,9 +25,11 @@ export interface PropertyDTO {
   bathrooms: number | null;
   depositUsd: number | null;
   minLeaseMonths: number | null;
-  hasPool: boolean;
+  hasPool: boolean | null;
   location: string;
+  locationKey: string | null;
   city: string;
+  coordinatePrecision: 'exact' | 'district' | 'city';
   mapsUrl: string | null;
   coordinates: { lat: number; lng: number } | null;
   photos: string[];
@@ -66,8 +68,10 @@ export interface MapMarkerDTO {
   propertyType: string;
   bedrooms: number | null;
   location: string;
+  locationKey: string | null;
   city: string;
-  hasPool: boolean;
+  coordinatePrecision: 'exact' | 'district' | 'city';
+  hasPool: boolean | null;
   thumbnail: string | null;
   coordinates: { lat: number; lng: number } | null;
   mapsUrl: string | null;
@@ -193,7 +197,9 @@ export function toPropertyDTO(property: Property, isFavorite?: boolean): Propert
     minLeaseMonths: property.min_lease,
     hasPool: property.has_pool,
     location: property.location,
+    locationKey: property.location_key ?? null,
     city: property.city,
+    coordinatePrecision: property.coordinate_precision ?? (coords ? 'exact' : property.location_key ? 'district' : 'city'),
     mapsUrl: property.maps_url,
     coordinates: coords,
     photos: property.photos ?? [],
@@ -244,7 +250,9 @@ export function toMapMarkerDTO(property: Property): MapMarkerDTO {
     propertyType,
     bedrooms: property.bedrooms,
     location: property.location,
+    locationKey: property.location_key ?? null,
     city: property.city,
+    coordinatePrecision: 'exact',
     hasPool: property.has_pool,
     thumbnail: property.photos && property.photos.length > 0 ? property.photos[0] : null,
     coordinates: coords,
@@ -259,6 +267,7 @@ export function toMapMarkerDTO(property: Property): MapMarkerDTO {
 export function toSangkatClusterDTO(
   cluster: {
     location: string;
+    locationKey: string | null;
     count: number;
     minPriceUsd: number;
     maxPriceUsd: number;
@@ -276,7 +285,9 @@ export function toSangkatClusterDTO(
     propertyType: 'Neighborhood Cluster',
     bedrooms: null,
     location: cluster.location,
+    locationKey: cluster.locationKey,
     city,
+    coordinatePrecision: 'district',
     hasPool: false,
     thumbnail: null,
     coordinates: { lat: cluster.lat, lng: cluster.lng },

@@ -324,7 +324,7 @@ export function extractDirectContacts(
 
   // Filter out numbers that are designated for Telegram or WhatsApp if other numbers exist
   const nonChatPhones = candidatePhones.filter((p) => p !== extractedTelegram && p !== extractedWhatsapp);
-  let resolvedPhones = nonChatPhones.length > 0 ? nonChatPhones : candidatePhones;
+  const resolvedPhones = nonChatPhones.length > 0 ? nonChatPhones : candidatePhones;
 
   // Incorporate seed if text did not yield phone/telegram/whatsapp
   if (seed?.rawPhone) {

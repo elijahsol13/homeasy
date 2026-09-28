@@ -1,6 +1,6 @@
 import React from 'react';
 import { Search, SlidersHorizontal, MapPin } from 'lucide-react';
-import type { CityKey, FilterState } from '../types';
+import type { FilterState } from '../types';
 import { triggerHaptic } from '../services/telegram';
 
 interface HeaderProps {
@@ -16,15 +16,6 @@ export const Header: React.FC<HeaderProps> = ({
   onOpenFilterDrawer,
   activeFilterCount,
 }) => {
-  const handleCitySwitch = (city: CityKey) => {
-    triggerHaptic('selection');
-    onFilterChange({
-      ...filters,
-      city,
-      locations: [], // Reset sangkats when switching city
-    });
-  };
-
   const handleSearchInput = (e: React.ChangeEvent<HTMLInputElement>) => {
     onFilterChange({
       ...filters,
@@ -37,30 +28,10 @@ export const Header: React.FC<HeaderProps> = ({
       {/* City Switcher Tabs */}
       <div className="flex items-center justify-between gap-2 mb-2.5">
         <div className="flex items-center bg-zinc-100 dark:bg-zinc-800 p-1 rounded-xl">
-          <button
-            type="button"
-            onClick={() => handleCitySwitch('siem_reap')}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
-              filters.city === 'siem_reap'
-                ? 'bg-white dark:bg-zinc-700 text-sky-600 dark:text-sky-400 shadow-xs'
-                : 'text-zinc-500 hover:text-zinc-800 dark:hover:text-zinc-200'
-            }`}
-          >
+          <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-white dark:bg-zinc-700 text-sky-600 dark:text-sky-400 shadow-xs">
             <MapPin className="w-3.5 h-3.5" />
             <span>Siem Reap</span>
-          </button>
-          <button
-            type="button"
-            onClick={() => handleCitySwitch('phnom_penh')}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
-              filters.city === 'phnom_penh'
-                ? 'bg-white dark:bg-zinc-700 text-sky-600 dark:text-sky-400 shadow-xs'
-                : 'text-zinc-500 hover:text-zinc-800 dark:hover:text-zinc-200'
-            }`}
-          >
-            <MapPin className="w-3.5 h-3.5" />
-            <span>Phnom Penh</span>
-          </button>
+          </div>
         </div>
 
         <div className="text-right">

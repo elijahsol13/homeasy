@@ -13,12 +13,11 @@
 import path from 'path';
 import fs from 'fs';
 import readline from 'readline';
-import { chromium } from 'playwright-extra';
-import stealthPlugin from 'puppeteer-extra-plugin-stealth';
-
-chromium.use(stealthPlugin());
+import { launchCamoufox } from './camoufox-server';
+import { attachTrafficGuard } from './traffic-guard';
 
 export const K24_SESSION_PATH = path.join(process.cwd(), 'data', 'k24_session.json');
+export const K24_DEVICE_PATH = path.join(process.cwd(), 'data', 'k24_device.json');
 
 async function waitForEnterOrTimeout(timeoutMs: number): Promise<void> {
   const rl = readline.createInterface({
@@ -56,26 +55,14 @@ export async function runK24Login(): Promise<void> {
   }
 
   console.log('🌐 Launching browser window...');
-  const browser = await chromium.launch({
-    headless: false,
-    args: [
-      '--no-sandbox',
-      '--disable-setuid-sandbox',
-      '--disable-blink-features=AutomationControlled',
-      '--disable-infobars',
-    ],
-  });
-
-  const context = await browser.newContext({
-    userAgent:
-      'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-    viewport: { width: 1280, height: 850 },
-    locale: 'en-US',
-  });
-
+  const camoufox = await launchCamoufox({ headless: false, devicePath: K24_DEVICE_PATH });
+  const context = await camoufox.browser.newContext(
+    fs.existsSync(K24_SESSION_PATH) ? { storageState: K24_SESSION_PATH } : undefined,
+  );
   const page = await context.newPage();
 
   try {
+    await attachTrafficGuard(page, { allowStylesheets: true });
     console.log('🔗 Navigating to https://www.khmer24.com/en/login ...');
     await page.goto('https://www.khmer24.com/en/login', {
       waitUntil: 'domcontentloaded',
@@ -101,7 +88,8 @@ export async function runK24Login(): Promise<void> {
   } catch (err: unknown) {
     console.error('❌ Error during Khmer24 login:', err instanceof Error ? err.message : String(err));
   } finally {
-    await browser.close().catch(() => {});
+    await context.close().catch(() => {});
+    await camoufox.close().catch(() => {});
   }
 }
 

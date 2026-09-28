@@ -30,11 +30,6 @@ export const FilterDrawer: React.FC<FilterDrawerProps> = ({
     }));
   };
 
-  const handleTypeClick = (type: 'rent' | 'sale') => {
-    triggerHaptic('selection');
-    setDraft((prev) => ({ ...prev, type }));
-  };
-
   const handleBedroomsClick = (bed: number) => {
     triggerHaptic('selection');
     setDraft((prev) => {
@@ -114,37 +109,6 @@ export const FilterDrawer: React.FC<FilterDrawerProps> = ({
 
         {/* Filter Sections */}
         <div className="p-5 overflow-y-auto space-y-6">
-          {/* Deal Type (Rent / Sale) */}
-          <div>
-            <label className="text-xs font-bold uppercase tracking-wider text-zinc-400 block mb-2">
-              Deal Type
-            </label>
-            <div className="grid grid-cols-2 gap-2 bg-zinc-100 dark:bg-zinc-800 p-1 rounded-xl">
-              <button
-                type="button"
-                onClick={() => handleTypeClick('rent')}
-                className={`py-2 text-xs font-semibold rounded-lg transition-all ${
-                  draft.type !== 'sale'
-                    ? 'bg-white dark:bg-zinc-700 text-sky-600 dark:text-sky-400 shadow-xs'
-                    : 'text-zinc-500'
-                }`}
-              >
-                For Rent
-              </button>
-              <button
-                type="button"
-                onClick={() => handleTypeClick('sale')}
-                className={`py-2 text-xs font-semibold rounded-lg transition-all ${
-                  draft.type === 'sale'
-                    ? 'bg-white dark:bg-zinc-700 text-sky-600 dark:text-sky-400 shadow-xs'
-                    : 'text-zinc-500'
-                }`}
-              >
-                For Sale
-              </button>
-            </div>
-          </div>
-
           {/* Property Category */}
           <div>
             <label className="text-xs font-bold uppercase tracking-wider text-zinc-400 block mb-2">

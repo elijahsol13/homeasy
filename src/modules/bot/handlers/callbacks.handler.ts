@@ -157,7 +157,7 @@ async function route(ctx: MyContext, data: string): Promise<boolean> {
   if (data.startsWith('cb:prop:report:')) {
     const id = parseInt(data.replace('cb:prop:report:', ''), 10);
     if (!isNaN(id)) {
-      const { reports_count, is_active } = ctx.container.propertiesRepo.reportProperty(id);
+      const { is_active } = ctx.container.propertiesRepo.reportProperty(id);
       if (!is_active) {
         await ctx.container.alertService.warn('Listing #' + id + ' hidden due to complaint threshold reached.');
       }

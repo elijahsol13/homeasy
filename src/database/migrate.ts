@@ -1,5 +1,5 @@
 import type { DatabaseSync } from 'node:sqlite';
-import { extractCoordinatesFromMapsUrl, getFallbackCoordinates } from '../config/locations';
+import { canonicalizeLocation, extractCoordinatesFromMapsUrl } from '../config/locations';
 import type { CityKey } from '../config/settings';
 
 /**
@@ -329,6 +329,49 @@ ALTER TABLE properties ADD COLUMN parse_warnings TEXT;
   `
 ALTER TABLE properties ADD COLUMN last_verified_at TEXT;
 `,
+
+  // ── v19: canonical location identity and coordinate provenance ──────────────
+  `
+ALTER TABLE properties ADD COLUMN location_key TEXT;
+ALTER TABLE properties ADD COLUMN raw_location TEXT;
+ALTER TABLE properties ADD COLUMN coordinate_precision TEXT NOT NULL DEFAULT 'district';
+
+CREATE INDEX IF NOT EXISTS idx_properties_location_key
+  ON properties(city, location_key);
+`,
+
+  // ── v20: refresh canonical locations after catalog expansion ────────────────
+  `
+SELECT 1;
+`,
+
+  // ── v21: manual review queue for uncertain admission decisions ─────────────
+  `
+ALTER TABLE properties ADD COLUMN review_status TEXT NOT NULL DEFAULT 'approved';
+ALTER TABLE properties ADD COLUMN review_reason TEXT;
+CREATE INDEX IF NOT EXISTS idx_properties_review_status ON properties(review_status, is_active);
+`,
+
+  // ── v22: allow has_pool and pet_friendly to be null so "unknown" is preserved ───
+  `
+PRAGMA foreign_keys=OFF;
+
+DROP INDEX IF EXISTS idx_properties_pet_friendly;
+
+ALTER TABLE properties ADD COLUMN has_pool_new INTEGER CHECK(has_pool_new IN (0,1));
+UPDATE properties SET has_pool_new = has_pool;
+ALTER TABLE properties DROP COLUMN has_pool;
+ALTER TABLE properties RENAME COLUMN has_pool_new TO has_pool;
+
+ALTER TABLE properties ADD COLUMN pet_friendly_new INTEGER CHECK(pet_friendly_new IN (0,1));
+UPDATE properties SET pet_friendly_new = pet_friendly;
+ALTER TABLE properties DROP COLUMN pet_friendly;
+ALTER TABLE properties RENAME COLUMN pet_friendly_new TO pet_friendly;
+
+CREATE INDEX IF NOT EXISTS idx_properties_pet_friendly ON properties(pet_friendly);
+
+PRAGMA foreign_keys=ON;
+`,
 ];
 
 /**
@@ -424,6 +467,38 @@ export function runMigrations(db: DatabaseSync): void {
           } catch (e) {
             console.warn('  ⚠️ Coordinate reset notice:', e);
           }
+        } else if (version === 19 || version === 20) {
+          const rows = db
+            .prepare('SELECT id, location, raw_location, city, latitude, longitude FROM properties')
+            .all() as unknown as Array<{
+              id: number;
+              location: string;
+              raw_location: string | null;
+              city: CityKey;
+              latitude: number | null;
+              longitude: number | null;
+            }>;
+          const updateStmt = db.prepare(
+            'UPDATE properties SET location_key = ?, raw_location = ?, location = ?, city = ?, coordinate_precision = ? WHERE id = ?',
+          );
+          let canonicalizedCount = 0;
+          for (const row of rows) {
+            const canonical = canonicalizeLocation(row.location, row.city);
+            const rawLocation = row.raw_location ?? (canonical.name !== row.location ? row.location : null);
+            const precision = row.latitude !== null && row.longitude !== null
+              ? 'exact'
+              : canonical.key ? 'district' : 'city';
+            updateStmt.run(
+              canonical.key,
+              rawLocation,
+              canonical.name,
+              canonical.city,
+              precision,
+              row.id,
+            );
+            if (canonical.key) canonicalizedCount++;
+          }
+          console.log(`  📍 Canonicalized ${canonicalizedCount}/${rows.length} property locations`);
         }
       }
     });
