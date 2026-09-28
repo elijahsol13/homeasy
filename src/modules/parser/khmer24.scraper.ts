@@ -469,6 +469,17 @@ const LLM_BATCH_SIZE = 6;
  * fails or omits an item, that listing is ingested with its original scraped
  * text rather than being silently discarded.
  */
+const KHMER24_EXTRACTION_HINTS = `
+Source: Khmer24.com listing page. The page JSON-LD already supplies a numeric price,
+unmasked phone(s), high-res photos, and a district-level address.
+Use the description/title as the ground truth for transaction type, lease duration,
+and monthly rent — Khmer24 browse pages are sometimes miscategorized, so a
+"house-for-rent" URL can still contain a sale listing. If the price looks like a total
+sale price or the text says "for sale", set is_real_estate: false.
+Translate Khmer text to English, keep original proper nouns, and do not add
+unsupported adjectives to title_en.
+`;
+
 export async function enrichListingsWithLLM(listings: RawListing[]): Promise<RawListing[]> {
   if (listings.length === 0) return listings;
 
@@ -494,7 +505,7 @@ export async function enrichListingsWithLLM(listings: RawListing[]): Promise<Raw
       `  🚀 [AI Batch ${Math.floor(i / LLM_BATCH_SIZE) + 1}/${Math.ceil(candidates.length / LLM_BATCH_SIZE)}] Rewriting ${chunk.length} listings with Gemini...`,
     );
     try {
-      const batchResult = await extractListingsBatchWithLLM(batchInput);
+      const batchResult = await extractListingsBatchWithLLM(batchInput, KHMER24_EXTRACTION_HINTS);
       for (const [id, llm] of batchResult) {
         llmResults.set(Number(id), llm);
       }
