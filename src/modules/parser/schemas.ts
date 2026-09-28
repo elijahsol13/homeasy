@@ -11,7 +11,7 @@ export const RawListingSchema = z.object({
   price: z.union([z.string(), z.number()]).optional(),
   currency: z.string().optional(),
   type: z.string().optional(),
-  category: z.enum(['apartment', 'house', 'room', 'hotel']).or(z.string()).optional(),
+  category: z.enum(['apartment', 'house', 'room', 'hotel']).or(z.string()).nullish(),
   bedrooms: z.union([z.string(), z.number()]).optional(),
   bathrooms: z.union([z.string(), z.number()]).optional(),
   deposit: z.union([z.string(), z.number()]).optional(),
@@ -46,8 +46,8 @@ export const RawListingSchema = z.object({
   commerce_location: z.string().optional(),
   review_status: z.enum(['approved', 'pending']).optional(),
   review_reason: z.string().optional(),
-  /** LLM admission decision: true=residential real estate, false=not real estate, missing=uncertain. */
-  is_real_estate: z.boolean().optional(),
+  /** LLM admission decision: true=residential real estate, false=not real estate, missing/null=uncertain. */
+  is_real_estate: z.boolean().nullish(),
   /** Deposit expressed as a number of monthly rent payments, kept separate from amount. */
   deposit_months: z.union([z.string(), z.number()]).optional(),
 });

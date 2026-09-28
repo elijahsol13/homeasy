@@ -28,6 +28,39 @@ import { checkDuplicate, computeListingPhashes } from '../matcher/deduplicator';
 import type { MatcherService } from '../matcher/matcher';
 import type { AlertService } from '../../services/alert.service';
 import type { CityKey, PropertyCategory } from '../../config/settings';
+import type { z } from 'zod';
+
+type RawListing = z.infer<typeof RawListingSchema>;
+
+function inferIsRealEstate(
+  raw: RawListing,
+  type: 'rent' | 'sale' | null,
+  category: PropertyCategory | null,
+  city: CityKey,
+  priceCents: number,
+  minLease: number | null,
+): { is_real_estate: true; reason: string } | null {
+  if (city !== 'siem_reap') return null;
+  if (type && type !== 'rent') return null;
+  const text = [raw.title ?? '', raw.description ?? ''].join('\n').toLowerCase();
+  const saleSignals = /\b(for sale|sale|land for sale|house for sale|ដូរ|លក់|សម្រាប់លក់|sale price)\b/;
+  const dailySignals = /\b(daily|nightly|per night|per day|day rent|homestay|guesthouse|guest house|ប្រចាំថ្ងៃ|រាល់ថ្ងៃ)\b/;
+  const commercialSignals = /\b(commercial villa|commercial house|office space|shop house|business|warehouse|factory|ហាង|ការិយាល័យ|សាឡន)\b/;
+  if (saleSignals.test(text)) return null;
+  if (dailySignals.test(text) && (minLease ?? 0) < 7) return null;
+  if (commercialSignals.test(text)) return null;
+  // Require a canonical Siem Reap district in the location string to auto-approve.
+  const canonical = findCanonicalLocation(raw.location ?? '');
+  if (!canonical || canonical.city !== 'siem_reap') return null;
+  if (type === 'rent' && priceCents > 0 && category && ['apartment', 'house', 'room', 'hotel'].includes(category)) {
+    if (category === 'hotel' && (minLease ?? 0) < 1) return null;
+    return {
+      is_real_estate: true,
+      reason: `Deterministic: ${category} monthly rental in ${canonical.canonicalName}`,
+    };
+  }
+  return null;
+}
 import { isNonRealEstateSpam } from './spam-detector';
 
 // ─── Hash (Fallback fingerprint) ──────────────────────────────────────────────
@@ -72,13 +105,9 @@ export function normalizeRawToClean(
   let cleanReviewStatus: 'approved' | 'pending' = raw.review_status ?? 'approved';
   let cleanReviewReason: string | null = raw.review_reason ?? null;
 
-  // Fail-closed admission: a missing or uncertain is_real_estate decision from the LLM
-  // must not publish automatically. Preserve the record as inactive pending review.
-  if (raw.is_real_estate === null || raw.is_real_estate === undefined) {
-    cleanReviewStatus = 'pending';
-    cleanReviewReason = cleanReviewReason ?? 'Admission decision missing or uncertain';
-    warnings.push('is_real_estate_uncertain');
-  }
+  // Start with the LLM decision if it provided one; otherwise fall through to the
+  // deterministic inference below before marking the record uncertain.
+  let resolvedIsRealEstate: boolean | null = raw.is_real_estate ?? null;
 
   const title = raw.title ? normalizeText(raw.title) : 'Real Estate Listing';
   const description = raw.description ? normalizeText(raw.description) : '';
@@ -306,6 +335,25 @@ export function normalizeRawToClean(
     minLease = isNaN(n) ? null : n;
   } else {
     minLease = extractMinLease(combinedText);
+  }
+
+  // When the LLM is uncertain (returns null) or a weak fallback model misclassifies
+  // an obvious rental, fall back to deterministic signals before marking pending.
+  if (resolvedIsRealEstate === null || resolvedIsRealEstate === undefined) {
+    const inferred = inferIsRealEstate(raw, type, category, city, priceCents, minLease);
+    if (inferred) {
+      resolvedIsRealEstate = inferred.is_real_estate;
+      cleanReviewReason = inferred.reason;
+      warnings.push('is_real_estate_inferred');
+    }
+  }
+
+  // Fail-closed admission: a missing or uncertain is_real_estate decision means the
+  // record must not publish automatically. Preserve it as inactive pending review.
+  if (resolvedIsRealEstate === null || resolvedIsRealEstate === undefined) {
+    cleanReviewStatus = 'pending';
+    cleanReviewReason = cleanReviewReason ?? 'Admission decision missing or uncertain';
+    warnings.push('is_real_estate_uncertain');
   }
 
   const hasPool: boolean | null =

@@ -531,17 +531,14 @@ export function categoryFromPropertyType(propertyType?: string | null): Property
 // ─── Gemini Model Cascade with Circuit Breaker (30-min cooldown) ──────────────
 
 export const GEMINI_MODEL_CASCADE = [
+  // Versioned Gemini 3.x Flash snapshots known to exist for generateContent.
+  // Avoid -latest aliases and old-generation models that return 404 for new users.
   'gemini-3.8-flash',
-  'gemini-3.7-flash',
-  'gemini-3.6-flash',
-  'gemini-3.5-flash',
   'gemini-3.5-flash-lite',
   'gemini-3.1-flash-lite',
-  'gemini-3.1-flash-lite-preview',
-  'gemini-3-flash-preview',
-  'gemini-flash-lite-latest',
-  'gemini-flash-latest',
-  'gemini-pro-latest',
+  'gemini-3.5-flash',
+  'gemini-3.6-flash',
+  'gemini-3.7-flash',
 ] as const;
 
 interface CircuitBreakerState {
@@ -620,11 +617,15 @@ export function resetCircuitBreakers(): void {
 
 // ─── Single Item LLM Extraction with Model Cascade ────────────────────────────
 
-export async function extractListingWithLLM(text: string): Promise<LLMExtractedListing | null> {
+export async function extractListingWithLLM(
+  text: string,
+  customSystemInstruction?: string,
+): Promise<LLMExtractedListing | null> {
   const llmText = prepareLlmInput(text);
+  const systemInstruction = customSystemInstruction ?? SYSTEM_INSTRUCTIONS;
   const geminiKey = getGeminiKey();
   if (geminiKey) {
-    // Smartest models first (3.8-flash -> 3.6-flash -> 3.5-flash -> 3.1-flash-lite) with 30-min circuit breaker
+    // Smartest models first with 30-min circuit breaker
     for (const modelName of GEMINI_MODEL_CASCADE) {
       if (!isModelAvailable(modelName)) {
         continue;
@@ -639,7 +640,7 @@ export async function extractListingWithLLM(text: string): Promise<LLMExtractedL
             responseMimeType: 'application/json',
             responseSchema: buildListingExtractionSchema(),
           },
-          systemInstruction: SYSTEM_INSTRUCTIONS,
+          systemInstruction,
         });
 
         const result = await model.generateContent(llmText);
@@ -648,6 +649,7 @@ export async function extractListingWithLLM(text: string): Promise<LLMExtractedL
           const sanitized = sanitizeLlmResult(raw);
           if (sanitized) {
             recordModelSuccess(modelName);
+            console.log(`[Extractor] ✅ Gemini ${modelName} single extraction success`);
             // Heuristic fill-ins if model omitted them
             if (!sanitized.electricity) sanitized.electricity = extractElectricity(text);
             if (!sanitized.water) sanitized.water = extractWater(text);
@@ -670,7 +672,7 @@ export async function extractListingWithLLM(text: string): Promise<LLMExtractedL
       const response = await openAIInstance.chat.completions.create({
         model: 'gpt-4o-mini',
         messages: [
-          { role: 'system', content: SYSTEM_INSTRUCTIONS },
+          { role: 'system', content: systemInstruction },
           { role: 'user', content: llmText },
         ],
         response_format: { type: 'json_object' },
@@ -760,7 +762,10 @@ export async function extractListingsBatchWithLLM(
             const completeness = results.size / items.length;
             if (completeness >= 0.8) {
               recordModelSuccess(modelName);
+              console.log(`[Extractor] ✅ Gemini ${modelName} batch success: ${results.size}/${items.length} items`);
               break;
+            } else {
+              console.warn(`[Extractor] Gemini ${modelName} returned incomplete batch (${results.size}/${items.length}); trying next model.`);
             }
           }
         }
@@ -773,7 +778,7 @@ export async function extractListingsBatchWithLLM(
   // Fail-Safe Fallback: process any items missing from the batch individually
   for (const item of items) {
     if (!results.has(item.id)) {
-      const single = await extractListingWithLLM(item.text);
+      const single = await extractListingWithLLM(item.text, customSystemInstruction);
       if (single) {
         results.set(item.id, single);
       }

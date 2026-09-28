@@ -33,8 +33,10 @@ describe('Ingestion admission gate', () => {
     };
   }
 
-  test('stores uncertain is_real_estate as pending inactive', async () => {
-    const result = await container.ingestionService.ingestRawListing(baseListing());
+  test('stores uncertain is_real_estate as pending inactive when evidence is weak', async () => {
+    const result = await container.ingestionService.ingestRawListing(
+      baseListing({ is_real_estate: null, price: 0, category: null, location: 'Unknown Village' }),
+    );
     expect(result.status).toBe('inserted');
 
     const prop = container.propertiesRepo.getPropertyById(result.propertyId!);
@@ -42,6 +44,19 @@ describe('Ingestion admission gate', () => {
     expect(prop?.review_status).toBe('pending');
     expect(prop?.is_active).toBe(0);
     expect(prop?.parse_warnings).toContain('is_real_estate_uncertain');
+  });
+
+  test('auto-approves uncertain is_real_estate when deterministic evidence is strong', async () => {
+    const result = await container.ingestionService.ingestRawListing(
+      baseListing({ is_real_estate: null, category: 'house' }),
+    );
+    expect(result.status).toBe('inserted');
+
+    const prop = container.propertiesRepo.getPropertyById(result.propertyId!);
+    expect(prop).toBeDefined();
+    expect(prop?.review_status).toBe('approved');
+    expect(prop?.is_active).toBe(1);
+    expect(prop?.parse_warnings).toContain('is_real_estate_inferred');
   });
 
   test('rejects LLM-confirmed non-real-estate', async () => {

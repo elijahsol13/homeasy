@@ -476,6 +476,14 @@ Use the description/title as the ground truth for transaction type, lease durati
 and monthly rent — Khmer24 browse pages are sometimes miscategorized, so a
 "house-for-rent" URL can still contain a sale listing. If the price looks like a total
 sale price or the text says "for sale", set is_real_estate: false.
+
+Examples of valid monthly rentals for this MVP (set is_real_estate: true):
+- "បន្ទប់ជួល / Room for Rent" with "$100/ខែ" — this is a room, category: room.
+- "House for rent in Svay Dangkum, 1 year contract, $600/month" — category: house.
+- "2BR apartment in Sla Kram, $350/month" — category: apartment.
+
+If the actual location is in Phnom Penh, Sihanoukville, or another city, return that
+city's district in location; the ingestor will reject it automatically.
 Translate Khmer text to English, keep original proper nouns, and do not add
 unsupported adjectives to title_en.
 `;
@@ -630,6 +638,7 @@ export interface RunKhmer24Options {
   noEnrich?: boolean;
   targetIndex?: number;
   dumpRaw?: string;
+  dbPath?: string;
 }
 
 export async function runKhmer24Scraper(
@@ -645,7 +654,7 @@ export async function runKhmer24Scraper(
   console.log('🤖 Khmer24 Scraper (Classic DOM + AI-First) — HomEasy');
   console.log('═══════════════════════════════════════════════════════════════');
 
-  const container = containerInstance ?? createContainer();
+  const container = containerInstance ?? createContainer(options.dbPath ? { dbPath: options.dbPath } : undefined);
   runMigrations(container.db);
 
   const targets = options.targetIndex !== undefined
@@ -752,8 +761,10 @@ if (require.main === module) {
       options.noEnrich = true;
     } else if (arg.startsWith('--dump-raw=')) {
       options.dumpRaw = arg.replace('--dump-raw=', '');
+    } else if (arg.startsWith('--db-path=')) {
+      options.dbPath = arg.replace('--db-path=', '');
     } else if (arg === '--help' || arg === '-h') {
-      console.log('Usage: ts-node src/modules/parser/khmer24.scraper.ts [--target=N] [--limit-listings=N] [--no-enrich] [--dump-raw=path.json]');
+      console.log('Usage: ts-node src/modules/parser/khmer24.scraper.ts [--target=N] [--limit-listings=N] [--no-enrich] [--dump-raw=path.json] [--db-path=path.db]');
       process.exit(0);
     }
   }
