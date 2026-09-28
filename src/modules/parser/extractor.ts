@@ -1,4 +1,4 @@
-import { GoogleGenerativeAI } from '@google/generative-ai';
+import { GoogleGenerativeAI, SchemaType, type ResponseSchema } from '@google/generative-ai';
 import OpenAI from 'openai';
 import { DISTRICTS, type CityKey, type PropertyCategory } from '../../config/settings';
 import { findCanonicalLocation } from '../../config/locations';
@@ -13,7 +13,7 @@ export interface LLMExtractedListing {
   title_en: string;
   price: number | null;
   currency: 'USD' | 'KHR';
-  category: 'apartment' | 'house' | 'room' | 'hotel' | 'land' | null;
+  category: 'apartment' | 'house' | 'room' | 'hotel' | 'land' | 'commercial' | null;
   property_type?: string | null;
   bedrooms: number | null;
   bathrooms: number | null;
@@ -40,6 +40,43 @@ export const VALID_SANGKATS: readonly string[] = [
   ...DISTRICTS.siem_reap,
   ...DISTRICTS.phnom_penh,
 ];
+
+function buildListingExtractionSchema(): ResponseSchema {
+  const stringOrNull = { type: SchemaType.STRING, nullable: true } as const;
+  const numberOrNull = { type: SchemaType.NUMBER, nullable: true } as const;
+  const booleanOrNull = { type: SchemaType.BOOLEAN, nullable: true } as const;
+  return {
+    type: SchemaType.OBJECT,
+    properties: {
+      is_real_estate: booleanOrNull,
+      admission_reason: stringOrNull,
+      title_en: { type: SchemaType.STRING },
+      description_en: { type: SchemaType.STRING },
+      price: numberOrNull,
+      currency: { type: SchemaType.STRING, format: 'enum', enum: ['USD', 'KHR'] },
+      category: { type: SchemaType.STRING, nullable: true, format: 'enum', enum: ['apartment', 'house', 'room', 'hotel', 'land', 'commercial'] },
+      property_type: stringOrNull,
+      bedrooms: numberOrNull,
+      bathrooms: numberOrNull,
+      min_lease: numberOrNull,
+      deposit_amount: numberOrNull,
+      deposit_months: numberOrNull,
+      has_pool: booleanOrNull,
+      electricity: stringOrNull,
+      water: stringOrNull,
+      cleaning: stringOrNull,
+      restrictions: { type: SchemaType.ARRAY, items: { type: SchemaType.STRING }, nullable: true },
+      pet_friendly: booleanOrNull,
+      landmarks: { type: SchemaType.ARRAY, items: { type: SchemaType.STRING }, nullable: true },
+      marketing_landmarks: { type: SchemaType.ARRAY, items: { type: SchemaType.STRING }, nullable: true },
+      location: stringOrNull,
+      phone_numbers: { type: SchemaType.ARRAY, items: { type: SchemaType.STRING }, nullable: true },
+      maps_url: stringOrNull,
+      discovered_amenities: { type: SchemaType.ARRAY, items: { type: SchemaType.STRING }, nullable: true },
+    },
+    required: ['is_real_estate', 'title_en', 'description_en', 'price', 'currency', 'category', 'bedrooms', 'bathrooms', 'min_lease', 'has_pool', 'pet_friendly', 'location', 'phone_numbers', 'maps_url'],
+  } as ResponseSchema;
+}
 
 const SYSTEM_INSTRUCTIONS = `
 You are a real estate data extraction API. Extract the data and return a JSON object exactly matching this schema:
@@ -163,7 +200,7 @@ function sanitizeLlmResult(rawJson: string): LLMExtractedListing | null {
     const price: number | null = typeof parsed.price === 'number' && parsed.price > 0 ? parsed.price : null;
     const currency: 'USD' | 'KHR' = parsed.currency === 'KHR' ? 'KHR' : 'USD';
     let category: LLMExtractedListing['category'] = null;
-    if (parsed.category && ['apartment', 'house', 'room', 'hotel', 'land'].includes(parsed.category.toLowerCase())) {
+    if (parsed.category && ['apartment', 'house', 'room', 'hotel', 'land', 'commercial'].includes(parsed.category.toLowerCase())) {
       category = parsed.category.toLowerCase() as LLMExtractedListing['category'];
     }
 
@@ -179,10 +216,17 @@ function sanitizeLlmResult(rawJson: string): LLMExtractedListing | null {
       parsed.location.trim().toLowerCase() !== 'null'
     ) {
       const trimmed = parsed.location.trim();
-      const matched = VALID_SANGKATS.find(
-        (s) => s.toLowerCase() === trimmed.toLowerCase() || trimmed.toLowerCase().includes(s.toLowerCase()),
-      );
-      location = matched ?? trimmed;
+      // Always canonicalize through the location catalog so the same district
+      // does not get split by transliteration differences (Sla Kram / Slor Kram).
+      const canonical = findCanonicalLocation(trimmed);
+      if (canonical) {
+        location = canonical.canonicalName;
+      } else {
+        const matched = VALID_SANGKATS.find(
+          (s) => s.toLowerCase() === trimmed.toLowerCase() || trimmed.toLowerCase().includes(s.toLowerCase()),
+        );
+        location = matched ?? trimmed;
+      }
     }
 
     const phone_numbers: string[] = [];
@@ -569,6 +613,7 @@ export async function extractListingWithLLM(text: string): Promise<LLMExtractedL
           model: modelName,
           generationConfig: {
             responseMimeType: 'application/json',
+            responseSchema: buildListingExtractionSchema(),
           },
           systemInstruction: SYSTEM_INSTRUCTIONS,
         });
@@ -661,6 +706,7 @@ export async function extractListingsBatchWithLLM(
           model: modelName,
           generationConfig: {
             responseMimeType: 'application/json',
+            responseSchema: buildListingExtractionSchema(),
           },
           systemInstruction: batchSystemInstruction,
         });
@@ -739,6 +785,19 @@ export async function classifyListingsBatchWithLLM(
       'Return a JSON array of objects: `[{"id": ..., "class": "...", "reason": "..."}]`.\n' +
       'Do not skip any items. Use only the allowed class values.';
 
+    const classificationSchema = {
+      type: SchemaType.ARRAY,
+      items: {
+        type: SchemaType.OBJECT,
+        properties: {
+          id: { type: SchemaType.STRING, nullable: true },
+          class: { type: SchemaType.STRING, format: 'enum', enum: ['rental', 'sale', 'commercial', 'daily', 'not_property', 'unclear'] },
+          reason: { type: SchemaType.STRING },
+        },
+        required: ['id', 'class', 'reason'],
+      },
+    } as ResponseSchema;
+
     for (const modelName of GEMINI_MODEL_CASCADE) {
       if (!isModelAvailable(modelName)) {
         continue;
@@ -751,6 +810,7 @@ export async function classifyListingsBatchWithLLM(
           model: modelName,
           generationConfig: {
             responseMimeType: 'application/json',
+            responseSchema: classificationSchema,
           },
           systemInstruction: batchSystemInstruction,
         });
