@@ -133,7 +133,7 @@ STRICT RULES:
 - \`category\`: Derive it FROM \`property_type\`, do not guess independently: 'room' ONLY for property_type 'Room'; 'apartment' for property_type 'Studio', 'Apartment', or 'Condo'; 'house' for 'Private Villa', 'Private House', or 'Flat House'; 'hotel' for 'Hotel Room'. Use 'land' only for a residential plot with no structure, and 'commercial' for warehouse/shop/office/restaurant spaces.
 - \`phone_numbers\`: Extract ALL phone numbers found (WhatsApp, Telegram, local, international). Strip non-numeric characters except leading '+'. Example: ['+85577448002', '089899084'].
 - \`description_en\`: DO NOT repeat the price, location, or title. Extract ONLY the core details and overview. Return strictly as 1-3 short bullet points.
-- \`location\`: CRITICAL FOR LOCATION: Agents use 'borrowed prestige' (e.g., '5 mins to Pub Street', 'Near Aeon 3'). NEVER use relative distance/time markers as the actual location. Extract the ACTUAL physical district/sangkat into the \`location\` field (e.g. 'Choeung Ek', 'Boeng Trabaek', etc.), analyzing the text and mapping it to ONE of these exact values: [${VALID_SANGKATS.join(', ')}]. If NO location is mentioned, return null. Do not guess or invent a location.
+- \`location\`: CRITICAL FOR LOCATION: Agents use 'borrowed prestige' (e.g., '5 mins to Pub Street', 'Near Aeon 3'). NEVER use relative distance/time markers as the actual location. Extract the ACTUAL physical district/sangkat into the \`location\` field (e.g. 'Choeung Ek', 'Boeng Trabaek', etc.), analyzing the text and mapping it to ONE of these exact values: [${VALID_SANGKATS.join(', ')}]. If the exact sangkat is not stated but a well-known physical landmark or neighborhood is named, choose the canonical sangkat that contains or is closest to that landmark. Examples: Pub Street / Old Market / Night Market / Phallar Night Market Angkor → 'Sla Kram'; Road 60 / Sokha Road → 'Svay Dangkum'; Charles de Gaulle / Apsara Road → 'Sla Kram'; Wat Bo → 'Sla Kram'; Angkor High School / Road 6 → 'Svay Dangkum'. If NO specific place is mentioned at all, return null. Do not guess or invent a location.
 - \`marketing_landmarks\`: Extract ALL the promotional distance markers and 'near X' places strictly into the \`marketing_landmarks\` array.
 - \`maps_url\`: If the post contains a Google Maps link (goo.gl, google.com/maps, maps.app.goo.gl), extract it here. Otherwise, return null.
 - If the property is a hotel room, hotel suite, or boutique hotel room, return category: 'hotel', property_type: 'Hotel Room'.
@@ -926,21 +926,25 @@ export function extractPrice(text: string): ExtractedPrice | null {
 // ─── Deposit extraction ───────────────────────────────────────────────────────
 
 export function extractDeposit(text: string, rentPriceCents?: number): number | null {
-  // Check for "$500 deposit" or "deposit: $500"
-  const dollarMatch = /(?:deposit|security\s*deposit)\s*(?::|is|=|of)?\s*\$?\s*([\d,]+)/i.exec(text);
-  if (dollarMatch?.[1]) {
-    const num = parseFloat(normalizePriceString(dollarMatch[1]));
-    if (!isNaN(num) && num > 0) {
-      return usdToUsdCents(num);
-    }
-  }
-
-  // Check for "1 month deposit" or "2 months deposit"
-  const monthMatch = /(\d+)\s*(?:month|months|mo|mos)\s*(?:of\s*)?deposit/i.exec(text);
+  // Check for explicit month deposits first: "2 months deposit", "2-month deposit",
+  // "deposit 2 months", "deposit: 2 months".
+  const monthMatch =
+    /(?:deposit)\s*(?::|=)?\s*(\d+)\s*(?:month|months|mo|mos)\b/i.exec(text) ||
+    /(\d+)\s*(?:month|months|mo|mos)(?:\s*of)?\s*deposit/i.exec(text) ||
+    /(\d+)\s*-?\s*(?:month|months|mo|mos)\s*deposit/i.exec(text);
   if (monthMatch?.[1] && rentPriceCents) {
     const months = parseInt(monthMatch[1], 10);
     if (!isNaN(months) && months > 0 && months <= 12) {
       return rentPriceCents * months;
+    }
+  }
+
+  // Check for "$500 deposit" or "deposit: $500"
+  const dollarMatch = /(?:deposit|security\s*deposit)\s*(?::|is|=|of)?\s*\$\s*([\d,]+)/i.exec(text);
+  if (dollarMatch?.[1]) {
+    const num = parseFloat(normalizePriceString(dollarMatch[1]));
+    if (!isNaN(num) && num > 0) {
+      return usdToUsdCents(num);
     }
   }
 

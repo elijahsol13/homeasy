@@ -17,7 +17,7 @@ import {
   extractWater,
 } from './extractor';
 import { escapeHtml, extractCleaning, extractRestrictions } from '../../services/notifier';
-import { findLandmarksInText } from '../../config/landmarks';
+import { findLandmarksInText, inferLocationFromLandmark } from '../../config/landmarks';
 import {
   extractCoordinatesFromMapsUrl,
   findCanonicalLocation,
@@ -289,6 +289,18 @@ export function normalizeRawToClean(
       warnings.push(`commerce_location_unresolved:${raw.commerce_location.trim().slice(0, 40)}`);
     }
   }
+
+  // If the location is still empty or just the generic city name, try to map a
+  // known physical landmark mention to its canonical sangkat.
+  const genericCityName = /^(siem\s*reap|phnom\s*penh|sihanoukville|kampot)$/i;
+  if ((!location || genericCityName.test(location.trim())) && city === 'siem_reap') {
+    const inferred = inferLocationFromLandmark(combinedText, city);
+    if (inferred) {
+      location = inferred.canonicalName;
+      warnings.push(`location_inferred_from_landmark:${inferred.sourceLandmark}`);
+    }
+  }
+
   if (!location) warnings.push('location_missing');
 
   const photos = cleanPhotoUrls(raw.photos);
@@ -326,7 +338,7 @@ export function normalizeRawToClean(
     }
   }
   if (deposit === null) {
-    deposit = extractDeposit(combinedText);
+    deposit = extractDeposit(combinedText, priceCents);
   }
 
   let minLease: number | null = null;

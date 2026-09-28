@@ -2,6 +2,7 @@ import { createContainer } from '../src/container';
 import { runMigrations } from '../src/database/migrate';
 import type { AppContainer } from '../src/container';
 import { findCanonicalLocation } from '../src/config/locations';
+import { inferLocationFromLandmark } from '../src/config/landmarks';
 import { isNonRealEstateSpam } from '../src/modules/parser/spam-detector';
 import { normalizeRawToClean } from '../src/modules/parser/ingestor';
 import { RawListingSchema } from '../src/modules/parser/schemas';
@@ -9,6 +10,9 @@ import { RawListingSchema } from '../src/modules/parser/schemas';
 import houseFixtures from './fixtures/khmer24_raw_fixture_house.json';
 import apartmentFixtures from './fixtures/khmer24_raw_fixture_apartment.json';
 import roomFixtures from './fixtures/khmer24_raw_fixture_room.json';
+import edgeFixtures from './fixtures/khmer24_raw_fixture_edge.json';
+import houseSaleFixtures from './fixtures/khmer24_raw_fixture_house_sale.json';
+import landSaleFixtures from './fixtures/khmer24_raw_fixture_land_sale.json';
 
 describe('Khmer24 golden fixtures', () => {
   let container: AppContainer;
@@ -108,5 +112,88 @@ describe('Khmer24 golden fixtures', () => {
     expect(clean).not.toBeNull();
     expect(clean!.category).toBe('room');
     expect(clean!.price).toBe(10000);
+  });
+
+  describe('edge cases', () => {
+    test('land sale is rejected', async () => {
+      const land = edgeFixtures.find((f) => f.title.includes('Land for sale'));
+      expect(land).toBeDefined();
+
+      const result = await container.ingestionService.ingestRawListing(RawListingSchema.parse(land));
+      expect(result.status).toBe('error');
+      expect(result.error).toMatch(/siem reap|mvp|non-real-estate/i);
+    });
+
+    test('real Phnom Penh land sale is rejected even if LLM says true', async () => {
+      const land = landSaleFixtures.find((f) => f.location.includes('Phnom Penh') || f.location.includes('Battambang'));
+      expect(land).toBeDefined();
+
+      const result = await container.ingestionService.ingestRawListing(
+        RawListingSchema.parse({ ...land, is_real_estate: true }),
+      );
+      expect(result.status).toBe('error');
+      expect(result.error).toMatch(/siem reap|mvp/i);
+    });
+
+    test('house sale is rejected', async () => {
+      const sale = edgeFixtures.find((f) => f.title.includes('House for sale'));
+      expect(sale).toBeDefined();
+
+      const result = await container.ingestionService.ingestRawListing(RawListingSchema.parse(sale));
+      expect(result.status).toBe('error');
+      expect(result.error).toMatch(/siem reap|mvp|non-real-estate/i);
+    });
+
+    test('real Phnom Penh house sale is rejected by city filter', async () => {
+      const sale = houseSaleFixtures[0];
+      expect(sale).toBeDefined();
+
+      const result = await container.ingestionService.ingestRawListing(
+        RawListingSchema.parse({ ...sale, is_real_estate: true }),
+      );
+      expect(result.status).toBe('error');
+      expect(result.error).toMatch(/siem reap|mvp/i);
+    });
+
+    test('daily/nightly guesthouse room is rejected by spam detector', async () => {
+      const daily = edgeFixtures.find((f) => f.title.includes('per night'));
+      expect(daily).toBeDefined();
+
+      const result = await container.ingestionService.ingestRawListing(RawListingSchema.parse(daily));
+      expect(result.status).toBe('error');
+      expect(result.error).toMatch(/spam|daily|night/i);
+    });
+
+    test('commercial villa is not approved active', async () => {
+      const commercial = edgeFixtures.find((f) => f.title.includes('Commercial villa'));
+      expect(commercial).toBeDefined();
+
+      const result = await container.ingestionService.ingestRawListing(RawListingSchema.parse(commercial));
+      expect(result.status).toBe('inserted');
+
+      const saved = container.propertiesRepo.getPropertyById(result.propertyId!);
+      expect(saved?.is_active).toBe(0);
+      expect(saved?.review_status).not.toBe('approved');
+    });
+
+    test('deposit_months from text is converted using known rent', () => {
+      const apt = edgeFixtures.find((f) => f.title.includes('2-month deposit'));
+      expect(apt).toBeDefined();
+
+      const clean = normalizeRawToClean(RawListingSchema.parse(apt));
+      expect(clean).not.toBeNull();
+      expect(clean!.deposit).toBe(80000); // $400 x 2 months in cents
+    });
+
+    test('generic Siem Reap location is inferred from nearby landmark', () => {
+      const room = edgeFixtures.find((f) => f.title.includes('Room for rent near Pub Street'));
+      expect(room).toBeDefined();
+
+      expect(inferLocationFromLandmark(room!.description, 'siem_reap')?.canonicalName).toBe('Sla Kram');
+
+      const clean = normalizeRawToClean(RawListingSchema.parse(room));
+      expect(clean).not.toBeNull();
+      expect(clean!.location).toBe('Sla Kram');
+    });
   });
 });
