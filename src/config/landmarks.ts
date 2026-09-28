@@ -9,6 +9,25 @@ export interface LandmarkEntry {
   gmapsLink: string;
 }
 
+/**
+ * Rough sangkat mapping for the most commonly mentioned Siem Reap landmarks.
+ * Used as a deterministic fallback when a listing names a well-known physical
+ * place but does not state its exact sangkat.
+ */
+export const LANDMARK_TO_SANGKAT: Record<string, string> = {
+  pub_street: 'Sla Kram',
+  road60: 'Svay Dangkum',
+  apsara_road: 'Sla Kram',
+  phsar_leu: 'Sla Kram',
+  wat_bo: 'Sla Kram',
+  wat_damnak: 'Sla Kram',
+  angkor_market: 'Sla Kram',
+  heritage_walk: 'Sla Kram',
+  makro_sr: 'Svay Dangkum',
+  nr6: 'Kouk Chak',
+  ring_road: 'Chreav',
+};
+
 export const CAMBODIA_LANDMARKS: LandmarkEntry[] = [
   // ─── Siem Reap Landmarks ───────────────────────────────────────────────────
   {
@@ -331,6 +350,25 @@ export function findLandmarksInText(text: string, city: CityKey): LandmarkEntry[
   }
 
   return matched;
+}
+
+/**
+ * Infers a canonical sangkat from a known landmark mention when the listing
+ * does not state an exact district. Returns null when no mapped landmark is found.
+ */
+export function inferLocationFromLandmark(
+  text: string,
+  city: CityKey,
+): { canonicalName: string; city: CityKey; sourceLandmark: string } | null {
+  if (city !== 'siem_reap' || !text || !text.trim()) return null;
+  const matched = findLandmarksInText(text, city);
+  for (const entry of matched) {
+    const sangkat = LANDMARK_TO_SANGKAT[entry.id];
+    if (sangkat) {
+      return { canonicalName: sangkat, city, sourceLandmark: entry.canonicalName };
+    }
+  }
+  return null;
 }
 
 /**
