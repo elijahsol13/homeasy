@@ -425,6 +425,31 @@ export function extractWater(text: string): string | null {
   return null;
 }
 
+const AMENITY_PATTERNS: Array<[RegExp, string]> = [
+  [/\b(?:swimming\s+pool|private\s+pool|pool)\b/i, 'Swimming Pool'],
+  [/\b(?:gym|fitness)\b/i, 'Gym'],
+  [/\b(?:wifi|wi-fi|internet)\b/i, 'WiFi'],
+  [/\b(?:air\s+conditioner|ac|aircon|air-conditioning|air\s+conditioning)\b/i, 'AC'],
+  [/\b(?:washing\s+machine|washer)\b/i, 'Washing Machine'],
+  [/\b(?:fridge|refrigerator)\b/i, 'Fridge'],
+  [/\b(?:generator)\b/i, 'Generator'],
+  [/\b(?:parking|garage|motor\s+parking|car\s+park)\b/i, 'Parking'],
+  [/\b(?:balcony|balconies)\b/i, 'Balcony'],
+  [/\b(?:fully\s+furnished|furnished)\b/i, 'Furnished'],
+  [/\b(?:steam|sauna)\b/i, 'Sauna/Steam'],
+  [/\b(?:cable\s+tv|tv)\b/i, 'Cable TV'],
+  [/\b(?:mosquito\s+screen|mosquito\s+net)\b/i, 'Mosquito Screens'],
+  [/\b(?:kitchen\s+hood|stove|cooker)\b/i, 'Kitchen Appliances'],
+];
+
+export function extractAmenities(text: string): string[] {
+  const found = new Set<string>();
+  for (const [re, name] of AMENITY_PATTERNS) {
+    if (re.test(text)) found.add(name);
+  }
+  return Array.from(found);
+}
+
 export function extractPropertyType(text: string, category?: PropertyCategory | string | null): string | null {
   // 1. Flat House (Shophouse / ផ្ទះល្វែង)
   if (
@@ -517,7 +542,6 @@ export const GEMINI_MODEL_CASCADE = [
   'gemini-flash-lite-latest',
   'gemini-flash-latest',
   'gemini-pro-latest',
-  'gemma-4-26b-a4b-it'
 ] as const;
 
 interface CircuitBreakerState {

@@ -625,7 +625,17 @@ export function toHighResImageUrl(url: string): string {
 
 // ─── Main Ingestion Runner ────────────────────────────────────────────────────
 
-export async function runKhmer24Scraper(containerInstance?: AppContainer): Promise<{
+export interface RunKhmer24Options {
+  limitListings?: number;
+  noEnrich?: boolean;
+  targetIndex?: number;
+  dumpRaw?: string;
+}
+
+export async function runKhmer24Scraper(
+  containerInstance?: AppContainer,
+  options: RunKhmer24Options = {},
+): Promise<{
   totalScraped: number;
   inserted: number;
   duplicates: number;
@@ -638,11 +648,21 @@ export async function runKhmer24Scraper(containerInstance?: AppContainer): Promi
   const container = containerInstance ?? createContainer();
   runMigrations(container.db);
 
+  const targets = options.targetIndex !== undefined
+    ? KHMER24_TARGETS.filter((_, i) => i === options.targetIndex)
+    : KHMER24_TARGETS;
+
+  if (targets.length === 0) {
+    console.error(`💥 No Khmer24 target with index ${options.targetIndex}`);
+    return { totalScraped: 0, inserted: 0, duplicates: 0, errors: 1 };
+  }
+
   let totalScraped = 0;
   let totalInserted = 0;
   let totalDuplicates = 0;
   let totalErrors = 0;
   const browserHolder: { camoufox: CamoufoxBrowser | null } = { camoufox: null };
+  const maxListings = options.limitListings ?? 10;
 
   try {
     const getFallbackBrowser = async (): Promise<Browser> => {
@@ -652,11 +672,18 @@ export async function runKhmer24Scraper(containerInstance?: AppContainer): Promi
       return browserHolder.camoufox.browser;
     };
 
-    for (const target of KHMER24_TARGETS) {
+    for (const target of targets) {
       try {
-        const rawListings = await scrapeTargetHttpFirst(target, getFallbackBrowser, 10);
+        const rawListings = await scrapeTargetHttpFirst(target, getFallbackBrowser, maxListings);
         totalScraped += rawListings.length;
-        const listings = await enrichListingsWithLLM(rawListings);
+
+        if (options.dumpRaw) {
+          fs.writeFileSync(options.dumpRaw, JSON.stringify(rawListings, null, 2), 'utf8');
+          console.log(`  💾 Dumped ${rawListings.length} raw listings to ${options.dumpRaw}`);
+          continue;
+        }
+
+        const listings = options.noEnrich ? rawListings : await enrichListingsWithLLM(rawListings);
 
         for (const listing of listings) {
           try {
@@ -711,7 +738,27 @@ export async function runKhmer24Scraper(containerInstance?: AppContainer): Promi
 
 // ─── CLI entry point ──────────────────────────────────────────────────────────
 if (require.main === module) {
-  runKhmer24Scraper().then(() => process.exit(0)).catch((err) => {
+  const args = process.argv.slice(2);
+  const options: RunKhmer24Options = {};
+
+  for (const arg of args) {
+    if (arg.startsWith('--limit-listings=')) {
+      const n = parseInt(arg.replace('--limit-listings=', ''), 10);
+      if (!isNaN(n) && n > 0) options.limitListings = n;
+    } else if (arg.startsWith('--target=')) {
+      const n = parseInt(arg.replace('--target=', ''), 10);
+      if (!isNaN(n)) options.targetIndex = n;
+    } else if (arg === '--no-enrich') {
+      options.noEnrich = true;
+    } else if (arg.startsWith('--dump-raw=')) {
+      options.dumpRaw = arg.replace('--dump-raw=', '');
+    } else if (arg === '--help' || arg === '-h') {
+      console.log('Usage: ts-node src/modules/parser/khmer24.scraper.ts [--target=N] [--limit-listings=N] [--no-enrich] [--dump-raw=path.json]');
+      process.exit(0);
+    }
+  }
+
+  runKhmer24Scraper(undefined, options).then(() => process.exit(0)).catch((err) => {
     console.error('💥 Fatal:', err);
     process.exit(1);
   });

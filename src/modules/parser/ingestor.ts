@@ -2,6 +2,7 @@ import crypto from 'crypto';
 import { BulkImportSchema, RawListingSchema, type BulkIngestResult, type CleanProperty, type IngestResult } from './schemas';
 import { cleanPhotoUrls, extractDirectContacts, normalizeText } from './normalizer';
 import {
+  extractAmenities,
   extractBathrooms,
   extractBedrooms,
   extractCategory,
@@ -216,6 +217,18 @@ export function normalizeRawToClean(
     detectedCity ??
     (raw.city === 'phnom_penh' ? 'phnom_penh' : 'siem_reap');
 
+  // Cross-check the explicit location string against the canonical catalog: a listing
+  // can be cross-posted to the wrong city's browse page (e.g. Phnom Penh ad on
+  // the Siem Reap page). When the canonical city from the address disagrees with
+  // the scraped city, trust the address.
+  if (raw.location) {
+    const canonicalFromLocation = findCanonicalLocation(raw.location);
+    if (canonicalFromLocation && canonicalFromLocation.city !== city) {
+      city = canonicalFromLocation.city;
+      warnings.push(`city_corrected_from_location:${canonicalFromLocation.city}`);
+    }
+  }
+
   const locationSearch = [raw.location, raw.city, raw.title, raw.description]
     .filter(Boolean)
     .join(' ');
@@ -401,7 +414,7 @@ export function normalizeRawToClean(
     latitude,
     longitude,
     property_type: raw.property_type ?? null,
-    amenities: raw.amenities ?? [],
+    amenities: Array.from(new Set([...(raw.amenities ?? []), ...extractAmenities(combinedText)])),
     raw_text: raw.raw_text ?? rawText,
     parse_warnings: cleanReviewStatus === 'pending' ? [...warnings, 'review_pending'] : warnings,
     review_status: cleanReviewStatus,
