@@ -13,9 +13,11 @@ export interface PropertyDTO {
   bathrooms: number | null;
   depositUsd: number | null;
   minLeaseMonths: number | null;
-  hasPool: boolean;
+  hasPool: boolean | null;
   location: string;
+  locationKey: string | null;
   city: string;
+  coordinatePrecision: 'exact' | 'district' | 'city';
   mapsUrl: string | null;
   coordinates: { lat: number; lng: number } | null;
   photos: string[];
@@ -46,6 +48,15 @@ export interface PropertyDTO {
   isFavorite?: boolean;
 }
 
+export interface MapFocusRequest {
+  propertyId: number;
+  city: CityKey;
+  locationKey: string | null;
+  location: string;
+  coordinates: { lat: number; lng: number } | null;
+  coordinatePrecision: 'exact' | 'district' | 'city';
+}
+
 export interface MapMarkerDTO {
   id: number;
   title: string;
@@ -54,8 +65,10 @@ export interface MapMarkerDTO {
   propertyType: string;
   bedrooms: number | null;
   location: string;
+  locationKey: string | null;
   city: string;
-  hasPool: boolean;
+  coordinatePrecision: 'exact' | 'district' | 'city';
+  hasPool: boolean | null;
   thumbnail: string | null;
   coordinates: { lat: number; lng: number } | null;
   mapsUrl: string | null;

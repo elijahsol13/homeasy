@@ -31,6 +31,10 @@ const EnvSchema = z.object({
   API_PUBLIC_URL: z.string().optional(),
   WEBAPP_URL: z.string().optional(),
   FB_PROXY: z.string().optional(),
+  FB_PROXY_ENABLED: z
+    .enum(['true', 'false'])
+    .default('false')
+    .transform((value) => value === 'true'),
   POSTHOG_API_KEY: z.string().optional(),
   POSTHOG_HOST: z.string().default('https://eu.i.posthog.com'),
   TELEGRAM_WEBHOOK_URL: z.string().optional(),

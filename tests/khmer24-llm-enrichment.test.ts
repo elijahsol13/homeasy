@@ -43,6 +43,7 @@ function makeLlmResult(overrides: Partial<LLMExtractedListing> = {}): LLMExtract
     bathrooms: 1,
     min_lease: null,
     has_pool: false,
+    pet_friendly: null,
     location: 'Sala Kamreuk',
     phone_numbers: [],
     maps_url: null,

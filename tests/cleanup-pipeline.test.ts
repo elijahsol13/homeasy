@@ -147,13 +147,13 @@ describe('Data Cleanup, Photo Sanitizer & Intelligent Parsing Pipeline', () => {
 
       const rawListing = {
         title: 'Penthouse Apartment Without Pictures',
-        description: 'Luxury penthouse available now in Daun Penh.',
+        description: 'Penthouse apartment available now in Sala Kamreuk.',
         price: 800,
         currency: 'USD',
         type: 'rent' as const,
         category: 'apartment' as const,
-        location: 'Daun Penh',
-        city: 'phnom_penh' as const,
+        location: 'Sala Kamreuk',
+        city: 'siem_reap' as const,
         photos: [], // 0 photos
         source_url: 'https://facebook.com/groups/post-nophoto-1',
         url: 'https://facebook.com/groups/post-nophoto-1',

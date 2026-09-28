@@ -16,7 +16,7 @@ export const RawListingSchema = z.object({
   bathrooms: z.union([z.string(), z.number()]).optional(),
   deposit: z.union([z.string(), z.number()]).optional(),
   min_lease: z.union([z.string(), z.number()]).optional(),
-  has_pool: z.union([z.boolean(), z.number(), z.string()]).optional(),
+  has_pool: z.union([z.boolean(), z.number(), z.string(), z.null()]).optional(),
   location: z.string().optional(),
   city: z.string().optional(),
   maps_url: z.string().optional(),
@@ -34,7 +34,7 @@ export const RawListingSchema = z.object({
   water: z.string().optional(),
   cleaning: z.string().optional(),
   restrictions: z.array(z.string()).optional(),
-  pet_friendly: z.boolean().optional(),
+  pet_friendly: z.union([z.boolean(), z.number(), z.string(), z.null()]).optional(),
   amenities: z.array(z.string()).optional(),
   marketing_landmarks: z.array(z.string()).optional(),
   /** Original post text before AI normalization — preserved for re-parsing. */
@@ -44,6 +44,12 @@ export const RawListingSchema = z.object({
   price_hint_currency: z.string().optional(),
   /** Structured location text from platform metadata (e.g. FB commerce attachment). */
   commerce_location: z.string().optional(),
+  review_status: z.enum(['approved', 'pending']).optional(),
+  review_reason: z.string().optional(),
+  /** LLM admission decision: true=residential real estate, false=not real estate, missing=uncertain. */
+  is_real_estate: z.boolean().optional(),
+  /** Deposit expressed as a number of monthly rent payments, kept separate from amount. */
+  deposit_months: z.union([z.string(), z.number()]).optional(),
 });
 
 export type RawListing = z.infer<typeof RawListingSchema>;
@@ -65,7 +71,7 @@ export const CleanPropertySchema = z.object({
   bathrooms: z.number().nullable(),
   deposit: z.number().nullable().default(null),
   min_lease: z.number().nullable().default(null),
-  has_pool: z.boolean().default(false),
+  has_pool: z.boolean().nullable().default(null),
   location: z.string(),
   city: z.enum(['siem_reap', 'phnom_penh']),
   photos: z.array(z.string()),
@@ -84,7 +90,7 @@ export const CleanPropertySchema = z.object({
   water: z.string().nullable().default(null),
   cleaning: z.string().nullable().default(null),
   restrictions: z.array(z.string()).default([]),
-  pet_friendly: z.boolean().default(false),
+  pet_friendly: z.boolean().nullable().default(null),
   amenities: z.array(z.string()).default([]),
   primary_landmark: z.string().nullable().default(null),
   landmarks: z.array(z.string()).default([]),
@@ -93,6 +99,8 @@ export const CleanPropertySchema = z.object({
   longitude: z.number().nullable().default(null),
   raw_text: z.string().nullable().default(null),
   parse_warnings: z.array(z.string()).default([]),
+  review_status: z.enum(['approved', 'pending']).default('approved'),
+  review_reason: z.string().nullable().default(null),
 });
 
 export type CleanProperty = z.infer<typeof CleanPropertySchema>;

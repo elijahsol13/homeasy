@@ -4,9 +4,9 @@
  * Architecture:
  *  - STRICT LAW: Automated headless password entry or console credential passing to Facebook
  *    is prohibited (triggers instant checkpoints/blocks). Authentication must be performed
- *    visually by a human (via /auth_fb remote browser stream or visual fb:login).
- *  - Must always route through resident proxy (FB_PROXY) to safeguard datacenter IP reputation.
- *  - Uses Playwright with Stealth plugin and saved session cookies (`./data/fb_session.json`).
+ *    visually by a human with the local headed fb:login command.
+ *  - Connects directly by default; proxy use is explicit opt-in.
+ *  - Uses pinned Camoufox with saved session cookies (`./data/fb_session.json`).
  *  - Navigates to targeted Facebook Groups (e.g., Siem Reap real estate & rental groups).
  *  - Intercepts internal GraphQL API responses (`/api/graphql/`) via `page.on('response')`.
  *  - Recursively extracts full un-truncated post text, direct photo URLs, and timestamps from Relay Comet nodes.
@@ -17,14 +17,12 @@
 
 import path from 'path';
 import fs from 'fs';
-import { chromium } from 'playwright-extra';
-import stealthPlugin from 'puppeteer-extra-plugin-stealth';
-import type { Browser, BrowserContext, Page } from 'playwright';
+import type { BrowserContext, Page } from 'playwright';
+import { launchCamoufox, type CamoufoxBrowser } from './camoufox-server';
 import type { RawListing } from './schemas';
 import { runMigrations } from '../../database/migrate';
 import type { AppContainer } from '../../container';
 import { createContainer } from '../../container';
-import { InlineKeyboard } from 'grammy';
 import { env } from '../../config/env';
 import type { Property } from '../../database/repositories/properties.repo';
 import {
@@ -35,9 +33,17 @@ import {
   type ParsedProxyResult,
 } from './proxy';
 import { attachTrafficGuard } from './traffic-guard';
+import {
+  FB_SESSION_PATH,
+  acquireFacebookRuntimeLock,
+  blockFacebookAutomation,
+  detectFacebookChallenge,
+  getAuthenticatedFacebookAccountId,
+  loadFacebookSafetyState,
+} from './fb-runtime';
 import { FB_GROUPS, type CityKey, type PropertyCategory } from '../../config/settings';
-import { loadGroupState, saveGroupState, FBGroupState } from './fb-state';
-import { fetchPostTextAnonymous, parseFormattedPrice, extractCommerceAttachment, type FetchedFbPost } from './fb-worker';
+import { loadGroupState, saveGroupState, type FBGroupState } from './fb-state';
+import { parseFormattedPrice, extractCommerceAttachment, type FetchedFbPost } from './fb-worker';
 import {
   extractBedrooms,
   extractBathrooms,
@@ -60,11 +66,11 @@ import { cleanPhotoUrls, extractDirectContacts, formatDomesticPhone } from './no
 import { isNonRealEstateSpam } from './spam-detector';
 import { findCanonicalLocation } from '../../config/locations';
 
-// Apply stealth plugin
-chromium.use(stealthPlugin());
-
-export const FB_SESSION_PATH = path.join(process.cwd(), 'data', 'fb_session.json');
+export { FB_SESSION_PATH } from './fb-runtime';
 export const BROWSER_CACHE_DIR = path.join(process.cwd(), 'data', 'browser_cache');
+// ^ legacy constant retained for external imports; Playwright persistent-context
+// disk caching is gone — Playwright cannot serve a persistent context over the
+// Camoufox websocket endpoint, so each run starts with a cold HTTP cache.
 export const SCRAPER_STATE_PATH = path.join(process.cwd(), 'data', 'scraper_state.json');
 
 export interface ScraperState {
@@ -136,12 +142,6 @@ export interface TranslationRetryItem {
 export const MAX_TRANSLATION_RETRY_QUEUE_SIZE = 20;
 export const translationRetryQueue: TranslationRetryItem[] = [];
 
-export class SessionDegradedError extends Error {
-  constructor() {
-    super('FB Session Degraded or Logged Out');
-  }
-}
-
 export class FacebookSessionExpiredError extends Error {
   constructor(message = 'Facebook session expired or blocked') {
     super(message);
@@ -166,12 +166,14 @@ export interface FBGroupTarget {
   defaultCategory?: PropertyCategory;
 }
 
-export const FB_GROUP_TARGETS: FBGroupTarget[] = FB_GROUPS.map((g) => ({
-  name: g.name,
-  url: g.url,
-  city: g.city,
-  defaultCategory: g.defaultCategory,
-}));
+export const FB_GROUP_TARGETS: FBGroupTarget[] = FB_GROUPS
+  .filter((group) => group.city === 'siem_reap')
+  .map((group) => ({
+    name: group.name,
+    url: group.url,
+    city: group.city,
+    defaultCategory: group.defaultCategory,
+  }));
 
 // ─── Helpers & Anti-Bot Human Simulation ──────────────────────────────────────
 
@@ -189,19 +191,9 @@ export function shuffleArray<T>(items: readonly T[]): T[] {
   return arr;
 }
 
-const VIEWPORT_PRESETS = [
-  { width: 1280, height: 850 },
-  { width: 1366, height: 768 },
-  { width: 1440, height: 900 },
-  { width: 1536, height: 864 },
-];
-
-const USER_AGENTS = [
-  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36',
-  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36',
-  'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36',
-  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Safari/537.36',
-];
+// NOTE: no UA/viewport randomization here on purpose — Camoufox owns the
+// fingerprint (pinned preset in data/fb_device.json); client-side overrides
+// would desync navigator.* from the spoofed WebGL/fonts/screen values.
 
 async function simulateHumanMouseMove(page: Page): Promise<void> {
   try {
@@ -283,6 +275,10 @@ export async function parseFacebookPostText(
 
   // 1. Try LLM extraction (use precomputed from batch or call single LLM)
   const llm = precomputedLlm !== undefined ? precomputedLlm : await extractListingWithLLM(text);
+  const reviewStatus: 'approved' | 'pending' = llm?.is_real_estate === true ? 'approved' : 'pending';
+  const reviewReason = reviewStatus === 'pending'
+    ? llm?.admission_reason || 'LLM admission decision missing or uncertain'
+    : undefined;
 
   // Ingestion Gateway Filter:
   // If LLM determines this is NOT real estate (e.g. second-hand items, vehicles) OR category is 'land', silently drop/ignore!
@@ -342,8 +338,10 @@ export async function parseFacebookPostText(
   const minLease = llm?.min_lease ?? extractMinLease(text) ?? undefined;
   const depositCents = extractDeposit(text, priceResult?.amountCents);
   const depositInDollars =
-    llm?.deposit != null ? llm.deposit  // LLM takes priority
-    : depositCents ? depositCents / 100 : undefined;
+    llm?.deposit_amount != null ? llm.deposit_amount
+    : llm?.deposit_months != null && priceInDollars != null
+      ? llm.deposit_months * priceInDollars
+      : depositCents ? depositCents / 100 : undefined;
 
   // The Facebook group is single-city and assigned at scrape time, so we default
   // to trusting it. The regex heuristic fallback (extractLocation) stays
@@ -371,6 +369,7 @@ export async function parseFacebookPostText(
     }
   }
   const type = extractType(text) ?? 'rent';
+  if (type !== 'rent' || city !== 'siem_reap') return null;
   const mapsUrl = llm?.maps_url || extractMapsUrl(text) || undefined;
   const directContacts = extractDirectContacts(text);
   const regexPhone = directContacts.phone;
@@ -439,6 +438,8 @@ export async function parseFacebookPostText(
     price_hint: commerce ? parseFormattedPrice(commerce.priceText)?.amount : undefined,
     price_hint_currency: commerce ? parseFormattedPrice(commerce.priceText)?.currency : undefined,
     commerce_location: commerce?.locationText || undefined,
+    review_status: reviewStatus,
+    review_reason: reviewReason,
   };
 }
 
@@ -870,47 +871,83 @@ function updateAdaptiveInterval(state: FBGroupState, newPostsCount: number) {
     }
 }
 
-async function discoverNewPosts(page: any, target: FBGroupTarget, state: FBGroupState): Promise<string[]> {
-    await attachTrafficGuard(page);
-    const extractedIds: string[] = [];
-    
-    try {
-        await page.goto(target.url, { waitUntil: 'domcontentloaded', timeout: 30000 });
-        const pageUrl = page.url();
-        if (pageUrl.includes('/login') || (await page.content()).includes('You must log in to continue')) {
-            throw new SessionDegradedError();
-        }
-        
-        await page.evaluate(() => window.scrollBy(0, 500));
-        await page.waitForTimeout(1500);
-        
-        const links = await page.evaluate(() => {
-            const anchors = Array.from(document.querySelectorAll('a[href*="/posts/"]'));
-            return anchors.map((a: any) => a.href);
-        });
+/**
+ * Opens a group feed in the authenticated Camoufox context, intercepts
+ * Facebook's OWN GraphQL responses while scrolling, and returns fully parsed
+ * posts (text/photos/rawDate/commerce). Passive capture only — the script
+ * never issues GraphQL requests itself; scrolling just triggers Facebook's
+ * normal pagination.
+ */
+async function collectGroupFeedPosts(
+    context: BrowserContext,
+    target: FBGroupTarget,
+    maxScrolls: number,
+): Promise<ParsedFbGraphQLPost[]> {
+    const page = await context.newPage();
+    const interceptedPosts: ParsedFbGraphQLPost[] = [];
+    const seenPostIds = new Set<string>();
 
-        for (const link of links) {
-            const match = link.match(/\/posts\/(\d+)/);
-            if (match) extractedIds.push(match[1]);
+    page.on('response', async (resp) => {
+        const url = resp.url();
+        if (!url.includes('/api/graphql')) return;
+        try {
+            const bodyText = await resp.text();
+            const lines = bodyText.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+            for (const line of lines) {
+                try {
+                    const cleanLine = line.replace(/^for\s*\(\s*;\s*\);/, '');
+                    const json = JSON.parse(cleanLine);
+                    const posts = extractPostsFromFbGraphQL(json, target.url);
+                    for (const post of posts) {
+                        const key = post.id || post.postUrl || post.text.slice(0, 40);
+                        if (seenPostIds.has(key)) continue;
+                        seenPostIds.add(key);
+                        interceptedPosts.push(post);
+                    }
+                } catch {
+                    // non-JSON line inside a GraphQL batch — skip
+                }
+            }
+        } catch {
+            // body unavailable (aborted/navigated away) — skip
         }
-    } catch (e) {
-        throw e;
-    }
-
-    const uniqueExtracted = Array.from(new Set(extractedIds));
-    const newIds = uniqueExtracted.filter(id => !state.recentPostIds.includes(id));
-    
-    newIds.forEach(id => {
-        const groupPath = target.url.split('groups/')[1].split('?')[0].replace(/\/$/, '');
-        const url = `https://www.facebook.com/groups/${groupPath}/posts/${id}/`;
-        if (!state.pendingQueue.includes(url)) state.pendingQueue.push(url);
     });
-    
-    updateRecentIds(state, uniqueExtracted);
-    updateAdaptiveInterval(state, newIds.length);
-    state.lastCheckedAt = Date.now();
-    
-    return newIds;
+
+    try {
+        await attachTrafficGuard(page);
+        await page.goto(target.url, { waitUntil: 'domcontentloaded', timeout: 45000 });
+        await sleepRandom(3000, 5000);
+
+        const currentUrl = page.url();
+        const challengeReason = await detectFacebookChallenge(page);
+        if (challengeReason) {
+            throw new FacebookSessionExpiredError(`${challengeReason}: ${currentUrl}`);
+        }
+
+        const closeButtons = page.locator(
+            'div[role="dialog"] div[role="button"][aria-label="Close"], [aria-label="Decline optional cookies"], [data-testid="cookie-policy-manage-dialog-accept-button"]',
+        );
+        if ((await closeButtons.count()) > 0) {
+            await closeButtons.first().click().catch(() => {});
+            await sleepRandom(1000, 2000);
+        }
+
+        for (let scroll = 0; scroll < maxScrolls; scroll++) {
+            await simulateHumanMouseMove(page);
+            await simulateHumanScroll(page);
+            await sleepRandom(2500, 4500);
+
+            if (Math.random() < 0.1) {
+                await sleepRandom(5000, 8000);
+            }
+        }
+
+        // Let in-flight response handlers finish reading the last bodies.
+        await page.waitForTimeout(1200);
+        return interceptedPosts;
+    } finally {
+        await page.close().catch(() => {});
+    }
 }
 
 export interface ScrapeGroupResult {
@@ -929,77 +966,73 @@ export async function scrapeFacebookGroup(
 ): Promise<ScrapeGroupResult> {
     const groupId = target.url.match(/groups\/([^/?]+)/)?.[1] || "unknown";
     const state = loadGroupState(groupId);
-    
+
     console.log(`\n🔎 [Adaptive FB] ${target.name}`);
-    console.log(`   Pending in queue: ${state.pendingQueue.length}`);
-    
+
     const timeSinceLast = Date.now() - state.lastCheckedAt;
-    
-    if (timeSinceLast >= state.currentIntervalMs) {
-        console.log(`   Time to run Discovery (Interval: ${Math.round(state.currentIntervalMs/60000)}m)...`);
-        if (!context) {
-           console.log(`   No context available, skipping discovery.`);
-        } else {
-            const page = await context.newPage();
-            try {
-                const newIds = await discoverNewPosts(page, target, state);
-                console.log(`   Discovery found ${newIds.length} new posts.`);
-                saveGroupState(groupId, state);
-            } catch (e: any) {
-                if (e instanceof SessionDegradedError) {
-                    console.warn(`   ⚠️  Session Degraded! Pausing Discovery. Worker will continue processing queue.`);
-                    container.alertService.critical('Facebook Checkpoint: Session Expired. Discovery paused until re-auth.');
-                } else {
-                    console.error(`   ❌ Discovery error: ${e.message}`);
-                }
-            } finally {
-                await page.close().catch(() => {});
-            }
-        }
-    } else {
-        console.log(`   Skipping Discovery. Next check in ${Math.round((state.currentIntervalMs - timeSinceLast)/60000)}m.`);
+    if (timeSinceLast < state.currentIntervalMs) {
+        console.log(`   Skipping. Next check in ${Math.round((state.currentIntervalMs - timeSinceLast)/60000)}m.`);
+        return { listings: [], wireBytes: 0, cachedHits: 0, networkHits: 0 };
     }
+    if (!context) {
+        console.log(`   No context available, skipping.`);
+        return { listings: [], wireBytes: 0, cachedHits: 0, networkHits: 0 };
+    }
+
+    // Feed interception replaces the old DOM-link discovery + anonymous
+    // permalink fetch (fetchPostTextAnonymous), which Facebook login-walls.
+    // One scrolled page load yields complete posts straight from GraphQL.
+    const intercepted = await collectGroupFeedPosts(context, target, maxScrolls);
+    const fresh = intercepted.filter(
+        (p) => !state.recentPostIds.includes(p.id ?? p.postUrl ?? ''),
+    );
+    const batch = fresh.slice(0, maxPosts);
+    console.log(
+        `   Feed returned ${intercepted.length} posts (${fresh.length} new, processing ${batch.length}).`,
+    );
+
+    // LLM micro-batching + per-post merge — same as before.
+    const fetched: FetchedFbPost[] = batch.map((p) => ({
+        postUrl: p.postUrl,
+        text: p.text,
+        photos: p.photos ?? [],
+        commerce: p.commerce,
+    }));
+    const llmResults = await batchExtractFbPosts(fetched);
 
     const listings: RawListing[] = [];
-    // Process up to maxPosts from the queue
-    const itemsToProcess = state.pendingQueue.splice(0, maxPosts);
-
-    if (itemsToProcess.length > 0) {
-        console.log(`   Worker processing ${itemsToProcess.length} posts from queue...`);
-
-        // Phase 1: fetch raw post text/photos for the whole batch first (no LLM calls
-        // yet). Still throttled between HTTP fetches to stay gentle on Facebook.
-        const fetched: FetchedFbPost[] = [];
-        for (const url of itemsToProcess) {
-            const post = await fetchPostTextAnonymous(url);
-            if (post) fetched.push(post);
-            await new Promise(r => setTimeout(r, 1500));
+    for (let i = 0; i < batch.length; i++) {
+        const post = batch[i]!;
+        const precomputedLlm = llmResults.has(i) ? llmResults.get(i)! : null;
+        try {
+            const listing = await parseFacebookPostText(
+                post.text,
+                target,
+                post.postUrl,
+                post.photos ?? [],
+                post.rawDate,
+                precomputedLlm,
+                post.commerce,
+            );
+            if (listing) listings.push(listing);
+        } catch (err: unknown) {
+            console.warn(`   ⚠️ Failed to parse post ${post.postUrl}:`, err instanceof Error ? err.message : String(err));
         }
-
-        // Phase 2: send all fetched posts through Gemini in micro-batches, then
-        // finish building each RawListing via the existing single-post merge logic
-        // (parseFacebookPostText), reusing its precomputedLlm hook to skip a second
-        // per-post LLM call.
-        const llmResults = await batchExtractFbPosts(fetched);
-        for (let i = 0; i < fetched.length; i++) {
-            const post = fetched[i]!;
-            const precomputedLlm = llmResults.has(i) ? llmResults.get(i)! : null;
-            try {
-                const listing = await parseFacebookPostText(post.text, target, post.postUrl, post.photos, undefined, precomputedLlm, post.commerce);
-                if (listing) listings.push(listing);
-            } catch (err: unknown) {
-                console.warn(`   ⚠️ Failed to parse post ${post.postUrl}:`, err instanceof Error ? err.message : String(err));
-            }
-        }
-
-        saveGroupState(groupId, state);
     }
+
+    updateRecentIds(
+        state,
+        intercepted.map((p) => p.id ?? p.postUrl ?? '').filter(Boolean),
+    );
+    updateAdaptiveInterval(state, fresh.length);
+    state.lastCheckedAt = Date.now();
+    saveGroupState(groupId, state);
 
     return {
         listings,
         wireBytes: 0,
         cachedHits: 0,
-        networkHits: itemsToProcess.length
+        networkHits: intercepted.length,
     };
 }
 
@@ -1073,119 +1106,61 @@ export async function reparseFacebookViaGroupFeed(
     return { totalChecked: 0, totalUpdated: 0, totalInserted: 0, errors: 1 };
   }
 
-  const isLocal = process.argv.includes('--local');
-  const proxyResult = parseProxyConfig(env.FB_PROXY);
-  const proxyConfig = isLocal ? undefined : proxyResult?.config;
-
-  if (!proxyConfig && !isLocal) {
-    console.warn('⚠️ Running Facebook re-parser WITHOUT FB_PROXY.');
-  } else if (isLocal) {
-    console.log('🏠 Running locally, bypassing FB_PROXY.');
+  const safetyState = loadFacebookSafetyState();
+  if (safetyState.status === 'blocked') {
+    console.error(`⛔ Facebook automation is safety-locked: ${safetyState.reason ?? 'manual login required'}`);
+    return { totalChecked: 0, totalUpdated: 0, totalInserted: 0, errors: 0 };
   }
+
+  const useProxy = process.argv.includes('--proxy') || env.FB_PROXY_ENABLED;
+  const proxyResult = parseProxyConfig(useProxy ? env.FB_PROXY : undefined);
+  if (useProxy && !proxyResult) throw new Error('Facebook proxy was explicitly enabled but FB_PROXY is missing or invalid.');
+  console.log(proxyResult ? `🌐 Proxy enabled: ${proxyResult.masked}` : '🏠 Direct connection enabled.');
 
   let totalChecked = 0;
   let totalUpdated = 0;
   let totalInserted = 0;
   let errors = 0;
 
-  const browser = await chromium.launch({
-    headless: true,
-    proxy: proxyConfig,
-    args: [
-      '--no-sandbox',
-      '--disable-setuid-sandbox',
-      '--disable-dev-shm-usage',
-      '--disable-gpu',
-      '--no-zygote',
-      '--disable-extensions',
-      '--disable-default-apps',
-      '--mute-audio',
-      '--disable-background-networking',
-      '--disable-blink-features=AutomationControlled',
-      '--disable-infobars',
-      '--js-flags=--max-old-space-size=128',
-    ],
-  });
+  const releaseLock = acquireFacebookRuntimeLock('scrape');
+  let camoufox: CamoufoxBrowser;
+  let context: BrowserContext;
+  try {
+    camoufox = await launchCamoufox({
+      headless: true,
+      proxyUrl: useProxy ? env.FB_PROXY : undefined,
+    });
+    try {
+      context = await camoufox.browser.newContext({ storageState: FB_SESSION_PATH });
+    } catch (error) {
+      await camoufox.close().catch(() => {});
+      throw error;
+    }
+  } catch (error) {
+    releaseLock();
+    throw error;
+  }
 
-  const chosenViewport = VIEWPORT_PRESETS[Math.floor(Math.random() * VIEWPORT_PRESETS.length)]!;
-  const chosenUserAgent = USER_AGENTS[Math.floor(Math.random() * USER_AGENTS.length)]!;
-
-  const context = await browser.newContext({
-    storageState: FB_SESSION_PATH,
-    userAgent: chosenUserAgent,
-    viewport: chosenViewport,
-    locale: 'en-US',
-    extraHTTPHeaders: { 'Accept-Language': 'en-US,en;q=0.9' },
-  });
+  const accountId = await getAuthenticatedFacebookAccountId(context);
+  if (!accountId) {
+    await context.close().catch(() => {});
+    await camoufox.close().catch(() => {});
+    releaseLock();
+    blockFacebookAutomation({ reason: 'Facebook session is missing required authenticated cookies' });
+    throw new FacebookSessionExpiredError('Facebook session is missing required authenticated cookies');
+  }
 
   const targets = options.targets ?? shuffleArray(FB_GROUP_TARGETS);
   const maxScrolls = options.maxScrollsPerGroup ?? 14;
+  let sessionSafe = true;
 
   try {
     for (let i = 0; i < targets.length; i++) {
       const target = targets[i]!;
       console.log(`\n📂 [${i + 1}/${targets.length}] Scanning group feed: ${target.name} (${target.url})`);
 
-      const page = await context.newPage();
-      await attachTrafficGuard(page);
-
-      const interceptedPosts: ParsedFbGraphQLPost[] = [];
-      const seenPostIds = new Set<string>();
-
-      page.on('response', async (resp) => {
-        const url = resp.url();
-        if (!url.includes('/api/graphql')) return;
-
-        try {
-          const bodyText = await resp.text();
-          const lines = bodyText.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
-          for (const line of lines) {
-            try {
-              const cleanLine = line.replace(/^for\s*\(\s*;\s*;\s*\);/, '');
-              const json = JSON.parse(cleanLine);
-              const posts = extractPostsFromFbGraphQL(json, target.url);
-              for (const post of posts) {
-                const key = post.id || post.postUrl || post.text.slice(0, 40);
-                if (seenPostIds.has(key)) continue;
-                seenPostIds.add(key);
-                interceptedPosts.push(post);
-              }
-            } catch {
-              // ignore
-            }
-          }
-        } catch {
-          // ignore
-        }
-      });
-
       try {
-        await page.goto(target.url, { waitUntil: 'domcontentloaded', timeout: 45000 });
-        await sleepRandom(3000, 5000);
-
-        const currentUrl = page.url();
-        if (currentUrl.includes('/login') || currentUrl.includes('/checkpoint')) {
-          throw new FacebookSessionExpiredError(`Redirected to login/checkpoint URL: ${currentUrl}`);
-        }
-
-        const closeButtons = page.locator(
-          'div[role="dialog"] div[role="button"][aria-label="Close"], [aria-label="Decline optional cookies"], [data-testid="cookie-policy-manage-dialog-accept-button"]',
-        );
-        if ((await closeButtons.count()) > 0) {
-          await closeButtons.first().click().catch(() => {});
-          await sleepRandom(1000, 2000);
-        }
-
-        for (let scroll = 0; scroll < maxScrolls; scroll++) {
-          await simulateHumanMouseMove(page);
-          await simulateHumanScroll(page);
-          await sleepRandom(2500, 4500);
-
-          if (Math.random() < 0.1) {
-            await sleepRandom(5000, 8000);
-          }
-        }
-
+        const interceptedPosts = await collectGroupFeedPosts(context, target, maxScrolls);
         console.log(`  📊 Intercepted ${interceptedPosts.length} posts from GraphQL during feed scroll.`);
 
         for (const post of interceptedPosts) {
@@ -1213,7 +1188,7 @@ export async function reparseFacebookViaGroupFeed(
               currentDesc.length < 60;
             const isLonger = newText.length > currentDesc.length;
 
-            let existingPhotos: string[] = Array.isArray(existingRow.photos) ? existingRow.photos : [];
+            const existingPhotos: string[] = Array.isArray(existingRow.photos) ? existingRow.photos : [];
             const combinedPhotos = Array.from(new Set([...existingPhotos, ...post.photos]));
             const hasMorePhotos = combinedPhotos.length > existingPhotos.length;
 
@@ -1261,8 +1236,6 @@ export async function reparseFacebookViaGroupFeed(
           throw err;
         }
         console.error(`💥 Error in group [${target.name}]:`, err instanceof Error ? err.message : String(err));
-      } finally {
-        await page.close().catch(() => {});
       }
 
       if (i < targets.length - 1) {
@@ -1271,9 +1244,17 @@ export async function reparseFacebookViaGroupFeed(
         await sleepRandom(pauseMs, pauseMs + 1000);
       }
     }
+  } catch (error) {
+    if (error instanceof FacebookSessionExpiredError) {
+      sessionSafe = false;
+      blockFacebookAutomation({ reason: error.message, detectedUrl: context.pages().at(-1)?.url() });
+    }
+    throw error;
   } finally {
+    if (sessionSafe) await context.storageState({ path: FB_SESSION_PATH }).catch(() => {});
     await context.close().catch(() => {});
-    await browser.close().catch(() => {});
+    await camoufox.close();
+    releaseLock();
   }
 
   console.log('\n═══════════════════════════════════════════════════════════════');
@@ -1309,25 +1290,25 @@ export async function runFacebookScraper(
   const container = containerInstance ?? createContainer();
   runMigrations(container.db);
 
-  // Check if session file exists
+  const safetyState = loadFacebookSafetyState();
+  if (safetyState.status === 'blocked') {
+    console.warn(`⛔ Facebook automation is safety-locked: ${safetyState.reason ?? 'manual login required'}`);
+    return { totalScraped: 0, inserted: 0, duplicates: 0, errors: 0, wireBytesTransferred: 0 };
+  }
+
   if (!fs.existsSync(FB_SESSION_PATH)) {
     console.warn(`\n⚠️  Facebook session not found at: ${FB_SESSION_PATH}`);
-    console.warn('👉 Use /auth_fb in Telegram or run "npm run fb:login".\n');
-    const authKb = new InlineKeyboard().text('🔑 Log in to Facebook', 'admin:auth:fb');
+    console.warn('👉 Run "npm run fb:login" locally.\n');
     await container.notifierService.notifyAdmins(
-      '⚠️ <b>Facebook session not found.</b>\nClick the button below to open an interactive authorization window via residential proxy.',
-      authKb,
+      '⚠️ <b>Facebook session not found.</b> Run <code>npm run fb:login</code> on the scraper host.',
     );
     return { totalScraped: 0, inserted: 0, duplicates: 0, errors: 1, wireBytesTransferred: 0 };
   }
 
-  // Check proxy requirement (mandatory to prevent IP bans)
-  const isLocal = process.argv.includes('--local');
-  const proxyResult = parseProxyConfig(env.FB_PROXY);
-  const proxyConfig = isLocal ? undefined : proxyResult?.config;
-
-  if (!proxyConfig && !isLocal) {
-    console.warn('⚠️ Running FB scraper WITHOUT PROXY.');
+  const useProxy = process.argv.includes('--proxy') || env.FB_PROXY_ENABLED;
+  const proxyResult = parseProxyConfig(useProxy ? env.FB_PROXY : undefined);
+  if (useProxy && !proxyResult) {
+    throw new Error('Facebook proxy was explicitly enabled but FB_PROXY is missing or invalid.');
   }
 
   let totalScraped = 0;
@@ -1336,54 +1317,19 @@ export async function runFacebookScraper(
   let totalErrors = 0;
   let totalWireBytes = 0;
   let context: BrowserContext | null = null;
+  let camoufox: CamoufoxBrowser | null = null;
+  let sessionSafe = true;
+  const releaseLock = acquireFacebookRuntimeLock('scrape');
 
   try {
-    if (proxyConfig) console.log(`🌐 Proxy enabled: ${proxyResult?.masked}`);
-
-    const chosenViewport = VIEWPORT_PRESETS[Math.floor(Math.random() * VIEWPORT_PRESETS.length)]!;
-    const chosenUserAgent = USER_AGENTS[Math.floor(Math.random() * USER_AGENTS.length)]!;
-
-    // 🛡️ CONSERVATION: Use persistent context with disk cache to prevent re-downloading static JS bundles
-    if (!fs.existsSync(BROWSER_CACHE_DIR)) {
-      fs.mkdirSync(BROWSER_CACHE_DIR, { recursive: true });
-    }
-
-    console.log(`💾 Launching persistent browser context with disk cache: ${BROWSER_CACHE_DIR}`);
-    context = await chromium.launchPersistentContext(BROWSER_CACHE_DIR, {
+    console.log(proxyResult ? `🌐 Proxy enabled: ${proxyResult.masked}` : '🏠 Direct connection enabled.');
+    camoufox = await launchCamoufox({
       headless: true,
-      proxy: proxyConfig,
-      userAgent: chosenUserAgent,
-      viewport: chosenViewport,
-      locale: 'en-US',
-      extraHTTPHeaders: { 'Accept-Language': 'en-US,en;q=0.9' },
-      args: [
-        '--no-sandbox',
-        '--disable-setuid-sandbox',
-        '--disable-dev-shm-usage',
-        '--disable-gpu',
-        '--no-zygote',
-        '--disable-extensions',
-        '--disable-default-apps',
-        '--mute-audio',
-        '--disable-background-networking',
-        '--disable-blink-features=AutomationControlled',
-        '--disable-infobars',
-        '--js-flags=--max-old-space-size=128',
-        `--disk-cache-dir=${path.join(BROWSER_CACHE_DIR, 'http_cache')}`,
-      ],
+      proxyUrl: useProxy ? env.FB_PROXY : undefined,
     });
-
-    // Populate saved session cookies if available
-    if (fs.existsSync(FB_SESSION_PATH)) {
-      try {
-        const sessionData = JSON.parse(fs.readFileSync(FB_SESSION_PATH, 'utf-8'));
-        if (Array.isArray(sessionData.cookies) && sessionData.cookies.length > 0) {
-          await context.addCookies(sessionData.cookies);
-        }
-      } catch (cookieErr) {
-        console.warn('⚠️ Could not load session cookies into persistent context:', cookieErr);
-      }
-    }
+    context = await camoufox.browser.newContext({ storageState: FB_SESSION_PATH });
+    const accountId = await getAuthenticatedFacebookAccountId(context);
+    if (!accountId) throw new FacebookSessionExpiredError('Facebook session is missing required authenticated cookies');
 
     // Determine targets: custom targets (if specified) or round-robin batch
     let targets: FBGroupTarget[];
@@ -1443,14 +1389,15 @@ export async function runFacebookScraper(
           // Abort all remaining groups immediately to prevent further failures or unproxied leaks
           break;
         } else if (err instanceof FacebookSessionExpiredError) {
-          await container.alertService.critical('<b>Facebook Checkpoint!</b> Scraper halted. Manual authorization required via /auth_fb');
-          const authKb = new InlineKeyboard().text('🔑 Log in to Facebook', 'admin:auth:fb');
-          await container.notifierService.notifyAdmins(
-            '⚠️ <b>Facebook session expired or blocked.</b>\nClick the button below to open an interactive authorization window via residential proxy.',
-            authKb,
+          sessionSafe = false;
+          blockFacebookAutomation({
+            reason: err.message,
+            detectedUrl: context?.pages().at(-1)?.url(),
+          });
+          await container.alertService.critical(
+            '<b>Facebook automation safety-locked.</b> Run <code>npm run fb:login</code> locally to inspect and restore the session.',
           );
           totalErrors++;
-          // Halt further group scraping to avoid triggering security flags
           break;
         } else {
           totalErrors++;
@@ -1466,7 +1413,13 @@ export async function runFacebookScraper(
       }
     }
   } catch (err: unknown) {
-    if (err instanceof ProxyConnectionError || isProxyError(err)) {
+    if (err instanceof FacebookSessionExpiredError) {
+      sessionSafe = false;
+      blockFacebookAutomation({ reason: err.message, detectedUrl: context?.pages().at(-1)?.url() });
+      await container.alertService.critical(
+        '<b>Facebook automation safety-locked.</b> Run <code>npm run fb:login</code> locally to restore the session.',
+      );
+    } else if (err instanceof ProxyConnectionError || isProxyError(err)) {
       const errMsg = err instanceof Error ? err.message : String(err);
       console.error(`💥 Fatal Facebook proxy failure: ${errMsg}`);
       await container.notifierService.notifyAdmins(
@@ -1478,7 +1431,10 @@ export async function runFacebookScraper(
     }
     totalErrors++;
   } finally {
+    if (context && sessionSafe) await context.storageState({ path: FB_SESSION_PATH }).catch(() => {});
     if (context) await context.close().catch(() => {});
+    if (camoufox) await camoufox.close().catch(() => {});
+    releaseLock();
     await container.notifierService.flushNotificationQueue().catch((err) => console.error('[Notifier] Flush error:', err));
   }
 
@@ -1506,7 +1462,13 @@ export async function runFacebookScraper(
 // ─── CLI entry point ──────────────────────────────────────────────────────────
 
 if (require.main === module) {
-  runFacebookScraper()
+  const smokeMode = process.argv.includes('--smoke');
+  const groupArg = process.argv.find((arg) => arg.startsWith('--group='));
+  const groupIndex = Math.max(0, Number.parseInt(groupArg?.split('=')[1] ?? '0', 10) || 0);
+  const options = smokeMode
+    ? { targets: FB_GROUP_TARGETS[groupIndex] ? [FB_GROUP_TARGETS[groupIndex]] : [FB_GROUP_TARGETS[0]!], maxScrollsPerGroup: 1 }
+    : undefined;
+  runFacebookScraper(undefined, options)
     .then(() => process.exit(0))
     .catch((err) => {
       console.error('💥 Fatal:', err);

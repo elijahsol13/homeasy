@@ -153,7 +153,7 @@ describe('Database Enrichment & Backfill Engine', () => {
     test('extracts swimming pool from Khmer and English', () => {
       expect(extractHasPool('ផ្ទះមានអាងហែលទឹក')).toBe(true);
       expect(extractHasPool('Modern villa with pool')).toBe(true);
-      expect(extractHasPool('Standard house no amenities')).toBe(false);
+      expect(extractHasPool('Standard house no amenities')).toBe(null);
     });
 
     test('extracts Sangkat from Khmer names', () => {

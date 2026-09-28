@@ -1,45 +1,35 @@
 /**
- * Facebook Manual Login & Session Saver
+ * Facebook Manual Login & Session Saver (Camoufox)
  *
  * CRITICAL ARCHITECTURAL LAW:
  * Automated headless password entry or console credential passing to Facebook is
- * prohibited (triggers instant checkpoints/blocks). Authentication must be performed
- * visually by a human (either locally via fb:login or remotely via /auth_fb browser stream),
- * and must always route through resident proxy (FB_PROXY).
+ * prohibited (triggers instant checkpoints/blocks). Authentication is performed
+ * visually by a human in a headed Camoufox window; this script only waits for
+ * the `c_user` cookie and persists `storage_state` to ./data/fb_session.json.
  *
- * Launches Chromium with stealth plugins enabled,
- * allowing the user to log in manually (handling 2FA, Captcha, etc.).
- * Once logged in, saves the session cookies and localStorage to `./data/fb_session.json`
- * for the automated headless scraper to reuse.
+ * The browser runs the pinned device fingerprint (data/fb_device.json) so the
+ * login session and every later scraper run look like the same device.
  */
 
 import path from 'path';
 import fs from 'fs';
 import readline from 'readline';
-import { chromium } from 'playwright-extra';
-import stealthPlugin from 'puppeteer-extra-plugin-stealth';
 import { env } from '../../config/env';
 import { parseProxyConfig, isProxyError } from './proxy';
+import type { BrowserContext } from 'playwright';
+import { launchCamoufox, type CamoufoxBrowser } from './camoufox-server';
+import { attachTrafficGuard } from './traffic-guard';
+import {
+  FB_SESSION_PATH,
+  acquireFacebookRuntimeLock,
+  detectFacebookChallenge,
+  getAuthenticatedFacebookAccountId,
+  markFacebookReady,
+} from './fb-runtime';
 
-chromium.use(stealthPlugin());
+export { FB_SESSION_PATH } from './fb-runtime';
 
-export const FB_SESSION_PATH = path.join(process.cwd(), 'data', 'fb_session.json');
-
-function askQuestion(promptText: string): Promise<string> {
-  const rl = readline.createInterface({
-    input: process.stdin,
-    output: process.stdout,
-  });
-
-  return new Promise((resolve) => {
-    rl.question(promptText, (answer) => {
-      rl.close();
-      resolve(answer.trim());
-    });
-  });
-}
-
-async function waitForEnterOrTimeout(timeoutMs: number): Promise<void> {
+function waitForEnterOrTimeout(timeoutMs: number): Promise<void> {
   return new Promise<void>((resolve) => {
     const rl = readline.createInterface({
       input: process.stdin,
@@ -51,7 +41,7 @@ async function waitForEnterOrTimeout(timeoutMs: number): Promise<void> {
       resolve();
     }, timeoutMs);
 
-    rl.question('\n👉 When you have finished logging in, press [ENTER] here to save session (or wait 120s)...\n', () => {
+    rl.question('\n👉 When you have finished logging in, press [ENTER] here to save session (or wait 180s)...\n', () => {
       clearTimeout(timer);
       rl.close();
       resolve();
@@ -61,7 +51,7 @@ async function waitForEnterOrTimeout(timeoutMs: number): Promise<void> {
 
 export async function runFbLogin(): Promise<void> {
   console.log('═══════════════════════════════════════════════════════════════');
-  console.log('🔑 Facebook Login & Session Saver — HomEasy');
+  console.log('🔑 Facebook Login & Session Saver — HomEasy (Camoufox)');
   console.log('═══════════════════════════════════════════════════════════════');
   console.log(`📁 Session file destination: ${FB_SESSION_PATH}\n`);
 
@@ -70,57 +60,29 @@ export async function runFbLogin(): Promise<void> {
     fs.mkdirSync(dataDir, { recursive: true });
   }
 
-  const useTunnel = process.argv.includes('--tunnel') || process.env.USE_TUNNEL === 'true';
-  const rawProxy = env.FB_PROXY || process.env.PROXY || (useTunnel ? 'socks5://127.0.0.1:1080' : undefined);
+  const useProxy = process.argv.includes('--proxy') || env.FB_PROXY_ENABLED;
+  const rawProxy = useProxy ? env.FB_PROXY : undefined;
   const proxyResult = parseProxyConfig(rawProxy);
+  if (useProxy && !proxyResult) throw new Error('Facebook proxy was explicitly enabled but FB_PROXY is missing or invalid.');
+  console.log(proxyResult ? `🌐 Proxy enabled: ${proxyResult.masked}` : '🏠 Direct connection enabled.');
 
-  if (!proxyResult) {
-    console.error('\n❌ FATAL: FB_PROXY is required for Facebook login to prevent account and IP bans.');
-    console.error('👉 Please configure FB_PROXY in your .env file (e.g. FB_PROXY=http://user:pass@host:port).\n');
-    process.exit(1);
-  }
-
-  const isHeadless =
-    process.argv.includes('--headless') ||
-    process.env.HEADLESS === 'true' ||
-    (!process.env.DISPLAY && process.platform === 'linux');
-
-  console.log(`🌐 Proxy enabled: ${proxyResult.masked}`);
-
-  if (isHeadless) {
-    console.log('🖥️  Running in HEADLESS terminal mode (directly on server)...');
-  } else {
-    console.log('🖥️  Running in VISUAL browser mode...');
-  }
-
-  const browser = await chromium.launch({
-    headless: isHeadless,
-    proxy: proxyResult?.config,
-    args: [
-      '--no-sandbox',
-      '--disable-setuid-sandbox',
-      '--disable-dev-shm-usage',
-      '--disable-gpu',
-      '--disable-blink-features=AutomationControlled',
-      '--disable-infobars',
-    ],
-  });
-
-  const context = await browser.newContext({
-    userAgent:
-      'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-    viewport: { width: 1280, height: 850 },
-    locale: 'en-US',
-  });
-
-  const page = await context.newPage();
+  const releaseLock = acquireFacebookRuntimeLock('login');
+  let camoufox: CamoufoxBrowser | null = null;
+  let context: BrowserContext | null = null;
 
   try {
+    console.log('🖥️  Opening a headed Camoufox window (pinned device fingerprint)...');
+    camoufox = await launchCamoufox({ headless: false, proxyUrl: rawProxy });
+    context = await camoufox.browser.newContext(
+      fs.existsSync(FB_SESSION_PATH) ? { storageState: FB_SESSION_PATH } : undefined,
+    );
+    const page = await context.newPage();
+    await attachTrafficGuard(page, { allowStylesheets: true });
     console.log('🔗 Navigating to https://www.facebook.com/login ...');
     await page.goto('https://www.facebook.com/login', { waitUntil: 'domcontentloaded', timeout: 45000 });
     await page.waitForTimeout(2000);
 
-    // Click "Allow all cookies" or dismiss if cookie banner is shown
+    // Dismiss cookie banner if shown
     try {
       const cookieBtn = page.locator(
         'button[data-cookiebanner="accept_button"], button[title="Allow all cookies"], button[title="Only allow essential cookies"], [aria-label="Decline optional cookies"], [aria-label="Allow all cookies"]',
@@ -133,94 +95,27 @@ export async function runFbLogin(): Promise<void> {
       // ignore
     }
 
+    console.log('\n⏳ Browser window opened! Please log into Facebook in the browser window.');
+    console.log('   (Enter email, password, and 2FA code if requested — nothing is automated.)');
 
-    if (isHeadless) {
-      console.log('\n📝 Please enter your Facebook credentials to log in via terminal:');
-      const email = await askQuestion('👤 Facebook Email or Phone: ');
-      const pass = await askQuestion('🔑 Facebook Password: ');
+    await waitForEnterOrTimeout(180000);
 
-      if (!email || !pass) {
-        console.error('❌ Email and password cannot be empty.');
-        return;
-      }
-
-      console.log('⏳ Submitting login form...');
-      await page.fill('input[name="email"], #email', email);
-      await page.fill('input[name="pass"], #pass', pass);
-      await page.click('button[name="login"], button[type="submit"], #loginbutton');
-
-      await page.waitForTimeout(6000);
-
-      const currentUrl = page.url();
-      const pageHtml = (await page.content()).toLowerCase();
-
-      const is2FA =
-        currentUrl.includes('checkpoint') ||
-        pageHtml.includes('two-factor') ||
-        pageHtml.includes('security code') ||
-        pageHtml.includes('authenticator') ||
-        (await page.locator('input[name="approvals_code"], input[type="text"][name*="code"]').count()) > 0;
-
-      if (is2FA) {
-        console.log('\n🔐 Two-Factor Authentication (2FA) is required on your account!');
-        const code = await askQuestion('📲 Enter 6-digit 2FA / SMS confirmation code: ');
-
-        const codeInput = page.locator('input[name="approvals_code"], input[type="text"][name*="code"]').first();
-        if ((await codeInput.count()) > 0) {
-          await codeInput.fill(code);
-          const submitBtn = page.locator('button[id*="checkpoint"], button[type="submit"]').first();
-          if ((await submitBtn.count()) > 0) {
-            await submitBtn.click();
-            await page.waitForTimeout(5000);
-          }
-        }
-      }
-
-      try {
-        const saveBrowserBtn = page
-          .locator('button:has-text("Continue"), button:has-text("Продолжить"), #checkpointSubmitButton')
-          .first();
-        if ((await saveBrowserBtn.count()) > 0) {
-          await saveBrowserBtn.click().catch(() => {});
-          await page.waitForTimeout(3000);
-        }
-      } catch {
-        /* ignore */
-      }
-    } else {
-      console.log('\n⏳ Browser window opened! Please log into Facebook in the browser window.');
-      console.log('   (Enter email, password, and 2FA code if requested)');
-
-      // Wait for user to log in manually (up to 180s or on Enter press)
-      await waitForEnterOrTimeout(180000);
+    const accountId = await getAuthenticatedFacebookAccountId(context);
+    const challengeReason = await detectFacebookChallenge(page);
+    if (!accountId || challengeReason) {
+      throw new Error(
+        challengeReason ?? 'Facebook login is incomplete: required authenticated cookies were not found.',
+      );
     }
 
-    // Verify if login was successful by checking for the 'c_user' cookie
-    const cookies = await context.cookies();
-    const cUser = cookies.find((c) => c.name === 'c_user');
-
-    if (cUser) {
-      console.log(`\n🎉 Logged-in Facebook user detected! (c_user: ${cUser.value})`);
-    } else {
-      console.warn('\n⚠️  WARNING: "c_user" cookie not found in session!');
-      console.warn('   It seems login was not completed. Facebook will reject unauthenticated sessions.');
-    }
-
-    // Save storage state (cookies + localStorage)
+    console.log('\n🎉 Authenticated Facebook session detected.');
     console.log('💾 Saving session state...');
     await context.storageState({ path: FB_SESSION_PATH });
+    markFacebookReady(accountId);
 
-    if (fs.existsSync(FB_SESSION_PATH)) {
-      const stats = fs.statSync(FB_SESSION_PATH);
-      console.log(`✅ Session saved successfully to ${FB_SESSION_PATH} (${stats.size} bytes)`);
-      if (cUser) {
-        console.log('🎉 You can now run the Facebook scraper with: npm run scrape:fb\n');
-      } else {
-        console.log('👉 Please re-run "npm run fb:login", finish logging in, and press ENTER.\n');
-      }
-    } else {
-      console.error('❌ Failed to create session file.');
-    }
+    const stats = fs.statSync(FB_SESSION_PATH);
+    console.log(`✅ Session saved successfully to ${FB_SESSION_PATH} (${stats.size} bytes)`);
+    console.log('🎉 Run a one-group smoke test before enabling the scheduled scraper.\n');
   } catch (err: unknown) {
     if (isProxyError(err)) {
       console.error('\n🚨 PROXY CONNECTION FAILED: Unable to establish tunnel or authenticate through the proxy.');
@@ -229,8 +124,11 @@ export async function runFbLogin(): Promise<void> {
     } else {
       console.error('❌ Error during Facebook login:', err instanceof Error ? err.message : String(err));
     }
+    throw err;
   } finally {
-    await browser.close().catch(() => {});
+    if (context) await context.close().catch(() => {});
+    if (camoufox) await camoufox.close().catch(() => {});
+    releaseLock();
   }
 }
 
@@ -242,4 +140,3 @@ if (require.main === module) {
       process.exit(1);
     });
 }
-

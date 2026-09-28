@@ -14,6 +14,8 @@ deploy.sh
 data/*.db-wal
 data/*.db-shm
 data/fb_session.json
+data/mac_fb_session.json
+data/mac_fb_session.json.tmp
 data/k24_session.json
 INFRASTRUCTURE_SETUP.md
 
@@ -68,4 +70,17 @@ data/homeasy_before.db*
 data/homeasy_backup_final.db
 js_urls.txt
 scratch.html
+data/fb_device.json
+data/k24_device.json
+data/fb_safety_state.json
+data/fb_runtime.lock
+data/*.tmp
+data/*.bak
+data/fb_accounts/
+tmp/
+
+# Local-only Python venv & bytecode for the Camoufox harvester (scripts/camoufox/)
+.venv-camoufox/
+__pycache__/
+*.pyc
 

@@ -163,17 +163,10 @@ describe('Facebook Scraper', () => {
       expect(listing!.category).toBe('hotel');
     });
 
-    test('corrects city when the LLM confidently extracts a specific sangkat from the OTHER city (genuine cross-posting), even though the group is tagged siem_reap', async () => {
-      // Regression guard for the opposite failure mode of the "marketing text flip" bug:
-      // a post genuinely about a Phnom Penh property gets shared into a Siem-Reap-tagged
-      // group. The LLM's dedicated `location` field (which explicitly excludes marketing
-      // landmarks) says "BKK1" — a sangkat that only exists in Phnom Penh — so the listing's
-      // city must be corrected to phnom_penh even though target.city is siem_reap.
+    test('drops cross-posted properties outside the Siem Reap MVP scope', async () => {
       const crossPostedText = 'CROSSPOST_PP 2BR Condo for rent in BKK1 $500/month fully furnished';
       const listing = await parseFacebookPostText(crossPostedText, defaultTarget, 'https://facebook.com/p/4');
-      expect(listing).not.toBeNull();
-      expect(listing!.location).toBe('BKK1');
-      expect(listing!.city).toBe('phnom_penh');
+      expect(listing).toBeNull();
     });
   });
 

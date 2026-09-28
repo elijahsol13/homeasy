@@ -24,7 +24,7 @@ export const CAMBODIA_LOCATIONS: LocationEntry[] = [
     khmerName: 'សាលាកំរើក',
     city: 'siem_reap',
     administrativeType: 'sangkat',
-    aliases: ['sala kamreuk', 'sala kamreak', 'salakamreuk', 'wat damnak'],
+    aliases: ['sala kamreuk', 'sala kamreak', 'sala kamraeuk', 'salakamreuk', 'wat damnak'],
     googleMapsPlaceQuery: 'Sangkat Sala Kamreuk, Krong Siem Reap, Cambodia',
   },
   {
@@ -123,7 +123,7 @@ export const CAMBODIA_LOCATIONS: LocationEntry[] = [
     khmerName: 'បឹងកេងកង១',
     city: 'phnom_penh',
     administrativeType: 'sangkat',
-    aliases: ['bkk1', 'bkk 1', 'boeung keng kang 1', 'boeng keng kang 1', 'boeng keng kang ti muoy'],
+    aliases: ['bkk1', 'bkk 1', 'boeung keng kang 1', 'boeng keng kang 1', 'boeng keng kang ti muoy', 'boeng keng kang muoy', 'boeung keng kang muoy'],
     googleMapsPlaceQuery: 'Sangkat Boeng Keng Kang Ti Muoy, Khan Boeng Keng Kang, Phnom Penh',
   },
   {
@@ -131,7 +131,7 @@ export const CAMBODIA_LOCATIONS: LocationEntry[] = [
     khmerName: 'បឹងកេងកង២',
     city: 'phnom_penh',
     administrativeType: 'sangkat',
-    aliases: ['bkk2', 'bkk 2', 'boeung keng kang 2', 'boeng keng kang 2', 'boeng keng kang ti pir'],
+    aliases: ['bkk2', 'bkk 2', 'boeung keng kang 2', 'boeng keng kang 2', 'boeng keng kang ti pir', 'boeng keng kang pir', 'boeung keng kang pir'],
     googleMapsPlaceQuery: 'Sangkat Boeng Keng Kang Ti Pir, Khan Boeng Keng Kang, Phnom Penh',
   },
   {
@@ -139,7 +139,7 @@ export const CAMBODIA_LOCATIONS: LocationEntry[] = [
     khmerName: 'បឹងកេងកង៣',
     city: 'phnom_penh',
     administrativeType: 'sangkat',
-    aliases: ['bkk3', 'bkk 3', 'boeung keng kang 3', 'boeng keng kang 3', 'boeng keng kang ti bei'],
+    aliases: ['bkk3', 'bkk 3', 'boeung keng kang 3', 'boeng keng kang 3', 'boeng keng kang ti bei', 'boeng keng kang bei', 'boeung keng kang bei'],
     googleMapsPlaceQuery: 'Sangkat Boeng Keng Kang Ti Bei, Khan Boeng Keng Kang, Phnom Penh',
   },
   {
@@ -147,7 +147,7 @@ export const CAMBODIA_LOCATIONS: LocationEntry[] = [
     khmerName: 'បឹងកេងកង',
     city: 'phnom_penh',
     administrativeType: 'khan',
-    aliases: ['bkk', 'boeung keng kang', 'boeng keng kang'],
+    aliases: ['bkk', 'boeung keng kang', 'boeng keng kang', 'tuol svay prey muoy', 'tuol svay prey pir', 'toul svay prey', 'tuol svay prey'],
     googleMapsPlaceQuery: 'Khan Boeng Keng Kang, Phnom Penh, Cambodia',
   },
   {
@@ -155,7 +155,7 @@ export const CAMBODIA_LOCATIONS: LocationEntry[] = [
     khmerName: 'ចំការមន',
     city: 'phnom_penh',
     administrativeType: 'khan',
-    aliases: ['chamkar mon', 'chamkarmon', 'chamkarmorn'],
+    aliases: ['chamkar mon', 'chamkarmon', 'chamkarmorn', 'boeng trabaek', 'boeng trabek', 'phsar daeum thkov', 'phsar deum thkov', 'phsar depou', 'phsar depou muoy', 'toul tumpung muoy', 'toul tumpung pir', 'tuol tumpung muoy', 'tuol tumpung pir', 'tuol svay prey', 'toul svay prey'],
     googleMapsPlaceQuery: 'Khan Chamkar Mon, Phnom Penh, Cambodia',
   },
   {
@@ -163,7 +163,7 @@ export const CAMBODIA_LOCATIONS: LocationEntry[] = [
     khmerName: 'ទន្លេបាសាក់',
     city: 'phnom_penh',
     administrativeType: 'sangkat',
-    aliases: ['tonle bassac', 'tonle basac', 'koh pich', 'diamond island'],
+    aliases: ['tonle bassac', 'tonle basac', 'tonle basak', 'koh pich', 'diamond island'],
     googleMapsPlaceQuery: 'Sangkat Tonle Bassac, Khan Chamkar Mon, Phnom Penh',
   },
   {
@@ -177,6 +177,10 @@ export const CAMBODIA_LOCATIONS: LocationEntry[] = [
       'toul tom poung',
       'tuol tom poung',
       'toul tumpung',
+      'tuol tumpung muoy',
+      'tuol tumpung pir',
+      'tuol tumpung 1',
+      'tuol tumpung 2',
       'ttp',
       'russian market',
       'russian mkt',
@@ -208,11 +212,35 @@ export const CAMBODIA_LOCATIONS: LocationEntry[] = [
     googleMapsPlaceQuery: 'Khan Chroy Changvar, Phnom Penh, Cambodia',
   },
   {
+    canonicalName: 'Veal Vong',
+    khmerName: 'វាលវង់',
+    city: 'phnom_penh',
+    administrativeType: 'sangkat',
+    aliases: ['veal vong', 'sangkat veal vong'],
+    googleMapsPlaceQuery: 'Sangkat Veal Vong, Khan Prampir Makara, Phnom Penh, Cambodia',
+  },
+  {
+    canonicalName: 'Boeng Prolit',
+    khmerName: 'បឹងព្រលឹត',
+    city: 'phnom_penh',
+    administrativeType: 'sangkat',
+    aliases: ['boeng prolit', 'boeung prolit', 'sangkat boeng prolit'],
+    googleMapsPlaceQuery: 'Sangkat Boeng Prolit, Khan Prampir Makara, Phnom Penh, Cambodia',
+  },
+  {
+    canonicalName: 'Wat Phnom',
+    khmerName: 'វត្តភ្នំ',
+    city: 'phnom_penh',
+    administrativeType: 'sangkat',
+    aliases: ['wat phnom', 'sangkat wat phnom'],
+    googleMapsPlaceQuery: 'Sangkat Wat Phnom, Khan Daun Penh, Phnom Penh, Cambodia',
+  },
+  {
     canonicalName: 'Sen Sok',
     khmerName: 'សែនសុខ',
     city: 'phnom_penh',
     administrativeType: 'khan',
-    aliases: ['sen sok', 'sensok', 'phnom penh thmey', 'aeon 2', 'teuk thla', 'tuek thla'],
+    aliases: ['sen sok', 'sensok', 'phnom penh thmey', 'phnom penh thmei', 'aeon 2', 'teuk thla', 'tuek thla', 'kouk khleang', 'ou baek k am', 'ou baek kam'],
     googleMapsPlaceQuery: 'Khan Sen Sok, Phnom Penh, Cambodia',
   },
   {
@@ -228,7 +256,7 @@ export const CAMBODIA_LOCATIONS: LocationEntry[] = [
     khmerName: 'ឫស្សីកែវ',
     city: 'phnom_penh',
     administrativeType: 'khan',
-    aliases: ['russei keo', 'russey keo', 'ruessei kaev', 'km 6'],
+    aliases: ['russei keo', 'russey keo', 'ruessei kaev', 'km 6', 'kiloumaetr lekh prammuoy', 'chrang chamreh muoy'],
     googleMapsPlaceQuery: 'Khan Ruessei Kaev, Phnom Penh, Cambodia',
   },
   {
@@ -252,7 +280,7 @@ export const CAMBODIA_LOCATIONS: LocationEntry[] = [
     khmerName: 'ពោធិ៍សែនជ័យ',
     city: 'phnom_penh',
     administrativeType: 'khan',
-    aliases: ['pou senchey', 'por sen chey', 'porsenchey', 'phnom penh airport'],
+    aliases: ['pou senchey', 'por sen chey', 'porsenchey', 'phnom penh airport', 'chaom chau 3'],
     googleMapsPlaceQuery: 'Khan Pou Senchey, Phnom Penh, Cambodia',
   },
   {
@@ -260,7 +288,7 @@ export const CAMBODIA_LOCATIONS: LocationEntry[] = [
     khmerName: 'បឹងកក់',
     city: 'phnom_penh',
     administrativeType: 'sangkat',
-    aliases: ['boeung kak', 'boeng kak', 'edc'],
+    aliases: ['boeung kak', 'boeng kak', 'boeng kak muoy', 'boeng kak pir', 'boeng kak 1', 'boeng kak 2', 'boeung kak muoy', 'boeung kak pir', 'edc'],
     googleMapsPlaceQuery: 'Sangkat Boeng Kak, Khan Tuol Kouk, Phnom Penh',
   },
 ];
@@ -285,6 +313,26 @@ export function findCanonicalLocation(
 ): LocationEntry | undefined {
   if (!query || !query.trim()) return undefined;
   const raw = query.trim();
+
+  // K24 and other platforms often store full addresses as
+  // "Sangkat, Khan, City". Try each comma-separated segment from most
+  // specific (first) to least specific, ignoring generic city/khan noise.
+  if (raw.includes(',')) {
+    const noise = new Set([
+      'phnom penh', 'siem reap', 'battambang', 'sihanoukville',
+      'chamkar mon', 'boeng keng kang', 'tuol kouk', 'saensokh', 'sen sok',
+      'doun penh', 'prampi makara', 'dangkao', 'russey keo', 'meanchey',
+      'chbar ampov', 'chroy changvar', 'ponhea leu', 'prek pnov',
+      'angkor', 'prasat bakong', 'krong siem reap', 'siem reap city',
+    ]);
+    const parts = raw.split(',').map((p) => p.trim()).filter((p) => p && !noise.has(normalizeLoc(p)));
+    for (const part of parts) {
+      const found = findCanonicalLocation(part, city);
+      if (found) return found;
+    }
+    // If no specific part matched, fall through to full-string lookup.
+  }
+
   const norm = normalizeLoc(raw);
 
   // 1. Direct match on Khmer name
@@ -316,6 +364,27 @@ export function findCanonicalLocation(
   }
 
   return undefined;
+}
+
+export function getCanonicalLocationKey(location: string, city?: CityKey): string | null {
+  const canonical = findCanonicalLocation(location, city);
+  if (!canonical) return null;
+  const slug = normalizeLoc(canonical.canonicalName).replace(/\s+/g, '_');
+  return `${canonical.city}:${slug}`;
+}
+
+export function canonicalizeLocation(
+  location: string | null | undefined,
+  city: CityKey,
+): { key: string | null; name: string; city: CityKey } {
+  const raw = location?.trim() ?? '';
+  const canonical = raw ? findCanonicalLocation(raw) : undefined;
+  if (!canonical) return { key: null, name: raw, city };
+  return {
+    key: getCanonicalLocationKey(canonical.canonicalName, canonical.city),
+    name: canonical.canonicalName,
+    city: canonical.city,
+  };
 }
 
 /**
@@ -566,6 +635,9 @@ export const LOCATION_CENTROIDS: Record<string, { lat: number; lng: number }> = 
   'Pou Senchey': { lat: 11.5500, lng: 104.8400 },
   'Por Senchey': { lat: 11.5500, lng: 104.8400 },
   'Boeung Kak': { lat: 11.5760, lng: 104.9120 },
+  'Veal Vong': { lat: 11.5625, lng: 104.9094 },
+  'Boeng Prolit': { lat: 11.5582, lng: 104.9170 },
+  'Wat Phnom': { lat: 11.5761, lng: 104.9231 },
 };
 
 /**

@@ -5,9 +5,28 @@ import {
   calculateDistanceKm,
   isCoordinateInSanityBounds,
   crossValidateLocation,
+  canonicalizeLocation,
+  getCanonicalLocationKey,
 } from '../src/config/locations';
 
 describe('Cambodia Locations & Smart Google Maps Link Generator', () => {
+  describe('Canonical location identity', () => {
+    it.each(['Sla Kram', 'Slor Kram', 'Wat Bo'])('maps %s to one stable key', (input) => {
+      expect(getCanonicalLocationKey(input, 'siem_reap')).toBe('siem_reap:sla_kram');
+      expect(canonicalizeLocation(input, 'siem_reap')).toMatchObject({
+        key: 'siem_reap:sla_kram',
+        name: 'Sla Kram',
+        city: 'siem_reap',
+      });
+    });
+
+    it('canonicalizes a full Khmer24 address and corrects its city', () => {
+      expect(canonicalizeLocation('Ou Baek K’am, Saensokh, Phnom Penh', 'siem_reap')).toMatchObject({
+        city: 'phnom_penh',
+      });
+    });
+  });
+
   describe('Bakong Landmark Disambiguation', () => {
     it('generates administrative Prasat Bakong District query instead of temple ruin', () => {
       const url = formatGoogleMapsUrl('Bakong', 'siem_reap');

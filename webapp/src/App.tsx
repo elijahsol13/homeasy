@@ -3,6 +3,7 @@ import type {
   ActiveTab,
   FilterMetadata,
   FilterState,
+  MapFocusRequest,
   PropertyDTO,
 } from './types';
 import {
@@ -79,6 +80,8 @@ export const App: React.FC = () => {
 
   // Modal & Favorites
   const [selectedProperty, setSelectedProperty] = useState<PropertyDTO | null>(null);
+  const [mapReturnProperty, setMapReturnProperty] = useState<PropertyDTO | null>(null);
+  const [mapFocusRequest, setMapFocusRequest] = useState<MapFocusRequest | null>(null);
   const [favorites, setFavorites] = useState<PropertyDTO[]>([]);
 
   // Count active non-default filters
@@ -167,6 +170,21 @@ export const App: React.FC = () => {
   };
 
   // Toggle favorite
+  const handleShowOnMap = (property: PropertyDTO) => {
+    setMapReturnProperty(property);
+    setFilters((previous) => ({ ...previous, city: property.city as FilterState['city'], locations: [] }));
+    setMapFocusRequest({
+      propertyId: property.id,
+      city: property.city as MapFocusRequest['city'],
+      locationKey: property.locationKey,
+      location: property.location,
+      coordinates: property.coordinates,
+      coordinatePrecision: property.coordinatePrecision,
+    });
+    setSelectedProperty(null);
+    setActiveTab('map');
+  };
+
   const handleToggleFavorite = async (propertyId: number) => {
     try {
       const result = await toggleFavorite(propertyId);
@@ -313,6 +331,9 @@ export const App: React.FC = () => {
           <MapView
             city={filters.city}
             onSelectProperty={setSelectedProperty}
+            focusRequest={mapFocusRequest}
+            onFocusHandled={() => setMapFocusRequest(null)}
+            onBackToProperty={mapReturnProperty ? () => setSelectedProperty(mapReturnProperty) : undefined}
             onSelectLocation={(locationName) => {
               setFilters((prev) => ({ ...prev, locations: [locationName] }));
               setActiveTab('feed');
@@ -370,6 +391,7 @@ export const App: React.FC = () => {
         property={selectedProperty}
         onClose={() => setSelectedProperty(null)}
         onToggleFavorite={handleToggleFavorite}
+        onShowOnMap={handleShowOnMap}
       />
 
       {/* Filter Drawer */}
@@ -384,7 +406,10 @@ export const App: React.FC = () => {
       {/* Bottom Navigation */}
       <BottomNav
         activeTab={activeTab}
-        onTabChange={setActiveTab}
+        onTabChange={(tab) => {
+          if (tab !== 'map') setMapReturnProperty(null);
+          setActiveTab(tab);
+        }}
         favoritesCount={favorites.length}
       />
     </div>

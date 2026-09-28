@@ -20,7 +20,7 @@ export const DISTRICTS: Record<CityKey, readonly string[]> = {
   siem_reap: [
     'Svay Dangkum',
     'Sala Kamreuk',
-    'Slor Kram',
+    'Sla Kram',
     'Chreav',
     'Nokor Thum',
     'Sambuor',

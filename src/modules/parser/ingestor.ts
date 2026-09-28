@@ -1,6 +1,6 @@
 import crypto from 'crypto';
 import { BulkImportSchema, RawListingSchema, type BulkIngestResult, type CleanProperty, type IngestResult } from './schemas';
-import { cleanPhotoUrls, extractDirectContacts, formatDomesticPhone, normalizeText } from './normalizer';
+import { cleanPhotoUrls, extractDirectContacts, normalizeText } from './normalizer';
 import {
   extractBathrooms,
   extractBedrooms,
@@ -15,7 +15,7 @@ import {
   extractType,
   extractWater,
 } from './extractor';
-import { extractCleaning, extractRestrictions } from '../../services/notifier';
+import { escapeHtml, extractCleaning, extractRestrictions } from '../../services/notifier';
 import { findLandmarksInText } from '../../config/landmarks';
 import {
   extractCoordinatesFromMapsUrl,
@@ -53,9 +53,6 @@ export function computeContentHash(fields: {
 
 // ─── Normalization pipeline ───────────────────────────────────────────────────
 
-/** Approximate THB → USD rate for price conversion (marketplace ads priced in baht). */
-const THB_PER_USD = 35.5;
-
 export function normalizeRawToClean(
   raw: ReturnType<typeof RawListingSchema.parse>,
 ): CleanProperty | null {
@@ -71,6 +68,16 @@ export function normalizeRawToClean(
     .join(' ');
 
   const warnings: string[] = [];
+  let cleanReviewStatus: 'approved' | 'pending' = raw.review_status ?? 'approved';
+  let cleanReviewReason: string | null = raw.review_reason ?? null;
+
+  // Fail-closed admission: a missing or uncertain is_real_estate decision from the LLM
+  // must not publish automatically. Preserve the record as inactive pending review.
+  if (raw.is_real_estate === null || raw.is_real_estate === undefined) {
+    cleanReviewStatus = 'pending';
+    cleanReviewReason = cleanReviewReason ?? 'Admission decision missing or uncertain';
+    warnings.push('is_real_estate_uncertain');
+  }
 
   const title = raw.title ? normalizeText(raw.title) : 'Real Estate Listing';
   const description = raw.description ? normalizeText(raw.description) : '';
@@ -90,14 +97,11 @@ export function normalizeRawToClean(
   // K24 defaults to USD). Resolved by magnitude:
   //   rent + amount < 10,000              → USD (even if marked KHR/riel)
   //   rent + amount ≥ 50,000, no "$"      → KHR @ 4,000
-  //   explicit THB markers (฿/บาท/baht)   → THB @ ~35.5
+  //   explicit THB markers (฿/บาท/baht)   → KHR @ 4,000 (Cambodia listings
+  //                                           frequently mis-label riel as baht)
   //   sale                                → USD unless explicit riel markers
-  const toUsdCents = (n: number, cur: 'USD' | 'KHR' | 'THB'): number =>
-    cur === 'KHR'
-      ? Math.round((n / 4_000) * 100)
-      : cur === 'THB'
-        ? Math.round((n / THB_PER_USD) * 100)
-        : Math.round(n * 100);
+  const toUsdCents = (n: number, cur: 'USD' | 'KHR'): number =>
+    cur === 'KHR' ? Math.round((n / 4_000) * 100) : Math.round(n * 100);
 
   let amount: number | null = null;
   let declaredCurrency: string | null = null;
@@ -143,9 +147,11 @@ export function normalizeRawToClean(
       String(declaredCurrency ?? '').toUpperCase() === 'USD';
     const hasKhrMarker = /៛|\briel\b|\bKHR\b/i.test(priceHaystack);
 
-    let finalCur: 'USD' | 'KHR' | 'THB';
-    if (hasThbMarker && !hasDollarSign) {
-      finalCur = 'THB';
+    let finalCur: 'USD' | 'KHR';
+    // In Cambodia listings, a ฿/baht marker is almost always a mistagged riel
+    // price, not an actual Thai baht value. Treat it as KHR.
+    if (hasThbMarker && !hasDollarSign && amount >= 1_000) {
+      finalCur = 'KHR';
     } else if (type === 'rent') {
       finalCur = amount >= 50_000 && !hasDollarSign ? 'KHR' : 'USD';
       // $10k+/mo rent is virtually always a mis-tagged sale or a currency error.
@@ -157,16 +163,20 @@ export function normalizeRawToClean(
     }
 
     priceCents = toUsdCents(amount, finalCur);
-    if (finalCur === 'THB') warnings.push('currency_converted:THB');
     if (finalCur === 'KHR') warnings.push('currency_converted:KHR');
+    if (hasThbMarker && finalCur === 'KHR') warnings.push('currency_converted:THB_as_KHR');
   }
 
   if (priceCents === 0) warnings.push('price_missing');
 
   // ── Category ───────────────────────────────────────────────────────────────
+  const validCategories: readonly string[] = ['apartment', 'house', 'room', 'hotel'];
+  const rawCategory = raw.category?.toLowerCase();
+  const normalizedRawCategory = rawCategory && validCategories.includes(rawCategory)
+    ? (rawCategory as PropertyCategory)
+    : null;
   const extractedCat = extractCategory(combinedText);
-  let category: PropertyCategory | null =
-    (raw.category as PropertyCategory | undefined) ?? extractedCat;
+  let category: PropertyCategory | null = normalizedRawCategory ?? extractedCat;
   if (extractedCat === 'hotel') {
     category = 'hotel';
   }
@@ -260,7 +270,20 @@ export function normalizeRawToClean(
   if (raw.deposit !== undefined && raw.deposit !== null) {
     const n = parseFloat(String(raw.deposit).replace(/[^0-9.]/g, ''));
     deposit = isNaN(n) ? null : Math.round(n * 100);
-  } else {
+  }
+  // Deposit expressed as "N months" must be kept separate from a dollar amount and
+  // only converted when the monthly rent is known. Never treat `deposit_months: 1` as $1.
+  if (deposit === null && raw.deposit_months !== undefined && raw.deposit_months !== null) {
+    const months = parseInt(String(raw.deposit_months), 10);
+    if (!isNaN(months) && months > 0 && months <= 12) {
+      if (priceCents > 0) {
+        deposit = priceCents * months;
+      } else {
+        warnings.push('deposit_months_without_rent');
+      }
+    }
+  }
+  if (deposit === null) {
     deposit = extractDeposit(combinedText);
   }
 
@@ -272,8 +295,12 @@ export function normalizeRawToClean(
     minLease = extractMinLease(combinedText);
   }
 
-  const hasPool =
-    raw.has_pool !== undefined ? Boolean(raw.has_pool) : extractHasPool(combinedText);
+  const hasPool: boolean | null =
+    raw.has_pool === true || raw.has_pool === 1 || raw.has_pool === '1' || raw.has_pool === 'true'
+      ? true
+      : raw.has_pool === false || raw.has_pool === 0 || raw.has_pool === '0' || raw.has_pool === 'false'
+        ? false
+        : extractHasPool(combinedText);
 
   // Direct contact: phone, telegram, whatsapp with disambiguation and domestic mask
   const contacts = extractDirectContacts(combinedText, {
@@ -294,9 +321,19 @@ export function normalizeRawToClean(
     ? raw.restrictions
     : extractRestrictions(combinedText);
   const hasPetRestriction = restrictions.includes('🚫 No Pets');
-  const petFriendly = raw.pet_friendly !== undefined
-    ? raw.pet_friendly
-    : !hasPetRestriction && /\b(?:pet friendly|pets allowed)\b/i.test(combinedText);
+  const rawPetFriendly: boolean | null =
+    raw.pet_friendly === true || raw.pet_friendly === 1 || raw.pet_friendly === '1' || raw.pet_friendly === 'true'
+      ? true
+      : raw.pet_friendly === false || raw.pet_friendly === 0 || raw.pet_friendly === '0' || raw.pet_friendly === 'false'
+        ? false
+        : null;
+  const petFriendly: boolean | null = rawPetFriendly !== null
+    ? rawPetFriendly
+    : hasPetRestriction
+      ? false
+      : /\b(?:pet friendly|pets allowed)\b/i.test(combinedText)
+        ? true
+        : null;
   const landmarkEntries = findLandmarksInText(combinedText, city);
   // Physical landmarks only — marketing claims ("5 min to Pub Street") are kept
   // separate in marketing_landmarks and never feed location/matching logic.
@@ -313,6 +350,22 @@ export function normalizeRawToClean(
   const longitude = coords ? coords.longitude : latOk ? rawLng : null;
   if (!isNaN(rawLat) && !isNaN(rawLng) && !latOk) {
     warnings.push('coords_rejected_out_of_bounds');
+  }
+
+  // Land/commercial listings are out of scope for the current MVP. Preserve the
+  // record as inactive pending review rather than silently discarding it.
+  const propertyTypeLower = (raw.property_type ?? '').toLowerCase();
+  if (
+    (raw.category ?? '').toLowerCase() === 'land' ||
+    propertyTypeLower.includes('commercial') ||
+    propertyTypeLower.includes('warehouse') ||
+    propertyTypeLower.includes('office') ||
+    propertyTypeLower.includes('shop') ||
+    propertyTypeLower.includes('restaurant')
+  ) {
+    warnings.push('land_or_commercial_out_of_scope');
+    cleanReviewStatus = 'pending';
+    cleanReviewReason = cleanReviewReason ?? 'Land/commercial property outside current MVP scope';
   }
 
   return {
@@ -350,7 +403,9 @@ export function normalizeRawToClean(
     property_type: raw.property_type ?? null,
     amenities: raw.amenities ?? [],
     raw_text: raw.raw_text ?? rawText,
-    parse_warnings: warnings,
+    parse_warnings: cleanReviewStatus === 'pending' ? [...warnings, 'review_pending'] : warnings,
+    review_status: cleanReviewStatus,
+    review_reason: cleanReviewReason,
   };
 }
 
@@ -394,11 +449,25 @@ export class IngestionService {
       };
     }
 
+    // LLM-confirmed non-real-estate can be rejected before normalization.
+    if (parseResult.data.is_real_estate === false) {
+      return {
+        status: 'error',
+        error: 'LLM classified as non-real-estate',
+      };
+    }
+
     const clean = normalizeRawToClean(parseResult.data);
     if (!clean) {
       return {
         status: 'error',
         error: 'Could not extract required fields (title, location) from payload',
+      };
+    }
+    if (clean.city !== 'siem_reap' || clean.type !== 'rent') {
+      return {
+        status: 'error',
+        error: 'MVP accepts only monthly rentals in Siem Reap',
       };
     }
 
@@ -506,7 +575,8 @@ export class IngestionService {
     }
 
     const hasNoPhotos = clean.photos.length === 0;
-    const isActive = hasNoPhotos ? 0 : 1;
+    const needsReview = clean.review_status === 'pending';
+    const isActive = hasNoPhotos || needsReview ? 0 : 1;
 
     const property = this.propertiesRepo.insertProperty({
       ...clean,
@@ -515,6 +585,19 @@ export class IngestionService {
       image_phash: clean.image_phash,
       image_phashes: clean.image_phashes,
     });
+
+    if (needsReview) {
+      console.warn(`⚠️ [Ingestor] Listing #${property.id} requires manual review: ${clean.review_reason ?? 'uncertain admission'}`);
+      if (this.alertService) {
+        await this.alertService.reviewProperty(
+          property.id,
+          `<b>Pending listing review #${property.id}</b>\n` +
+            `<b>${escapeHtml(clean.title)}</b>\n` +
+            `Reason: ${escapeHtml(clean.review_reason ?? 'uncertain admission')}\n` +
+            `<a href="${escapeHtml(clean.original_url)}">Original post</a>`,
+        );
+      }
+    }
 
     if (hasNoPhotos) {
       console.warn(
@@ -525,7 +608,7 @@ export class IngestionService {
           `<b>Needs Review (no photos):</b>\n${clean.title}\n<a href="${clean.original_url}">Original post</a>`,
         );
       }
-    } else {
+    } else if (!needsReview) {
       // ── Step 4: Trigger Matching Engine ─────────────────────────────────────────
       this.matcherService.matchAndNotify(property).catch((err: unknown) => {
         console.error('matchAndNotify error:', err);

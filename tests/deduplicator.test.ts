@@ -43,6 +43,8 @@ function mockCleanProperty(overrides: Partial<CleanProperty> = {}): CleanPropert
     longitude: null,
     property_type: null,
     amenities: [],
+    review_status: 'approved',
+    review_reason: null,
     ...overrides,
   };
 }
