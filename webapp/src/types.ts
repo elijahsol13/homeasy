@@ -46,6 +46,10 @@ export interface PropertyDTO {
     whatsappLink?: string;
   };
   isFavorite?: boolean;
+  /** Admin review fields — populated for admins viewing review queue. */
+  reviewStatus?: 'pending' | 'approved' | 'rejected';
+  reviewReason?: string | null;
+  parseWarnings?: string[];
 }
 
 export interface MapFocusRequest {
@@ -100,6 +104,8 @@ export interface FilterState {
   minLeaseMax?: number;
   query?: string;
   sort: 'newest' | 'price_asc' | 'price_desc';
+  /** Admin-only review filter. Ignored by the API for non-admin users. */
+  reviewStatus?: 'pending' | 'approved' | 'rejected' | 'all';
 }
 
 export type ActiveTab = 'feed' | 'map' | 'saved';

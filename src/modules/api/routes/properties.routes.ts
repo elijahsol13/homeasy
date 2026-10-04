@@ -2,7 +2,7 @@ import type { FastifyPluginAsync } from 'fastify';
 import type { AppContainer } from '../../../container';
 import type { CityKey } from '../../../config/settings';
 import type { MapBoundingBox } from '../../../database/repositories/properties.repo';
-import { optionalTelegramAuth } from '../auth';
+import { isAdminTelegramUser, optionalTelegramAuth } from '../auth';
 import { toPropertyDTO, toMapMarkerDTO, toSangkatClusterDTO } from '../dto';
 
 export const propertiesRoutes: FastifyPluginAsync<{ container: AppContainer }> = async (fastify, opts) => {
@@ -77,6 +77,21 @@ export const propertiesRoutes: FastifyPluginAsync<{ container: AppContainer }> =
       // Sort
       const sort = query.sort === 'price_asc' || query.sort === 'price_desc' ? query.sort : 'newest';
 
+      // Admin-only review-status filter (pending/approved/rejected/all)
+      const isAdmin =
+        isAdminTelegramUser(request.telegramUser?.id) ||
+        (request.telegramUser
+          ? container.usersRepo.findByTelegramId(request.telegramUser.id)?.role === 'admin'
+          : false);
+      let reviewStatus: 'pending' | 'approved' | 'rejected' | 'all' | undefined;
+      if (isAdmin && query.review_status) {
+        if (query.review_status === 'pending' || query.review_status === 'approved' || query.review_status === 'rejected') {
+          reviewStatus = query.review_status;
+        } else if (query.review_status === 'all') {
+          reviewStatus = 'all';
+        }
+      }
+
       // Pagination
       const page = Math.max(1, query.page ? parseInt(query.page, 10) : 1);
       const limit = Math.min(50, Math.max(1, query.limit ? parseInt(query.limit, 10) : 20));
@@ -97,6 +112,8 @@ export const propertiesRoutes: FastifyPluginAsync<{ container: AppContainer }> =
         minLeaseMax,
         query: textQuery,
         sort,
+        reviewStatus,
+        includeInactive: isAdmin && reviewStatus !== undefined,
         limit,
         offset,
       });
@@ -205,7 +222,13 @@ export const propertiesRoutes: FastifyPluginAsync<{ container: AppContainer }> =
       }
 
       const property = container.propertiesRepo.getPropertyById(propId);
-      if (!property || property.is_active !== 1) {
+      const isAdminUser =
+        isAdminTelegramUser(request.telegramUser?.id) ||
+        (request.telegramUser
+          ? container.usersRepo.findByTelegramId(request.telegramUser.id)?.role === 'admin'
+          : false);
+
+      if (!property || (property.is_active !== 1 && !isAdminUser)) {
         return reply.status(404).send({
           statusCode: 404,
           error: 'Not Found',

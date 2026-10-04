@@ -360,6 +360,32 @@ export const PropertyDetailModal: React.FC<PropertyDetailModalProps> = ({
             </div>
           )}
 
+          {/* Admin review info — non-approved items are only served to admins */}
+          {property.reviewStatus && property.reviewStatus !== 'approved' && (
+            <div className="rounded-xl border border-amber-200 dark:border-amber-900/50 bg-amber-50 dark:bg-amber-950/40 p-3 space-y-1.5">
+              <h3 className="text-xs font-bold text-amber-700 dark:text-amber-300 uppercase tracking-wider">
+                Moderation Info
+              </h3>
+              {property.reviewStatus && (
+                <p className="text-xs text-amber-700 dark:text-amber-300">
+                  Status: <strong>{property.reviewStatus}</strong>
+                </p>
+              )}
+              {property.reviewReason && (
+                <p className="text-xs text-amber-700 dark:text-amber-300">
+                  Reason: {property.reviewReason}
+                </p>
+              )}
+              {property.parseWarnings && property.parseWarnings.length > 0 && (
+                <ul className="text-[11px] text-amber-600 dark:text-amber-400 list-disc list-inside">
+                  {property.parseWarnings.map((w) => (
+                    <li key={w}>{w}</li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          )}
+
           {/* Original Source Link */}
           {property.originalUrl && (
             <div className="pt-2 border-t border-zinc-100 dark:border-zinc-800 text-xs text-zinc-400 flex items-center gap-1.5">

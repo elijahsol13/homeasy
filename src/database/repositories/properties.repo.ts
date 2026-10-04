@@ -708,8 +708,18 @@ export class PropertiesRepository {
    * Search and filter properties with pagination, sorting, and total count for Telegram Mini App.
    */
   searchProperties(options: PropertyFilterOptions = {}): { items: Property[]; total: number } {
-    const whereClauses: string[] = ['is_active = 1'];
+    const whereClauses: string[] = [];
     const params: Array<string | number> = [];
+
+    // Admin review filters override the public active-only filter.
+    if (options.reviewStatus && options.reviewStatus !== 'all') {
+      whereClauses.push('review_status = ?');
+      params.push(options.reviewStatus);
+    } else if (options.includeInactive) {
+      // no-op: admin wants to see everything regardless of active flag
+    } else {
+      whereClauses.push('is_active = 1');
+    }
 
     if (options.city) {
       whereClauses.push('city = ?');
@@ -1042,6 +1052,10 @@ export interface PropertyFilterOptions {
   minLeaseMax?: number;
   query?: string;
   sort?: 'newest' | 'price_asc' | 'price_desc';
+  /** Admin-only: filter by review_status. 'all' or undefined means don't filter by status. */
+  reviewStatus?: 'pending' | 'approved' | 'rejected' | 'all';
+  /** Admin-only: include inactive properties. */
+  includeInactive?: boolean;
   limit?: number;
   offset?: number;
 }

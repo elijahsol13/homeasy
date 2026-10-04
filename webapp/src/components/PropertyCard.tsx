@@ -133,6 +133,19 @@ export const PropertyCard: React.FC<PropertyCardProps> = ({
           {property.propertyType}
         </div>
 
+        {/* Admin Review Badge (visible only to admins; pending/rejected items are never served publicly) */}
+        {property.reviewStatus && property.reviewStatus !== 'approved' && (
+          <div
+            className={`absolute top-3 left-3 mt-8 backdrop-blur-md px-2.5 py-1 rounded-lg text-[10px] font-bold uppercase tracking-wide pointer-events-none ${
+              property.reviewStatus === 'pending'
+                ? 'bg-amber-500/80 text-white'
+                : 'bg-rose-600/80 text-white'
+            }`}
+          >
+            {property.reviewStatus}
+          </div>
+        )}
+
         {/* Photo Indicators / Dots */}
         {photos.length > 1 && (
           <div className="absolute bottom-2.5 left-1/2 -translate-x-1/2 flex items-center gap-1.5 bg-black/40 backdrop-blur-md px-2 py-1 rounded-full z-10">

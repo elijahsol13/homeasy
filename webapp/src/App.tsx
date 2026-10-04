@@ -10,6 +10,7 @@ import {
   fetchProperties,
   fetchFilterMetadata,
   fetchFavorites,
+  fetchMe,
   toggleFavorite,
 } from './services/api';
 import { initTelegramWebApp } from './services/telegram';
@@ -40,6 +41,14 @@ export const App: React.FC = () => {
   const [isStorageReady, setIsStorageReady] = useState(false);
   const [metadata, setMetadata] = useState<FilterMetadata | null>(null);
   const [isFilterOpen, setIsFilterOpen] = useState(false);
+  const [isAdmin, setIsAdmin] = useState(false);
+
+  // Resolve admin capability from the server (never trust client-side flags)
+  useEffect(() => {
+    fetchMe()
+      .then((me) => setIsAdmin(me.isAdmin))
+      .catch((err) => console.error('Failed to fetch user info:', err));
+  }, []);
 
   // Restore saved filter state on mount (anti-flicker)
   useEffect(() => {
@@ -96,6 +105,7 @@ export const App: React.FC = () => {
     Boolean(filters.hasPool),
     Boolean(filters.minLeaseMax),
     Boolean(filters.query && filters.query.trim().length > 0),
+    Boolean(filters.reviewStatus),
   ].filter(Boolean).length;
 
   // Load filter metadata when city changes
@@ -401,6 +411,7 @@ export const App: React.FC = () => {
         filters={filters}
         metadata={metadata}
         onApply={(newFilters) => setFilters(newFilters)}
+        isAdmin={isAdmin}
       />
 
       {/* Bottom Navigation */}

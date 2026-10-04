@@ -9,6 +9,7 @@ interface FilterDrawerProps {
   filters: FilterState;
   metadata: FilterMetadata | null;
   onApply: (newFilters: FilterState) => void;
+  isAdmin?: boolean;
 }
 
 export const FilterDrawer: React.FC<FilterDrawerProps> = ({
@@ -17,6 +18,7 @@ export const FilterDrawer: React.FC<FilterDrawerProps> = ({
   filters,
   metadata,
   onApply,
+  isAdmin = false,
 }) => {
   const [draft, setDraft] = useState<FilterState>(filters);
 
@@ -67,6 +69,7 @@ export const FilterDrawer: React.FC<FilterDrawerProps> = ({
       minLeaseMax: undefined,
       query: undefined,
       sort: 'newest',
+      reviewStatus: undefined,
     };
     setDraft(resetState);
     onApply(resetState);
@@ -357,6 +360,45 @@ export const FilterDrawer: React.FC<FilterDrawerProps> = ({
                   );
                 })}
               </div>
+            </div>
+          )}
+
+          {/* Admin: review status */}
+          {isAdmin && (
+            <div>
+              <label className="text-xs font-bold uppercase tracking-wider text-amber-500 block mb-2">
+                Admin: Review Status
+              </label>
+              <div className="grid grid-cols-4 gap-2">
+                {[
+                  { val: undefined, label: 'Public' },
+                  { val: 'pending' as const, label: 'Pending' },
+                  { val: 'rejected' as const, label: 'Rejected' },
+                  { val: 'all' as const, label: 'All' },
+                ].map((opt) => {
+                  const isSelected = draft.reviewStatus === opt.val;
+                  return (
+                    <button
+                      key={opt.label}
+                      type="button"
+                      onClick={() => {
+                        triggerHaptic('selection');
+                        setDraft((p) => ({ ...p, reviewStatus: opt.val }));
+                      }}
+                      className={`py-2 rounded-xl text-xs font-semibold border transition-all ${
+                        isSelected
+                          ? 'bg-amber-500 text-white border-amber-500 shadow-xs'
+                          : 'bg-zinc-50 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400 border-zinc-200 dark:border-zinc-700'
+                      }`}
+                    >
+                      {opt.label}
+                    </button>
+                  );
+                })}
+              </div>
+              <p className="text-[10px] text-zinc-400 mt-1.5">
+                Pending shows uncertain listings awaiting moderation. All includes inactive listings.
+              </p>
             </div>
           )}
 
