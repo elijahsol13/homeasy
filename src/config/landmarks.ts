@@ -299,6 +299,23 @@ export const CAMBODIA_LANDMARKS: LandmarkEntry[] = [
     ],
     gmapsLink: 'https://www.google.com/maps/place/Hun+Sen+Blvd,+Phnom+Penh',
   },
+  {
+    id: 'pochentong_airport',
+    canonicalName: 'Phnom Penh International Airport (Pochentong)',
+    khmerName: 'អាកាសយានដ្ឋានអន្តរជាតិភ្នំពេញ',
+    city: 'phnom_penh',
+    aliases: [
+      'pochentong',
+      'pochentong airport',
+      'phnom penh airport',
+      'phnom penh international airport',
+      'airport phnom penh',
+      'почентонг',
+      'пномпень аэропорт',
+      'អាកាសយានដ្ឋានភ្នំពេញ',
+    ],
+    gmapsLink: 'https://www.google.com/maps/place/Phnom+Penh+International+Airport',
+  },
 ];
 
 /**
@@ -360,7 +377,7 @@ export function inferLocationFromLandmark(
   text: string,
   city: CityKey,
 ): { canonicalName: string; city: CityKey; sourceLandmark: string } | null {
-  if (city !== 'siem_reap' || !text || !text.trim()) return null;
+  if (!text || !text.trim()) return null;
   const matched = findLandmarksInText(text, city);
   for (const entry of matched) {
     const sangkat = LANDMARK_TO_SANGKAT[entry.id];
@@ -369,6 +386,44 @@ export function inferLocationFromLandmark(
     }
   }
   return null;
+}
+
+/**
+ * Infers the actual city from landmark mentions when the listing text names a
+ * well-known place that belongs to a different city than the scraped page assumed
+ * (e.g. a Phnom Penh listing appearing on a Siem Reap browse page).
+ * Returns null if there is no clear cross-city signal.
+ */
+export function inferCityFromLandmarks(text: string): CityKey | null {
+  if (!text || !text.trim()) return null;
+  const matched: LandmarkEntry[] = [];
+  const seenIds = new Set<string>();
+  for (const entry of CAMBODIA_LANDMARKS) {
+    if (seenIds.has(entry.id)) continue;
+    const raw = text;
+    const norm = normalizeText(raw);
+    if (raw.includes(entry.khmerName)) {
+      matched.push(entry);
+      seenIds.add(entry.id);
+      continue;
+    }
+    for (const alias of entry.aliases) {
+      const normAlias = normalizeText(alias);
+      if (normAlias.length < 3) continue;
+      const escaped = normAlias.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const regex = new RegExp(`\\b${escaped}\\b`, 'i');
+      if (regex.test(norm)) {
+        matched.push(entry);
+        seenIds.add(entry.id);
+        break;
+      }
+    }
+  }
+  if (matched.length === 0) return null;
+  const cities = matched.map((m) => m.city);
+  // Only override city if every matched landmark belongs to the same city.
+  if (new Set(cities).size !== 1) return null;
+  return cities[0];
 }
 
 /**

@@ -16,7 +16,7 @@ export const CAMBODIA_LOCATIONS: LocationEntry[] = [
     khmerName: 'ស្វាយដង្គុំ',
     city: 'siem_reap',
     administrativeType: 'sangkat',
-    aliases: ['svay dangkum', 'svay dang kum', 'svaydangkum'],
+    aliases: ['svay dangkum', 'svay dang kum', 'svaydangkum', 'svay'],
     googleMapsPlaceQuery: 'Sangkat Svay Dangkum, Krong Siem Reap, Cambodia',
   },
   {
