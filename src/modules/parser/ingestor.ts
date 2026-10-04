@@ -2,6 +2,7 @@ import crypto from 'crypto';
 import { BulkImportSchema, RawListingSchema, type BulkIngestResult, type CleanProperty, type IngestResult } from './schemas';
 import { cleanPhotoUrls, extractDirectContacts, normalizeText } from './normalizer';
 import {
+  categoryFromPropertyType,
   extractAmenities,
   extractBathrooms,
   extractBedrooms,
@@ -17,7 +18,7 @@ import {
   extractWater,
 } from './extractor';
 import { escapeHtml, extractCleaning, extractRestrictions } from '../../services/notifier';
-import { findLandmarksInText, inferLocationFromLandmark } from '../../config/landmarks';
+import { findLandmarksInText, inferCityFromLandmarks, inferLocationFromLandmark } from '../../config/landmarks';
 import {
   extractCoordinatesFromMapsUrl,
   findCanonicalLocation,
@@ -211,6 +212,15 @@ export function normalizeRawToClean(
     category = 'hotel';
   }
 
+  // If the LLM returned a property_type, the dedicated property_type→category
+  // mapping is the most reliable signal and should override a miscategorized
+  // category (e.g. a house mislabeled as hotel because a hotel name appeared as
+  // a nearby landmark).
+  const derivedFromPropertyType = categoryFromPropertyType(raw.property_type ?? undefined);
+  if (derivedFromPropertyType) {
+    category = derivedFromPropertyType;
+  }
+
   // ── Bedrooms ───────────────────────────────────────────────────────────────
   let bedrooms: number | null = null;
   if (raw.bedrooms !== undefined && raw.bedrooms !== null) {
@@ -245,6 +255,15 @@ export function normalizeRawToClean(
   let city: CityKey =
     detectedCity ??
     (raw.city === 'phnom_penh' ? 'phnom_penh' : 'siem_reap');
+
+  // If well-known landmarks in the text all point to a different city than the
+  // scraped page assumed, trust the landmarks (e.g. "near Pochentong Airport" on
+  // a Siem Reap browse page).
+  const inferredCity = inferCityFromLandmarks(combinedText);
+  if (inferredCity && inferredCity !== city) {
+    city = inferredCity;
+    warnings.push(`city_inferred_from_landmark:${inferredCity}`);
+  }
 
   // Cross-check the explicit location string against the canonical catalog: a listing
   // can be cross-posted to the wrong city's browse page (e.g. Phnom Penh ad on

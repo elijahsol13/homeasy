@@ -130,7 +130,8 @@ STRICT RULES:
     * 'Studio' = a SELF-CONTAINED single-unit dwelling with its OWN private bathroom (and usually a kitchenette), even if it is only one room and has no separate bedroom wall (e.g. "studio condo", "studio apartment", "bachelor unit"). A studio is NOT a 'Room'.
     * 'Apartment' / 'Condo' = a self-contained multi-room unit inside a building, with its own bathroom and (usually) kitchen.
   If the post explicitly says "studio" or describes a fully self-contained unit (own bathroom/kitchen, own unit number, own entrance), NEVER classify it as 'Room' even if the source listing page or category was labeled "room for rent" — use 'Studio', 'Apartment', or 'Condo' instead.
-- \`category\`: Derive it FROM \`property_type\`, do not guess independently: 'room' ONLY for property_type 'Room'; 'apartment' for property_type 'Studio', 'Apartment', or 'Condo'; 'house' for 'Private Villa', 'Private House', or 'Flat House'; 'hotel' for 'Hotel Room'. Use 'land' only for a residential plot with no structure, and 'commercial' for warehouse/shop/office/restaurant spaces.
+  IMPORTANT: Names of nearby hotels, schools, markets, malls, or other buildings used as location references (e.g. "behind Smile Hotel", "near CIA School", "opposite Aeon Mall") are MARKETING LANDMARKS, not the property type. Do NOT classify the listing as 'hotel' or 'commercial' just because a hotel/school/shop is mentioned nearby.
+- \`category\`: Derive it FROM \`property_type\`, do not guess independently: 'room' ONLY for property_type 'Room'; 'apartment' for property_type 'Studio', 'Apartment', or 'Condo'; 'house' for 'Private Villa', 'Private House', or 'Flat House'; 'hotel' ONLY when property_type is 'Hotel Room'. Use 'land' only for a residential plot with no structure, and 'commercial' for warehouse/shop/office/restaurant spaces.
 - \`phone_numbers\`: Extract ALL phone numbers found (WhatsApp, Telegram, local, international). Strip non-numeric characters except leading '+'. Example: ['+85577448002', '089899084'].
 - \`description_en\`: DO NOT repeat the price, location, or title. Extract ONLY the core details and overview. Return strictly as 1-3 short bullet points.
 - \`location\`: CRITICAL FOR LOCATION: Agents use 'borrowed prestige' (e.g., '5 mins to Pub Street', 'Near Aeon 3'). NEVER use relative distance/time markers as the actual location. Extract the ACTUAL physical district/sangkat into the \`location\` field (e.g. 'Choeung Ek', 'Boeng Trabaek', etc.), analyzing the text and mapping it to ONE of these exact values: [${VALID_SANGKATS.join(', ')}]. If the exact sangkat is not stated but a well-known physical landmark or neighborhood is named, choose the canonical sangkat that contains or is closest to that landmark. Examples: Pub Street / Old Market / Night Market / Phallar Night Market Angkor → 'Sla Kram'; Road 60 / Sokha Road → 'Svay Dangkum'; Charles de Gaulle / Apsara Road → 'Sla Kram'; Wat Bo → 'Sla Kram'; Angkor High School / Road 6 → 'Svay Dangkum'. If NO specific place is mentioned at all, return null. Do not guess or invent a location.
@@ -253,6 +254,14 @@ function sanitizeLlmResult(rawJson: string): LLMExtractedListing | null {
     const property_type = typeof parsed.property_type === 'string' && parsed.property_type.trim().length > 0
       ? parsed.property_type.trim()
       : null;
+
+    // Ensure category and property_type are consistent. The model sometimes
+    // mislabels category because a nearby hotel/school is mentioned as a landmark.
+    const derivedCategory = categoryFromPropertyType(property_type);
+    if (derivedCategory && derivedCategory !== category) {
+      category = derivedCategory;
+    }
+
     const landmarks = Array.isArray(parsed.landmarks)
       ? parsed.landmarks.filter((l): l is string => typeof l === 'string')
       : [];
@@ -521,10 +530,23 @@ export function extractPropertyType(text: string, category?: PropertyCategory | 
 export function categoryFromPropertyType(propertyType?: string | null): PropertyCategory | null {
   if (!propertyType || typeof propertyType !== 'string') return null;
   const normalized = propertyType.trim().toLowerCase();
-  if (normalized === 'room') return 'room';
-  if (normalized === 'studio' || normalized === 'apartment' || normalized === 'condo') return 'apartment';
-  if (normalized === 'private house' || normalized === 'private villa' || normalized === 'flat house') return 'house';
-  if (normalized === 'hotel room') return 'hotel';
+  if (normalized.includes('hotel') && normalized.includes('room')) return 'hotel';
+  if (normalized === 'room' || normalized.includes('private room') || normalized.includes('shared room')) return 'room';
+  if (
+    normalized.includes('studio') ||
+    normalized.includes('apartment') ||
+    normalized.includes('condo')
+  ) {
+    return 'apartment';
+  }
+  if (
+    normalized.includes('house') ||
+    normalized.includes('villa') ||
+    normalized.includes('flat house') ||
+    normalized.includes('shophouse')
+  ) {
+    return 'house';
+  }
   return null;
 }
 
