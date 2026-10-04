@@ -197,6 +197,14 @@ export async function requireTelegramAuth(request: FastifyRequest, reply: Fastif
 }
 
 /**
+ * Returns true if the given Telegram user ID is configured as an admin.
+ */
+export function isAdminTelegramUser(userId: number | undefined): boolean {
+  if (userId === undefined) return false;
+  return env.ADMIN_IDS.includes(userId);
+}
+
+/**
  * Optional Telegram auth: if header is present, parses user; otherwise continues as guest.
  */
 export async function optionalTelegramAuth(request: FastifyRequest): Promise<void> {

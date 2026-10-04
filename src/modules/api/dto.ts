@@ -58,6 +58,10 @@ export interface PropertyDTO {
     whatsappLink?: string;
   };
   isFavorite?: boolean;
+  /** Admin/debug fields */
+  reviewStatus?: 'pending' | 'approved' | 'rejected';
+  reviewReason?: string | null;
+  parseWarnings?: string[];
 }
 
 export interface MapMarkerDTO {
@@ -219,6 +223,9 @@ export function toPropertyDTO(property: Property, isFavorite?: boolean): Propert
     },
     contact,
     isFavorite,
+    reviewStatus: property.review_status,
+    reviewReason: property.review_reason,
+    parseWarnings: property.parse_warnings ?? [],
   };
 }
 

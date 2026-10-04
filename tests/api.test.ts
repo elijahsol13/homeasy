@@ -3,6 +3,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { createContainer } from '../src/container';
 import { runMigrations } from '../src/database/migrate';
 import { validateTelegramInitData } from '../src/modules/api/auth';
+import { env } from '../src/config/env';
 import { buildApiServer } from '../src/modules/api/server';
 import type { FastifyInstance } from 'fastify';
 
@@ -35,6 +36,7 @@ function createMockTelegramInitData(
 describe('Telegram Mini App (TMA) Backend API', () => {
   let db: DatabaseSync;
   let app: FastifyInstance;
+  let container: ReturnType<typeof createContainer>;
   const testBotToken = '1234567890:ABCdefGHIjklMNOpqrSTUvwxYZ_TEST';
 
   beforeAll(async () => {
@@ -42,7 +44,7 @@ describe('Telegram Mini App (TMA) Backend API', () => {
     db = new DatabaseSync(':memory:');
     runMigrations(db);
 
-    const container = createContainer({ db });
+    container = createContainer({ db });
 
     // Seed test properties
     container.propertiesRepo.insertProperty({
@@ -420,6 +422,116 @@ describe('Telegram Mini App (TMA) Backend API', () => {
     it('does not expose the remote browser endpoint', async () => {
       const response = await app.inject({ method: 'GET', url: '/admin/remote-browser?token=test' });
       expect(response.statusCode).toBe(404);
+    });
+  });
+
+  // ─── Admin review filters ────────────────────────────────────────────────────
+
+  describe('Admin review-status filtering', () => {
+    const ADMIN_TG_ID = 299321244;
+    const NON_ADMIN_TG_ID = 111222333;
+
+    beforeAll(() => {
+      if (!env.ADMIN_IDS.includes(ADMIN_TG_ID)) {
+        env.ADMIN_IDS.push(ADMIN_TG_ID);
+      }
+
+      container.propertiesRepo.insertProperty({
+        hash: 'test_hash_pending_1',
+        title: 'Uncertain Listing Awaiting Review',
+        description: 'Possibly real estate, unclear from text.',
+        price: 20000,
+        currency: 'USD',
+        type: 'rent',
+        category: 'apartment',
+        bedrooms: 1,
+        bathrooms: 1,
+        deposit: 20000,
+        min_lease: 1,
+        has_pool: null,
+        location: 'Svay Dangkum',
+        city: 'siem_reap',
+        maps_url: null,
+        source_url: 'https://khmer24.com/p-999',
+        original_url: 'https://khmer24.com/p-999',
+        photos: [],
+        direct_contact: {},
+        is_active: 0,
+        review_status: 'pending',
+      });
+    });
+
+    it('ignores review_status param for unauthenticated public requests', async () => {
+      const res = await app.inject({
+        method: 'GET',
+        url: '/api/v1/properties?review_status=pending',
+      });
+
+      expect(res.statusCode).toBe(200);
+      const body = res.json();
+      expect(body.total).toBe(3);
+      expect(body.items.every((i: { id: number }) => i.id)).toBe(true);
+      expect(body.items.some((i: { title: string }) => i.title === 'Uncertain Listing Awaiting Review')).toBe(false);
+    });
+
+    it('ignores review_status param for authenticated non-admin users', async () => {
+      const res = await app.inject({
+        method: 'GET',
+        url: '/api/v1/properties?review_status=pending',
+        headers: { 'x-dev-telegram-id': String(NON_ADMIN_TG_ID) },
+      });
+
+      expect(res.statusCode).toBe(200);
+      const body = res.json();
+      expect(body.items.some((i: { title: string }) => i.title === 'Uncertain Listing Awaiting Review')).toBe(false);
+    });
+
+    it('returns pending listings to admins via review_status=pending', async () => {
+      const res = await app.inject({
+        method: 'GET',
+        url: '/api/v1/properties?review_status=pending',
+        headers: { 'x-dev-telegram-id': String(ADMIN_TG_ID) },
+      });
+
+      expect(res.statusCode).toBe(200);
+      const body = res.json();
+      expect(body.items.length).toBe(1);
+      expect(body.items[0].title).toBe('Uncertain Listing Awaiting Review');
+      expect(body.items[0].reviewStatus).toBe('pending');
+    });
+
+    it('returns all listings including inactive via review_status=all for admins', async () => {
+      const res = await app.inject({
+        method: 'GET',
+        url: '/api/v1/properties?review_status=all',
+        headers: { 'x-dev-telegram-id': String(ADMIN_TG_ID) },
+      });
+
+      expect(res.statusCode).toBe(200);
+      const body = res.json();
+      expect(body.total).toBe(4);
+    });
+  });
+
+  describe('GET /api/v1/me', () => {
+    it('reports isAdmin=false for anonymous requests', async () => {
+      const res = await app.inject({ method: 'GET', url: '/api/v1/me' });
+      expect(res.statusCode).toBe(200);
+      const body = res.json();
+      expect(body.authenticated).toBe(false);
+      expect(body.isAdmin).toBe(false);
+    });
+
+    it('reports isAdmin=true for a configured admin Telegram ID', async () => {
+      const res = await app.inject({
+        method: 'GET',
+        url: '/api/v1/me',
+        headers: { 'x-dev-telegram-id': '299321244' },
+      });
+      expect(res.statusCode).toBe(200);
+      const body = res.json();
+      expect(body.authenticated).toBe(true);
+      expect(body.isAdmin).toBe(true);
     });
   });
 });

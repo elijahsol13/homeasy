@@ -66,6 +66,9 @@ export async function fetchProperties(
   if (filters.query && filters.query.trim().length > 0) {
     params.set('query', filters.query.trim());
   }
+  if (filters.reviewStatus) {
+    params.set('review_status', filters.reviewStatus);
+  }
 
   const res = await fetch(`${API_BASE}/properties?${params.toString()}`, {
     headers: getAuthHeaders(),
@@ -73,6 +76,25 @@ export async function fetchProperties(
 
   if (!res.ok) {
     throw new Error(`Failed to fetch properties: ${res.statusText}`);
+  }
+
+  return res.json();
+}
+
+export interface MeResponse {
+  authenticated: boolean;
+  user: { id: number; firstName?: string; lastName?: string; username?: string } | null;
+  role: string | null;
+  isAdmin: boolean;
+}
+
+export async function fetchMe(): Promise<MeResponse> {
+  const res = await fetch(`${API_BASE}/me`, {
+    headers: getAuthHeaders(),
+  });
+
+  if (!res.ok) {
+    throw new Error(`Failed to fetch current user: ${res.statusText}`);
   }
 
   return res.json();

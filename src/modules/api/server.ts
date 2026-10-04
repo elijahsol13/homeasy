@@ -7,6 +7,7 @@ import { healthRoutes } from './routes/health.routes';
 import { propertiesRoutes } from './routes/properties.routes';
 import { filtersRoutes } from './routes/filters.routes';
 import { favoritesRoutes } from './routes/favorites.routes';
+import { meRoutes } from './routes/me.routes';
 import { webhookRoutes } from './routes/webhook.routes';
 
 export interface BuildServerOptions {
@@ -67,6 +68,7 @@ export async function buildApiServer(options: BuildServerOptions): Promise<Fasti
   await app.register(propertiesRoutes, { container });
   await app.register(filtersRoutes, { container });
   await app.register(favoritesRoutes, { container });
+  await app.register(meRoutes, { container });
   await app.register(webhookRoutes, { container });
 
   // Custom 404 handler
