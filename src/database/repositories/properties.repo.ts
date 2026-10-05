@@ -415,6 +415,17 @@ export class PropertiesRepository {
     return this.getPropertyById(id);
   }
 
+  /**
+   * Active properties whose original_url matches a LIKE pattern (e.g. '%khmer24.com%').
+   * Used by the freshness sweep to re-check whether source ads are still live.
+   */
+  getActivePropertiesByUrlPattern(pattern: string): Property[] {
+    const rows = this.db
+      .prepare('SELECT * FROM properties WHERE is_active = 1 AND original_url LIKE ? ORDER BY updated_at ASC')
+      .all(pattern) as unknown as PropertyRow[];
+    return rows.map(rowToProperty);
+  }
+
   deactivateProperty(id: number): boolean {
     const result = this.db
       .prepare("UPDATE properties SET is_active = 0, updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE id = ?")

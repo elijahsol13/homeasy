@@ -631,6 +631,122 @@ export function toHighResImageUrl(url: string): string {
   return url.replace(/\/thumbs\//i, '/uploads/').replace(/\/s\//i, '/l/').replace(/\/m\//i, '/l/');
 }
 
+// ─── Freshness Sweep ──────────────────────────────────────────────────────────
+// Re-checks stored Khmer24 ads and deactivates ones whose source page is gone.
+
+const K24_DEAD_MARKERS = [
+  /this ad is no longer available/i,
+  /ad has been removed/i,
+  /ad has expired/i,
+  /listing has expired/i,
+  /no longer available/i,
+  /page not found/i,
+  /oops!.*not found/i,
+];
+
+export function classifyKhmer24PageLiveness(html: string): 'alive' | 'dead' | 'unknown' {
+  if (!html) return 'unknown';
+  const head = html.slice(0, 200_000);
+  if (/"@type"\s*:\s*"Product"/.test(head)) return 'alive';
+  if (K24_DEAD_MARKERS.some((re) => re.test(head))) return 'dead';
+  if (html.includes('-adid-') || html.includes('__NUXT_DATA__')) return 'unknown';
+  return 'dead';
+}
+
+export interface FreshnessSweepOptions {
+  dryRun?: boolean;
+  limit?: number;
+  dbPath?: string;
+}
+
+export async function runKhmer24FreshnessSweep(
+  containerInstance?: AppContainer,
+  options: FreshnessSweepOptions = {},
+): Promise<{ checked: number; alive: number; dead: number; unknown: number; errors: number }> {
+  const container = containerInstance ?? createContainer(options.dbPath ? { dbPath: options.dbPath } : undefined);
+  runMigrations(container.db);
+
+  const all = container.propertiesRepo.getActivePropertiesByUrlPattern('%khmer24.com%');
+  const targets = options.limit ? all.slice(0, options.limit) : all;
+
+  console.log('═══════════════════════════════════════════════════════════════');
+  console.log(`🧹 Khmer24 Freshness Sweep — ${targets.length} active ads to re-check${options.dryRun ? ' (DRY RUN)' : ''}`);
+  console.log('═══════════════════════════════════════════════════════════════');
+
+  let alive = 0;
+  let dead = 0;
+  let unknown = 0;
+  let errors = 0;
+  const browserHolder: { camoufox: CamoufoxBrowser | null } = { camoufox: null };
+
+  const getBrowser = async (): Promise<Browser> => {
+    if (!browserHolder.camoufox) {
+      browserHolder.camoufox = await launchCamoufox({ headless: true, devicePath: K24_DEVICE_PATH });
+    }
+    return browserHolder.camoufox.browser;
+  };
+
+  try {
+    for (const prop of targets) {
+      const url = prop.original_url;
+      let verdict: 'alive' | 'dead' | 'unknown' = 'unknown';
+      try {
+        try {
+          const html = await fetchKhmer24Html(url);
+          verdict = classifyKhmer24PageLiveness(html);
+        } catch (httpErr) {
+          if (!(httpErr instanceof Khmer24HttpFallbackError)) {
+            errors++;
+            console.warn(`  ⚠️ #${prop.id} HTTP error: ${httpErr instanceof Error ? httpErr.message : httpErr}`);
+            continue;
+          }
+          const browser = await getBrowser();
+          const contextOptions: { storageState?: string } = {};
+          if (fs.existsSync(K24_SESSION_PATH)) contextOptions.storageState = K24_SESSION_PATH;
+          const ctx = await browser.newContext(contextOptions);
+          try {
+            const page = await ctx.newPage();
+            await setupRelaxedTrafficGuard(page);
+            await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 45_000 });
+            const html = await page.content();
+            verdict = classifyKhmer24PageLiveness(html);
+          } finally {
+            await ctx.close().catch(() => {});
+          }
+        }
+      } catch (err) {
+        errors++;
+        console.warn(`  ⚠️ #${prop.id} check failed: ${err instanceof Error ? err.message : err}`);
+        continue;
+      }
+
+      if (verdict === 'dead') {
+        dead++;
+        console.log(`  🪦 #${prop.id} "${prop.title.slice(0, 45)}" — source ad gone`);
+        if (!options.dryRun) {
+          container.propertiesRepo.deactivateProperty(prop.id);
+        }
+      } else if (verdict === 'alive') {
+        alive++;
+      } else {
+        unknown++;
+        console.log(`  ❓ #${prop.id} "${prop.title.slice(0, 45)}" — inconclusive page, kept active`);
+      }
+    }
+  } finally {
+    if (browserHolder.camoufox) await browserHolder.camoufox.close().catch(() => {});
+  }
+
+  console.log('\n📊 Freshness summary:');
+  console.log(`   Checked  : ${targets.length}`);
+  console.log(`   ✅ Alive   : ${alive}`);
+  console.log(`   🪦 Dead    : ${dead}${options.dryRun ? ' (dry run — nothing deactivated)' : ' → deactivated'}`);
+  console.log(`   ❓ Unknown : ${unknown}`);
+  console.log(`   ⚠️ Errors  : ${errors}`);
+
+  return { checked: targets.length, alive, dead, unknown, errors };
+}
+
 // ─── Main Ingestion Runner ────────────────────────────────────────────────────
 
 export interface RunKhmer24Options {
@@ -749,6 +865,8 @@ export async function runKhmer24Scraper(
 if (require.main === module) {
   const args = process.argv.slice(2);
   const options: RunKhmer24Options = {};
+  let freshness = false;
+  const freshnessOptions: FreshnessSweepOptions = {};
 
   for (const arg of args) {
     if (arg.startsWith('--limit-listings=')) {
@@ -759,17 +877,29 @@ if (require.main === module) {
       if (!isNaN(n)) options.targetIndex = n;
     } else if (arg === '--no-enrich') {
       options.noEnrich = true;
+    } else if (arg === '--freshness') {
+      freshness = true;
+    } else if (arg === '--dry-run') {
+      freshnessOptions.dryRun = true;
+    } else if (arg.startsWith('--freshness-limit=')) {
+      const n = parseInt(arg.replace('--freshness-limit=', ''), 10);
+      if (!isNaN(n) && n > 0) freshnessOptions.limit = n;
     } else if (arg.startsWith('--dump-raw=')) {
       options.dumpRaw = arg.replace('--dump-raw=', '');
     } else if (arg.startsWith('--db-path=')) {
       options.dbPath = arg.replace('--db-path=', '');
+      freshnessOptions.dbPath = options.dbPath;
     } else if (arg === '--help' || arg === '-h') {
-      console.log('Usage: ts-node src/modules/parser/khmer24.scraper.ts [--target=N] [--limit-listings=N] [--no-enrich] [--dump-raw=path.json] [--db-path=path.db]');
+      console.log('Usage: ts-node src/modules/parser/khmer24.scraper.ts [--target=N] [--limit-listings=N] [--no-enrich] [--dump-raw=path.json] [--db-path=path.db] [--freshness] [--dry-run] [--freshness-limit=N]');
       process.exit(0);
     }
   }
 
-  runKhmer24Scraper(undefined, options).then(() => process.exit(0)).catch((err) => {
+  const runner = freshness
+    ? runKhmer24FreshnessSweep(undefined, freshnessOptions)
+    : runKhmer24Scraper(undefined, options);
+
+  runner.then(() => process.exit(0)).catch((err) => {
     console.error('💥 Fatal:', err);
     process.exit(1);
   });
