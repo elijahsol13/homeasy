@@ -18,6 +18,7 @@
     "scrape:khmer24": "ts-node src/modules/parser/khmer24.scraper.ts",
     "k24:login": "ts-node src/modules/parser/k24-login.ts",
     "fb:login": "ts-node src/modules/parser/fb-login.ts",
+    "fb:touch": "ts-node src/modules/parser/fb-touch.ts",
     "scrape:fb": "ts-node src/modules/parser/facebook.scraper.ts",
     "scrape:fb:smoke": "ts-node src/modules/parser/facebook.scraper.ts --smoke",
     "db:enrich": "ts-node src/database/enrich-properties.ts",
