@@ -84,3 +84,4 @@ tmp/
 __pycache__/
 *.pyc
 
+deploy/cloudflared/*.json
