@@ -147,3 +147,33 @@ export function openExternalUrl(url: string | null | undefined, e?: React.Synthe
     window.location.href = targetUrl;
   }
 }
+
+/**
+ * Opens a `tel:` (or `sms:`) link. Must NOT go through openExternalUrl — it
+ * force-prepends https://. In Telegram webviews `window.location.href='tel:'`
+ * is a no-op, so we prefer the native openLink bridge, then a synthetic anchor.
+ */
+export function openPhoneUrl(phoneLink: string | null | undefined, e?: React.SyntheticEvent): void {
+  if (!phoneLink) return;
+  triggerHaptic('light');
+
+  try {
+    if (typeof window !== 'undefined' && window.Telegram?.WebApp?.openLink) {
+      window.Telegram.WebApp.openLink(phoneLink);
+      if (e) e.preventDefault();
+      return;
+    }
+  } catch (err) {
+    console.warn('[Telegram] openLink failed for phone link:', err);
+  }
+
+  try {
+    const anchor = document.createElement('a');
+    anchor.href = phoneLink;
+    anchor.rel = 'noopener';
+    anchor.click();
+    if (e) e.preventDefault();
+  } catch {
+    // last resort — let the href propagate naturally
+  }
+}

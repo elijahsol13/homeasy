@@ -17,7 +17,7 @@ import {
   ChevronRight,
 } from 'lucide-react';
 import type { PropertyDTO } from '../types';
-import { triggerHaptic, openExternalUrl } from '../services/telegram';
+import { triggerHaptic, openExternalUrl, openPhoneUrl } from '../services/telegram';
 import posthog from 'posthog-js';
 
 interface PropertyDetailModalProps {
@@ -636,7 +636,7 @@ export const PropertyDetailModal: React.FC<PropertyDetailModalProps> = ({
                 } catch {
                   // ignore
                 }
-                window.location.href = property.contact.phoneLink!;
+                openPhoneUrl(property.contact.phoneLink);
               }}
               className="p-3 bg-emerald-500 hover:bg-emerald-600 text-white rounded-xl shadow-md active:scale-95 transition-all flex items-center justify-center"
               aria-label="Call"
