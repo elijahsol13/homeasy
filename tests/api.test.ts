@@ -513,6 +513,55 @@ describe('Telegram Mini App (TMA) Backend API', () => {
     });
   });
 
+  describe('POST /api/v1/properties/:id/review', () => {
+    const ADMIN_TG_ID = 299321244;
+    let pendingId: number;
+
+    it('rejects unauthenticated requests with 401', async () => {
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/v1/properties/1/review',
+        payload: { action: 'approve' },
+      });
+      expect(res.statusCode).toBe(401);
+    });
+
+    it('rejects authenticated non-admin users with 403', async () => {
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/v1/properties/1/review',
+        headers: { 'x-dev-telegram-id': '111222333' },
+        payload: { action: 'approve' },
+      });
+      expect(res.statusCode).toBe(403);
+    });
+
+    it('approves a pending listing as admin and idempotently rejects a second action', async () => {
+      const pending = container.propertiesRepo.searchProperties({ reviewStatus: 'pending' } as never);
+      pendingId = pending.items[0]?.id;
+      expect(pendingId).toBeGreaterThan(0);
+
+      const res = await app.inject({
+        method: 'POST',
+        url: `/api/v1/properties/${pendingId}/review`,
+        headers: { 'x-dev-telegram-id': String(ADMIN_TG_ID) },
+        payload: { action: 'approve' },
+      });
+      expect(res.statusCode).toBe(200);
+      const body = res.json();
+      expect(body.ok).toBe(true);
+      expect(body.property.reviewStatus).toBe('approved');
+
+      const again = await app.inject({
+        method: 'POST',
+        url: `/api/v1/properties/${pendingId}/review`,
+        headers: { 'x-dev-telegram-id': String(ADMIN_TG_ID) },
+        payload: { action: 'reject' },
+      });
+      expect(again.statusCode).toBe(409);
+    });
+  });
+
   describe('GET /api/v1/me', () => {
     it('reports isAdmin=false for anonymous requests', async () => {
       const res = await app.inject({ method: 'GET', url: '/api/v1/me' });

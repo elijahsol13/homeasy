@@ -23,6 +23,8 @@ interface PropertyDetailModalProps {
   onClose: () => void;
   onToggleFavorite: (propertyId: number) => void;
   onShowOnMap: (property: PropertyDTO) => void;
+  isAdmin?: boolean;
+  onReview?: (propertyId: number, action: 'approve' | 'reject') => void;
 }
 
 export const PropertyDetailModal: React.FC<PropertyDetailModalProps> = ({
@@ -30,8 +32,17 @@ export const PropertyDetailModal: React.FC<PropertyDetailModalProps> = ({
   onClose,
   onToggleFavorite,
   onShowOnMap,
+  isAdmin = false,
+  onReview,
 }) => {
   const [activePhoto, setActivePhoto] = useState(0);
+  const [reviewBusy, setReviewBusy] = useState<'approve' | 'reject' | null>(null);
+
+  const handleReview = (action: 'approve' | 'reject') => {
+    if (!onReview || reviewBusy) return;
+    setReviewBusy(action);
+    onReview(property!.id, action);
+  };
 
   if (!property) return null;
 
@@ -382,6 +393,26 @@ export const PropertyDetailModal: React.FC<PropertyDetailModalProps> = ({
                     <li key={w}>{w}</li>
                   ))}
                 </ul>
+              )}
+              {isAdmin && property.reviewStatus === 'pending' && onReview && (
+                <div className="flex gap-2 pt-1">
+                  <button
+                    type="button"
+                    disabled={reviewBusy !== null}
+                    onClick={() => handleReview('approve')}
+                    className="flex-1 bg-emerald-500 hover:bg-emerald-600 disabled:opacity-60 text-white text-xs font-bold py-2 px-3 rounded-xl transition-all active:scale-98"
+                  >
+                    {reviewBusy === 'approve' ? 'Approving…' : 'Approve & Publish'}
+                  </button>
+                  <button
+                    type="button"
+                    disabled={reviewBusy !== null}
+                    onClick={() => handleReview('reject')}
+                    className="flex-1 bg-rose-500 hover:bg-rose-600 disabled:opacity-60 text-white text-xs font-bold py-2 px-3 rounded-xl transition-all active:scale-98"
+                  >
+                    {reviewBusy === 'reject' ? 'Rejecting…' : 'Reject'}
+                  </button>
+                </div>
               )}
             </div>
           )}
