@@ -14,6 +14,15 @@ export const meRoutes: FastifyPluginAsync<{ container: AppContainer }> = async (
     const tgUser = request.telegramUser;
     const isAdmin = isAdminTelegramUser(tgUser?.id);
 
+    request.log.info(
+      {
+        hasInitData: Boolean(request.headers.authorization || request.headers['x-telegram-init-data']),
+        authedUserId: tgUser?.id ?? null,
+        isAdmin,
+      },
+      '/api/v1/me',
+    );
+
     let role: string | undefined;
     if (tgUser) {
       role = container.usersRepo.findByTelegramId(tgUser.id)?.role;
