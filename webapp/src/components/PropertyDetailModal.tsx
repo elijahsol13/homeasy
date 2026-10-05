@@ -13,6 +13,8 @@ import {
   ExternalLink,
   Map,
   MessageCircle,
+  ChevronLeft,
+  ChevronRight,
 } from 'lucide-react';
 import type { PropertyDTO } from '../types';
 import { triggerHaptic, openExternalUrl } from '../services/telegram';
@@ -37,6 +39,37 @@ export const PropertyDetailModal: React.FC<PropertyDetailModalProps> = ({
 }) => {
   const [activePhoto, setActivePhoto] = useState(0);
   const [reviewBusy, setReviewBusy] = useState<'approve' | 'reject' | null>(null);
+  const [lightboxOpen, setLightboxOpen] = useState(false);
+  const carouselRef = React.useRef<HTMLDivElement>(null);
+  const lightboxRef = React.useRef<HTMLDivElement>(null);
+  const propertyId = property?.id;
+
+  React.useEffect(() => {
+    setActivePhoto(0);
+    setReviewBusy(null);
+    setLightboxOpen(false);
+  }, [propertyId]);
+
+  // Sync lightbox scroll position to the photo that was tapped
+  React.useEffect(() => {
+    if (lightboxOpen && lightboxRef.current) {
+      lightboxRef.current.scrollTo({ left: activePhoto * lightboxRef.current.clientWidth });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lightboxOpen]);
+
+  const scrollCarouselTo = (ref: React.RefObject<HTMLDivElement | null>, index: number) => {
+    const el = ref.current;
+    if (el) el.scrollTo({ left: index * el.clientWidth, behavior: 'smooth' });
+  };
+
+  const handleCarouselScroll = (e: React.UIEvent<HTMLDivElement>) => {
+    const el = e.currentTarget;
+    if (!el.clientWidth) return;
+    const idx = Math.round(el.scrollLeft / el.clientWidth);
+    const total = property?.photos?.length ?? 0;
+    if (idx !== activePhoto && idx >= 0 && idx < total) setActivePhoto(idx);
+  };
 
   const handleReview = (action: 'approve' | 'reject') => {
     if (!onReview || reviewBusy) return;
@@ -60,83 +93,124 @@ export const PropertyDetailModal: React.FC<PropertyDetailModalProps> = ({
 
   return (
     <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex flex-col justify-end sm:justify-center sm:p-4 animate-in fade-in duration-200">
-      <div className="bg-white dark:bg-zinc-900 w-full max-w-2xl max-h-[92vh] sm:rounded-3xl rounded-t-3xl overflow-hidden flex flex-col shadow-2xl">
-        {/* Top Floating Action Bar */}
-        <div className="relative aspect-[16/10] w-full bg-zinc-100 dark:bg-zinc-800 shrink-0">
-          {photos.length > 0 ? (
-            <img
-              src={photos[activePhoto]}
-              alt={property.title}
-              className="w-full h-full object-cover select-none"
+      <div className="bg-white dark:bg-zinc-900 w-full max-w-2xl max-h-[92vh] sm:rounded-3xl rounded-t-3xl overflow-hidden flex flex-col shadow-2xl relative">
+        {/* Fixed Close & Favorite buttons — stay visible while content scrolls */}
+        <div className="absolute top-4 inset-x-4 flex items-center justify-between z-20 pointer-events-none">
+          <button
+            type="button"
+            onClick={() => {
+              triggerHaptic('light');
+              onClose();
+            }}
+            className="w-10 h-10 rounded-full bg-black/50 backdrop-blur-md text-white flex items-center justify-center hover:bg-black/70 active:scale-95 transition-all pointer-events-auto"
+            aria-label="Close"
+          >
+            <X className="w-5 h-5" />
+          </button>
+
+          <button
+            type="button"
+            onClick={() => {
+              triggerHaptic('medium');
+              onToggleFavorite(property.id);
+            }}
+            className="w-10 h-10 rounded-full bg-black/50 backdrop-blur-md text-white flex items-center justify-center hover:bg-black/70 active:scale-95 transition-all pointer-events-auto"
+            aria-label="Favorite"
+          >
+            <Heart
+              className={`w-5 h-5 ${
+                property.isFavorite ? 'fill-rose-500 text-rose-500' : 'text-white'
+              }`}
             />
-          ) : (
-            <div className="w-full h-full flex items-center justify-center text-zinc-400">
-              No Photos
-            </div>
-          )}
-
-          {/* Close & Favorite buttons */}
-          <div className="absolute top-4 inset-x-4 flex items-center justify-between z-10">
-            <button
-              type="button"
-              onClick={() => {
-                triggerHaptic('light');
-                onClose();
-              }}
-              className="w-10 h-10 rounded-full bg-black/50 backdrop-blur-md text-white flex items-center justify-center hover:bg-black/70 active:scale-95 transition-all"
-              aria-label="Close"
-            >
-              <X className="w-5 h-5" />
-            </button>
-
-            <button
-              type="button"
-              onClick={() => {
-                triggerHaptic('medium');
-                onToggleFavorite(property.id);
-              }}
-              className="w-10 h-10 rounded-full bg-black/50 backdrop-blur-md text-white flex items-center justify-center hover:bg-black/70 active:scale-95 transition-all"
-              aria-label="Favorite"
-            >
-              <Heart
-                className={`w-5 h-5 ${
-                  property.isFavorite ? 'fill-rose-500 text-rose-500' : 'text-white'
-                }`}
-              />
-            </button>
-          </div>
-
-          {/* Photo count badge */}
-          {photos.length > 1 && (
-            <div className="absolute bottom-3 right-3 bg-black/60 backdrop-blur-md text-white text-xs font-semibold px-2.5 py-1 rounded-lg">
-              {activePhoto + 1} / {photos.length}
-            </div>
-          )}
+          </button>
         </div>
 
-        {/* Thumbnail strip */}
-        {photos.length > 1 && (
-          <div className="flex items-center gap-2 p-2 px-4 bg-zinc-50 dark:bg-zinc-800/50 overflow-x-auto no-scrollbar border-b border-zinc-100 dark:border-zinc-800 shrink-0">
-            {photos.map((src, i) => (
-              <button
-                key={i}
-                type="button"
-                onClick={() => {
-                  triggerHaptic('selection');
-                  setActivePhoto(i);
-                }}
-                className={`w-14 h-14 rounded-lg overflow-hidden shrink-0 border-2 transition-all ${
-                  activePhoto === i ? 'border-sky-500 scale-105' : 'border-transparent opacity-60'
-                }`}
-              >
-                <img src={src} alt="" className="w-full h-full object-cover" />
-              </button>
-            ))}
-          </div>
-        )}
+        {/* Scrollable Content — photo carousel scrolls away with the body */}
+        <div className="overflow-y-auto flex-1">
+          {/* Swipeable Photo Carousel */}
+          <div className="relative aspect-[16/10] w-full bg-zinc-100 dark:bg-zinc-800">
+            {photos.length > 0 ? (
+              <>
+                <div
+                  ref={carouselRef}
+                  onScroll={handleCarouselScroll}
+                  className="flex overflow-x-auto snap-x snap-mandatory touch-pan-x scrollbar-hide w-full h-full"
+                >
+                  {photos.map((src, idx) => (
+                    <img
+                      key={idx}
+                      src={src}
+                      alt={`${property.title} - photo ${idx + 1}`}
+                      onClick={() => {
+                        triggerHaptic('light');
+                        setActivePhoto(idx);
+                        setLightboxOpen(true);
+                      }}
+                      className="snap-center shrink-0 w-full h-full object-cover select-none cursor-zoom-in"
+                      draggable={false}
+                    />
+                  ))}
+                </div>
 
-        {/* Scrollable Content */}
-        <div className="p-4 sm:p-6 overflow-y-auto space-y-5 flex-1">
+                {/* Desktop arrows */}
+                {photos.length > 1 && (
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => scrollCarouselTo(carouselRef, Math.max(0, activePhoto - 1))}
+                      className="hidden sm:flex absolute left-3 top-1/2 -translate-y-1/2 w-9 h-9 rounded-full bg-black/50 backdrop-blur-md text-white items-center justify-center hover:bg-black/70 transition-all"
+                      aria-label="Previous photo"
+                    >
+                      <ChevronLeft className="w-5 h-5" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => scrollCarouselTo(carouselRef, Math.min(photos.length - 1, activePhoto + 1))}
+                      className="hidden sm:flex absolute right-3 top-1/2 -translate-y-1/2 w-9 h-9 rounded-full bg-black/50 backdrop-blur-md text-white items-center justify-center hover:bg-black/70 transition-all"
+                      aria-label="Next photo"
+                    >
+                      <ChevronRight className="w-5 h-5" />
+                    </button>
+                  </>
+                )}
+
+                {/* Photo count badge */}
+                {photos.length > 1 && (
+                  <div className="absolute bottom-3 right-3 bg-black/60 backdrop-blur-md text-white text-xs font-semibold px-2.5 py-1 rounded-lg pointer-events-none">
+                    {activePhoto + 1} / {photos.length}
+                  </div>
+                )}
+              </>
+            ) : (
+              <div className="w-full h-full flex items-center justify-center text-zinc-400">
+                No Photos
+              </div>
+            )}
+          </div>
+
+          {/* Thumbnail strip */}
+          {photos.length > 1 && (
+            <div className="flex items-center gap-2 p-2 px-4 bg-zinc-50 dark:bg-zinc-800/50 overflow-x-auto no-scrollbar border-b border-zinc-100 dark:border-zinc-800">
+              {photos.map((src, i) => (
+                <button
+                  key={i}
+                  type="button"
+                  onClick={() => {
+                    triggerHaptic('selection');
+                    setActivePhoto(i);
+                    scrollCarouselTo(carouselRef, i);
+                  }}
+                  className={`w-14 h-14 rounded-lg overflow-hidden shrink-0 border-2 transition-all ${
+                    activePhoto === i ? 'border-sky-500 scale-105' : 'border-transparent opacity-60'
+                  }`}
+                >
+                  <img src={src} alt="" className="w-full h-full object-cover" />
+                </button>
+              ))}
+            </div>
+          )}
+
+          <div className="p-4 sm:p-6 space-y-5">
           {/* Header Title & Price */}
           <div>
             <div className="flex items-center gap-2 mb-2">
@@ -433,7 +507,73 @@ export const PropertyDetailModal: React.FC<PropertyDetailModalProps> = ({
               </a>
             </div>
           )}
+          </div>
         </div>
+
+        {/* Fullscreen photo lightbox */}
+        {lightboxOpen && photos.length > 0 && (
+          <div
+            className="absolute inset-0 z-30 bg-black/95 flex flex-col"
+            onClick={() => setLightboxOpen(false)}
+          >
+            <div className="flex items-center justify-between p-4 shrink-0">
+              <span className="text-white/80 text-sm font-semibold">
+                {activePhoto + 1} / {photos.length}
+              </span>
+              <button
+                type="button"
+                onClick={() => setLightboxOpen(false)}
+                className="w-10 h-10 rounded-full bg-white/10 text-white flex items-center justify-center hover:bg-white/20 transition-all"
+                aria-label="Close photos"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <div
+              ref={lightboxRef}
+              onScroll={handleCarouselScroll}
+              onClick={(e) => e.stopPropagation()}
+              className="flex overflow-x-auto snap-x snap-mandatory touch-pan-x scrollbar-hide flex-1 items-center"
+            >
+              {photos.map((src, idx) => (
+                <div key={idx} className="snap-center shrink-0 w-full h-full flex items-center justify-center px-2">
+                  <img
+                    src={src}
+                    alt={`${property.title} - photo ${idx + 1}`}
+                    className="max-w-full max-h-full object-contain select-none"
+                    draggable={false}
+                  />
+                </div>
+              ))}
+            </div>
+            {photos.length > 1 && (
+              <>
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    scrollCarouselTo(lightboxRef, Math.max(0, activePhoto - 1));
+                  }}
+                  className="absolute left-2 top-1/2 -translate-y-1/2 w-10 h-10 rounded-full bg-white/15 text-white flex items-center justify-center hover:bg-white/25 transition-all"
+                  aria-label="Previous photo"
+                >
+                  <ChevronLeft className="w-6 h-6" />
+                </button>
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    scrollCarouselTo(lightboxRef, Math.min(photos.length - 1, activePhoto + 1));
+                  }}
+                  className="absolute right-2 top-1/2 -translate-y-1/2 w-10 h-10 rounded-full bg-white/15 text-white flex items-center justify-center hover:bg-white/25 transition-all"
+                  aria-label="Next photo"
+                >
+                  <ChevronRight className="w-6 h-6" />
+                </button>
+              </>
+            )}
+          </div>
+        )}
 
         {/* Sticky Contact Bottom Bar */}
         <div className="p-4 bg-white dark:bg-zinc-900 border-t border-zinc-200 dark:border-zinc-800 flex items-center gap-3 shrink-0">
