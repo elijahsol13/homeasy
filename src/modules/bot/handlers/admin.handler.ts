@@ -413,18 +413,21 @@ export function createAdminHandler(container: AppContainer): Composer<MyContext>
       text: updated ? `Listing ${action}d` : 'Listing already reviewed or missing',
       show_alert: !updated,
     });
-    if (updated) {
-      if (action === 'approve') {
-        const property = container.propertiesRepo.getPropertyById(propertyId);
-        if (property?.is_active === 1) {
-          await container.matcherService.matchAndNotify(property).catch((err) => {
-            console.error('Approved listing match error:', err);
-          });
-        }
-      }
+    if (!updated) {
+      // Stale message — strip the buttons so it can't be tapped again.
       await ctx.editMessageReplyMarkup({ reply_markup: { inline_keyboard: [] } }).catch(() => {});
-      await ctx.reply(`${action === 'approve' ? 'Approved' : 'Rejected'} listing #${propertyId}.`);
+      return;
     }
+    if (action === 'approve') {
+      const property = container.propertiesRepo.getPropertyById(propertyId);
+      if (property?.is_active === 1) {
+        await container.matcherService.matchAndNotify(property).catch((err) => {
+          console.error('Approved listing match error:', err);
+        });
+      }
+    }
+    await ctx.editMessageReplyMarkup({ reply_markup: { inline_keyboard: [] } }).catch(() => {});
+    await ctx.reply(`${action === 'approve' ? 'Approved' : 'Rejected'} listing #${propertyId}.`);
   });
 
   return handler;
