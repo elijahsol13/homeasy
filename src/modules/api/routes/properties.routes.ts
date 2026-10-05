@@ -2,7 +2,7 @@ import type { FastifyPluginAsync } from 'fastify';
 import type { AppContainer } from '../../../container';
 import type { CityKey } from '../../../config/settings';
 import type { MapBoundingBox } from '../../../database/repositories/properties.repo';
-import { isAdminTelegramUser, optionalTelegramAuth } from '../auth';
+import { isAdminTelegramUser, optionalTelegramAuth, requireTelegramAuth } from '../auth';
 import { toPropertyDTO, toMapMarkerDTO, toSangkatClusterDTO } from '../dto';
 
 export const propertiesRoutes: FastifyPluginAsync<{ container: AppContainer }> = async (fastify, opts) => {
@@ -245,6 +245,66 @@ export const propertiesRoutes: FastifyPluginAsync<{ container: AppContainer }> =
       }
 
       return reply.send(toPropertyDTO(property, isFavorite));
+    },
+  );
+
+  /**
+   * POST /api/v1/properties/:id/review
+   * Admin-only moderation action: { action: 'approve' | 'reject' }.
+   */
+  fastify.post(
+    '/api/v1/properties/:id/review',
+    { preHandler: requireTelegramAuth },
+    async (request, reply) => {
+      const isAdminUser =
+        isAdminTelegramUser(request.telegramUser?.id) ||
+        (request.telegramUser
+          ? container.usersRepo.findByTelegramId(request.telegramUser.id)?.role === 'admin'
+          : false);
+
+      if (!isAdminUser) {
+        return reply.status(403).send({
+          statusCode: 403,
+          error: 'Forbidden',
+          message: 'Admin access required',
+        });
+      }
+
+      const { id } = request.params as { id: string };
+      const propId = parseInt(id, 10);
+      const action = (request.body as { action?: string } | undefined)?.action;
+
+      if (isNaN(propId) || (action !== 'approve' && action !== 'reject')) {
+        return reply.status(400).send({
+          statusCode: 400,
+          error: 'Bad Request',
+          message: 'Valid property ID and action=approve|reject required',
+        });
+      }
+
+      const updated = action === 'approve'
+        ? container.propertiesRepo.approvePendingProperty(propId)
+        : container.propertiesRepo.rejectPendingProperty(propId);
+
+      if (!updated) {
+        return reply.status(409).send({
+          statusCode: 409,
+          error: 'Conflict',
+          message: 'Listing already reviewed or missing',
+        });
+      }
+
+      if (action === 'approve') {
+        const property = container.propertiesRepo.getPropertyById(propId);
+        if (property?.is_active === 1) {
+          container.matcherService.matchAndNotify(property).catch((err) => {
+            request.log.error({ err }, 'Approved listing match error');
+          });
+        }
+      }
+
+      const property = container.propertiesRepo.getPropertyById(propId);
+      return reply.send({ ok: true, action, property: property ? toPropertyDTO(property) : null });
     },
   );
 };

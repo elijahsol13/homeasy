@@ -177,6 +177,24 @@ export async function fetchFavorites(): Promise<PropertyDTO[]> {
   return data.items || [];
 }
 
+export async function reviewProperty(
+  propertyId: number,
+  action: 'approve' | 'reject',
+): Promise<{ ok: boolean; action: string; property: PropertyDTO | null }> {
+  const res = await fetch(`${API_BASE}/properties/${propertyId}/review`, {
+    method: 'POST',
+    headers: getAuthHeaders(),
+    body: JSON.stringify({ action }),
+  });
+
+  if (!res.ok) {
+    const body = (await res.json().catch(() => null)) as { message?: string } | null;
+    throw new Error(body?.message ?? `Review failed: ${res.statusText}`);
+  }
+
+  return res.json();
+}
+
 export async function toggleFavorite(propertyId: number): Promise<{ isFavorite: boolean }> {
   const res = await fetch(`${API_BASE}/favorites/toggle`, {
     method: 'POST',

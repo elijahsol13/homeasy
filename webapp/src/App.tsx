@@ -11,6 +11,7 @@ import {
   fetchFilterMetadata,
   fetchFavorites,
   fetchMe,
+  reviewProperty,
   toggleFavorite,
 } from './services/api';
 import { initTelegramWebApp } from './services/telegram';
@@ -176,6 +177,29 @@ export const App: React.FC = () => {
       console.error('Failed to load more:', err);
     } finally {
       setLoadingMore(false);
+    }
+  };
+
+  // Admin review action (approve/reject pending listings)
+  const handleReview = async (propertyId: number, action: 'approve' | 'reject') => {
+    try {
+      const res = await reviewProperty(propertyId, action);
+      const updated = res.property;
+      if (updated) {
+        if (filters.reviewStatus === 'pending') {
+          setProperties((prev) => prev.filter((p) => p.id !== propertyId));
+          setTotal((t) => Math.max(0, t - 1));
+          setSelectedProperty(null);
+        } else {
+          setProperties((prev) => prev.map((p) => (p.id === propertyId ? updated : p)));
+          setSelectedProperty(updated);
+        }
+      } else {
+        setSelectedProperty(null);
+      }
+    } catch (err) {
+      console.error('Review failed:', err);
+      alert(err instanceof Error ? err.message : 'Review failed');
     }
   };
 
@@ -402,6 +426,8 @@ export const App: React.FC = () => {
         onClose={() => setSelectedProperty(null)}
         onToggleFavorite={handleToggleFavorite}
         onShowOnMap={handleShowOnMap}
+        isAdmin={isAdmin}
+        onReview={handleReview}
       />
 
       {/* Filter Drawer */}
