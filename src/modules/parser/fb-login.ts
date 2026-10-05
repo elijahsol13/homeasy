@@ -100,8 +100,19 @@ export async function runFbLogin(): Promise<void> {
 
     await waitForEnterOrTimeout(180000);
 
-    const accountId = await getAuthenticatedFacebookAccountId(context);
-    const challengeReason = await detectFacebookChallenge(page);
+    let accountId = await getAuthenticatedFacebookAccountId(context);
+    let challengeReason = await detectFacebookChallenge(page);
+
+    // Two-step verification is a legitimate login step for real accounts, not a
+    // block. Let the human complete it in the browser, then re-check.
+    for (let attempt = 0; attempt < 5 && !accountId && challengeReason?.includes('two_step_verification'); attempt++) {
+      console.log('\n🔐 Two-step verification is showing — enter your 2FA code in the browser window,');
+      console.log('   then press [ENTER] here when the feed has loaded (or wait 180s)...');
+      await waitForEnterOrTimeout(180000);
+      accountId = await getAuthenticatedFacebookAccountId(context);
+      challengeReason = await detectFacebookChallenge(page);
+    }
+
     if (!accountId || challengeReason) {
       throw new Error(
         challengeReason ?? 'Facebook login is incomplete: required authenticated cookies were not found.',
