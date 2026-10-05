@@ -84,7 +84,15 @@ export function triggerHaptic(type: 'light' | 'medium' | 'heavy' | 'selection' |
 
 export function getTelegramInitData(): string {
   try {
-    return WebApp.initData || '';
+    if (WebApp.initData) return WebApp.initData;
+  } catch {
+    // fall through to native bridge
+  }
+  try {
+    // Telegram Desktop on macOS exposes the payload on the native bridge
+    // while the SDK wrapper may not have hydrated it yet.
+    const native = window.Telegram?.WebApp as { initData?: string } | undefined;
+    return native?.initData || '';
   } catch {
     return '';
   }
