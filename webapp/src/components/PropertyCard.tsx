@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { Heart, MapPin, Send, Phone, Waves, Zap, Droplets, Ban, Sparkles, MessageCircle } from 'lucide-react';
 import type { PropertyDTO } from '../types';
-import { triggerHaptic, openExternalUrl } from '../services/telegram';
+import { triggerHaptic, openExternalUrl, openPhoneUrl } from '../services/telegram';
 import posthog from 'posthog-js';
 
 interface PropertyCardProps {
@@ -76,7 +76,7 @@ export const PropertyCard: React.FC<PropertyCardProps> = ({
       } catch {
         // ignore
       }
-      window.location.href = property.contact.phoneLink;
+      openPhoneUrl(property.contact.phoneLink);
     }
   };
 
