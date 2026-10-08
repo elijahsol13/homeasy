@@ -4,7 +4,8 @@ vi.mock('posthog-js', () => ({
   default: { capture: vi.fn(), identify: vi.fn() },
 }));
 
-import { openExternalUrl, openPhoneUrl, getTelegramInitData } from './telegram';
+import { openExternalUrl, getTelegramInitData } from './telegram';
+import { onPhoneActionClick, openTelegramContact, phoneActionHref } from './contact-actions';
 
 interface FakeTelegramWebApp {
   initData: string;
@@ -37,12 +38,31 @@ describe('openExternalUrl', () => {
 
   it('routes t.me links through openTelegramLink', () => {
     const tg = { initData: 'x', openLink: vi.fn(), openTelegramLink: vi.fn() };
+    const openSpy = vi.spyOn(window, 'open').mockReturnValue(null);
     setTelegramWebApp(tg);
 
     openExternalUrl('https://t.me/agent_name');
 
     expect(tg.openTelegramLink).toHaveBeenCalledWith('https://t.me/agent_name');
+    expect(tg.openTelegramLink).toHaveBeenCalledTimes(1);
     expect(tg.openLink).not.toHaveBeenCalled();
+    expect(openSpy).not.toHaveBeenCalled();
+    openSpy.mockRestore();
+  });
+
+  it('falls back to HTTPS when openTelegramLink throws', () => {
+    const tg = { initData: 'x', openLink: vi.fn(), openTelegramLink: vi.fn(() => { throw new Error('bridge failed'); }), close: vi.fn() };
+    const openSpy = vi.spyOn(window, 'open').mockReturnValue({ opener: null } as Window);
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    setTelegramWebApp(tg);
+
+    openTelegramContact('https://t.me/agent_name');
+
+    expect(tg.openTelegramLink).toHaveBeenCalledTimes(1);
+    expect(openSpy).toHaveBeenCalledWith('https://t.me/agent_name', '_blank', 'noopener,noreferrer');
+    expect(tg.close).not.toHaveBeenCalled();
+    openSpy.mockRestore();
+    warnSpy.mockRestore();
   });
 
   it('routes other https links through openLink', () => {
@@ -73,43 +93,23 @@ describe('openExternalUrl', () => {
   });
 });
 
-describe('openPhoneUrl', () => {
-  beforeEach(() => {
-    vi.restoreAllMocks();
-    setTelegramWebApp();
+describe('phone contact actions', () => {
+  it('accepts only E.164 telephone links', () => {
+    expect(phoneActionHref('tel:+85512345678')).toBe('tel:+85512345678');
+    expect(phoneActionHref('tel:85512345678')).toBeNull();
+    expect(phoneActionHref('tel:012345678')).toBeNull();
   });
 
-  afterEach(() => {
-    setTelegramWebApp();
-  });
-
-  it('passes tel: links to openLink unmodified (no https:// prefix)', () => {
+  it('keeps native call navigation and avoids Telegram APIs', () => {
     const tg = { initData: 'x', openLink: vi.fn(), openTelegramLink: vi.fn() };
     setTelegramWebApp(tg);
-
-    openPhoneUrl('tel:+85512345678');
-
-    expect(tg.openLink).toHaveBeenCalledWith('tel:+85512345678');
-  });
-
-  it('falls back to a synthetic anchor click without a Telegram bridge', () => {
-    const clickSpy = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {});
-
-    openPhoneUrl('tel:+855999');
-
-    expect(clickSpy).toHaveBeenCalled();
-    clickSpy.mockRestore();
-  });
-
-  it('does nothing for empty links', () => {
-    const tg = { initData: 'x', openLink: vi.fn(), openTelegramLink: vi.fn() };
-    setTelegramWebApp(tg);
-
-    openPhoneUrl(undefined);
-    openPhoneUrl(null);
-    openPhoneUrl('');
-
+    const preventDefault = vi.fn();
+    const stopPropagation = vi.fn();
+    onPhoneActionClick({ preventDefault, stopPropagation } as never);
+    expect(preventDefault).not.toHaveBeenCalled();
+    expect(stopPropagation).toHaveBeenCalledOnce();
     expect(tg.openLink).not.toHaveBeenCalled();
+    expect(tg.openTelegramLink).not.toHaveBeenCalled();
   });
 });
 

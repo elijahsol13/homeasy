@@ -13,11 +13,19 @@ import {
   ExternalLink,
   Map,
   MessageCircle,
+  Copy,
   ChevronLeft,
   ChevronRight,
 } from 'lucide-react';
 import type { PropertyDTO } from '../types';
-import { triggerHaptic, openExternalUrl, openPhoneUrl } from '../services/telegram';
+import { triggerHaptic, openExternalUrl } from '../services/telegram';
+import {
+  copyPhoneNumber,
+  onPhoneActionClick,
+  openTelegramContact,
+  phoneActionHrefFromDto,
+  telegramActionHrefFromDto,
+} from '../services/contact-actions';
 import posthog from 'posthog-js';
 
 interface PropertyDetailModalProps {
@@ -78,6 +86,9 @@ export const PropertyDetailModal: React.FC<PropertyDetailModalProps> = ({
   };
 
   if (!property) return null;
+
+  const telegramHref = telegramActionHrefFromDto(property.contact.telegramLink, property.contact.phone);
+  const phoneHref = phoneActionHrefFromDto(property.contact.phoneLink, property.contact.phone);
 
   const photos = property.photos && property.photos.length > 0 ? property.photos : [];
 
@@ -576,17 +587,32 @@ export const PropertyDetailModal: React.FC<PropertyDetailModalProps> = ({
         )}
 
         {/* Sticky Contact Bottom Bar */}
-        <div className="p-4 bg-white dark:bg-zinc-900 border-t border-zinc-200 dark:border-zinc-800 flex items-center gap-3 shrink-0">
-          {property.contact.telegramLink ? (
+        <div className="shrink-0 bg-white dark:bg-zinc-900 border-t border-zinc-200 dark:border-zinc-800">
+          {property.contact.phone && (
+            <div className="px-4 pt-3 flex items-center justify-between gap-3 text-sm">
+              <span className="text-zinc-700 dark:text-zinc-200 select-all">{property.contact.phone}</span>
+              <button
+                type="button"
+                onClick={(e) => void copyPhoneNumber(property.contact.phone, e)}
+                className="inline-flex items-center gap-1.5 text-sky-600 dark:text-sky-400 font-medium"
+                aria-label="Copy phone number"
+              >
+                <Copy className="w-4 h-4" /> Copy
+              </button>
+            </div>
+          )}
+          <div className="p-4 flex items-center gap-3">
+          {telegramHref ? (
             <button
               type="button"
-              onClick={() => {
+              onClick={(e) => {
+                triggerHaptic('light');
                 try {
                   posthog.capture('contact_lead_clicked', { propertyId: property.id, channel: 'telegram' });
                 } catch {
                   // ignore
                 }
-                openExternalUrl(property.contact.telegramLink!);
+                openTelegramContact(telegramHref, e);
               }}
               className="flex-1 bg-sky-500 hover:bg-sky-600 text-white font-bold py-3 px-4 rounded-xl flex items-center justify-center gap-2 shadow-md active:scale-98 transition-all"
             >
@@ -626,23 +652,23 @@ export const PropertyDetailModal: React.FC<PropertyDetailModalProps> = ({
             </a>
           )}
 
-          {property.contact.phone && (
-            <button
-              type="button"
-              onClick={() => {
+          {phoneHref && (
+            <a
+              href={phoneHref}
+              onClick={(e) => {
+                onPhoneActionClick(e);
                 triggerHaptic('light');
                 try {
                   posthog.capture('contact_lead_clicked', { propertyId: property.id, channel: 'phone' });
                 } catch {
                   // ignore
                 }
-                openPhoneUrl(property.contact.phoneLink);
               }}
               className="p-3 bg-emerald-500 hover:bg-emerald-600 text-white rounded-xl shadow-md active:scale-95 transition-all flex items-center justify-center"
               aria-label="Call"
             >
               <Phone className="w-5 h-5" />
-            </button>
+            </a>
           )}
 
           {effectiveMapsUrl && (
@@ -657,6 +683,7 @@ export const PropertyDetailModal: React.FC<PropertyDetailModalProps> = ({
               <Map className="w-5 h-5 text-sky-500" />
             </a>
           )}
+          </div>
         </div>
       </div>
     </div>
