@@ -1,9 +1,10 @@
 import React, { useState } from 'react';
-import { Heart, MapPin, Send, Phone, Copy, Waves, Zap, Droplets, Ban, Sparkles, MessageCircle } from 'lucide-react';
+import { Heart, MapPin, Send, Phone, Waves, Zap, Droplets, Ban, Sparkles, MessageCircle } from 'lucide-react';
 import type { PropertyDTO } from '../types';
 import { triggerHaptic } from '../services/telegram';
 import {
-  copyPhoneNumber,
+  getContactDiagnostics,
+  logCanaryContactDiagnostic,
   onPhoneActionClick,
   openTelegramContact,
   phoneActionHrefFromDto,
@@ -72,6 +73,10 @@ export const PropertyCard: React.FC<PropertyCardProps> = ({
       } catch {
         // ignore
       }
+      logCanaryContactDiagnostic(
+        getContactDiagnostics(property.contact.phone, property.contact.telegramLink, property.contact.phoneLink),
+        'telegram',
+      );
       openTelegramContact(telegramHref, e);
     }
   };
@@ -299,6 +304,10 @@ export const PropertyCard: React.FC<PropertyCardProps> = ({
                   } catch {
                     // ignore
                   }
+                  logCanaryContactDiagnostic(
+                    getContactDiagnostics(property.contact.phone, property.contact.telegramLink, property.contact.phoneLink),
+                    'phone',
+                  );
                 }}
                 className="p-2 bg-zinc-100 dark:bg-zinc-700 hover:bg-zinc-200 text-zinc-700 dark:text-zinc-200 rounded-xl transition-all active:scale-95"
                 aria-label="Call Agent"
@@ -307,15 +316,9 @@ export const PropertyCard: React.FC<PropertyCardProps> = ({
               </a>
             )}
             {property.contact.phone && (
-              <button
-                type="button"
-                onClick={(e) => void copyPhoneNumber(property.contact.phone, e)}
-                className="p-2 bg-zinc-100 dark:bg-zinc-700 hover:bg-zinc-200 text-zinc-700 dark:text-zinc-200 rounded-xl transition-all active:scale-95"
-                aria-label="Copy phone number"
-                title="Copy phone number"
-              >
-                <Copy className="w-4 h-4" />
-              </button>
+              <span className="min-w-0 truncate text-[11px] text-zinc-500 dark:text-zinc-400 select-all" aria-label="Phone number">
+                {property.contact.phone}
+              </span>
             )}
           </div>
         )}

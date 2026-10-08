@@ -1,5 +1,95 @@
 import type React from 'react';
 
+const CONTACT_DIAGNOSTIC_CANARY_USER_ID = '8441221953';
+
+type TelegramBridgeDetails = {
+  initDataUnsafe?: { user?: { id?: number | string } };
+  version?: string;
+  platform?: string;
+  openTelegramLink?: (url: string) => void;
+};
+
+export type ContactDiagnostics = {
+  rawPhone: string | null;
+  rawTelegram: string | null;
+  normalizedE164: string | null;
+  generatedTelegramUrl: string | null;
+  generatedTelHref: string | null;
+  webAppVersion: string | null;
+  webAppPlatform: string | null;
+  hasOpenTelegramLink: boolean;
+  userAgent: string;
+};
+
+export type TelegramBridgeTestResult =
+  | { status: 'dispatched' }
+  | { status: 'unavailable' }
+  | { status: 'error'; message: string };
+
+function telegramBridge(): TelegramBridgeDetails | undefined {
+  return typeof window === 'undefined'
+    ? undefined
+    : window.Telegram?.WebApp as TelegramBridgeDetails | undefined;
+}
+
+export function isContactDiagnosticCanary(): boolean {
+  const id = telegramBridge()?.initDataUnsafe?.user?.id;
+  return id !== undefined && String(id) === CONTACT_DIAGNOSTIC_CANARY_USER_ID;
+}
+
+export function getContactDiagnostics(
+  phone: string | null | undefined,
+  telegramLink: string | null | undefined,
+  phoneLink: string | null | undefined,
+): ContactDiagnostics {
+  const bridge = telegramBridge();
+  const normalizedE164 = normalizePhoneToE164(firstPhoneValue(phoneLink))
+    ?? normalizePhoneToE164(firstPhoneValue(phone));
+  return {
+    rawPhone: phone?.trim() || null,
+    rawTelegram: telegramLink?.trim() || null,
+    normalizedE164,
+    generatedTelegramUrl: telegramActionHrefFromDto(telegramLink, phone),
+    generatedTelHref: phoneActionHrefFromDto(phoneLink, phone),
+    webAppVersion: bridge?.version ?? null,
+    webAppPlatform: bridge?.platform ?? null,
+    hasOpenTelegramLink: typeof bridge?.openTelegramLink === 'function',
+    userAgent: typeof navigator === 'undefined' ? '' : navigator.userAgent,
+  };
+}
+
+/** Emit contact action data only for the explicit Telegram canary account. */
+export function logCanaryContactDiagnostic(diagnostics: ContactDiagnostics, action: 'telegram' | 'phone'): void {
+  if (isContactDiagnosticCanary()) {
+    console.info(`[contact.${action}.click]`, diagnostics);
+  }
+}
+
+/**
+ * Canary diagnostic only: invoke the native Telegram bridge directly.
+ * This deliberately has no browser or navigation fallback.
+ */
+export function testTelegramBridge(tmeUrl: string): TelegramBridgeTestResult {
+  const tg = telegramBridge();
+  if (!tg?.openTelegramLink) {
+    return { status: 'unavailable' };
+  }
+
+  try {
+    console.info('[contact.telegram.bridge-test]', {
+      url: tmeUrl,
+      platform: tg.platform ?? null,
+      version: tg.version ?? null,
+    });
+    tg.openTelegramLink(tmeUrl);
+    return { status: 'dispatched' };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.warn('[contact.telegram.bridge-test] synchronous error', { message });
+    return { status: 'error', message };
+  }
+}
+
 /** Open a Telegram destination through the Mini App API, with HTTPS fallback outside Telegram. */
 export function openTelegramContact(
   tmeUrl: string | null | undefined,
@@ -9,9 +99,16 @@ export function openTelegramContact(
   event?.preventDefault();
   event?.stopPropagation();
 
-  const tg = typeof window !== 'undefined' ? window.Telegram?.WebApp : undefined;
+  const tg = telegramBridge();
   if (tg?.openTelegramLink) {
     try {
+      if (isContactDiagnosticCanary()) {
+        console.info('[contact.telegram.dispatch]', {
+          url: tmeUrl,
+          platform: tg.platform ?? null,
+          version: tg.version ?? null,
+        });
+      }
       tg.openTelegramLink(tmeUrl);
       return;
     } catch (error) {
@@ -102,22 +199,22 @@ export function onPhoneActionClick(event: React.SyntheticEvent): void {
   event.stopPropagation();
 }
 
-/** Copy the displayed phone number; this is the fallback when desktop has no dialer. */
-export async function copyPhoneNumber(
-  phone: string | null | undefined,
+/** Copy a canary-only diagnostic value without adding a general contact fallback. */
+export async function copyContactDiagnostic(
+  value: string | null | undefined,
   event?: React.SyntheticEvent,
 ): Promise<boolean> {
   event?.preventDefault();
   event?.stopPropagation();
-  const value = phone?.trim();
-  if (!value) return false;
+  const text = value?.trim();
+  if (!text) return false;
 
   try {
-    await navigator.clipboard.writeText(value);
+    await navigator.clipboard.writeText(text);
     return true;
   } catch {
     const input = document.createElement('textarea');
-    input.value = value;
+    input.value = text;
     input.setAttribute('readonly', '');
     input.style.position = 'fixed';
     input.style.opacity = '0';

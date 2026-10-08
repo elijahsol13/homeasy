@@ -8,6 +8,8 @@ vi.mock('posthog-js', () => ({ default: { capture: vi.fn(), identify: vi.fn() } 
 import { PropertyCard } from './PropertyCard';
 import { PropertyDetailModal } from './PropertyDetailModal';
 import {
+  getContactDiagnostics,
+  isContactDiagnosticCanary,
   normalizePhoneToE164,
   phoneActionHref,
   phoneActionHrefFromDto,
@@ -93,10 +95,11 @@ describe('contact controls in listing UI', () => {
     expect(onSelect).not.toHaveBeenCalled();
   });
 
-  it('renders native call and copy controls in the card', async () => {
+  it('renders native call and a selectable number without a copy control in the card', async () => {
     await act(async () => root.render(<PropertyCard property={property} onSelect={vi.fn()} onToggleFavorite={vi.fn()} />));
     expect(host.querySelector<HTMLAnchorElement>('a[aria-label="Call Agent"]')?.getAttribute('href')).toBe('tel:+85512345678');
-    expect(host.querySelector('button[aria-label="Copy phone number"]')).not.toBeNull();
+    expect(host.querySelector('button[aria-label="Copy phone number"]')).toBeNull();
+    expect(host.querySelector('[aria-label="Phone number"]')?.textContent).toBe('012 345 678');
     expect(openTelegramLink).not.toHaveBeenCalled();
   });
 
@@ -112,7 +115,8 @@ describe('contact controls in listing UI', () => {
     expect(closeMiniApp).not.toHaveBeenCalled();
     expect(onClose).not.toHaveBeenCalled();
     expect(host.querySelector<HTMLAnchorElement>('a[aria-label="Call"]')?.getAttribute('href')).toBe('tel:+85512345678');
-    expect(host.querySelector('button[aria-label="Copy phone number"]')).not.toBeNull();
+    expect(host.querySelector('button[aria-label="Copy phone number"]')).toBeNull();
+    expect(host.textContent).toContain('012 345 678');
   });
 
   it('adapts legacy phone DTO values for card chat and call actions', async () => {
@@ -174,7 +178,44 @@ describe('legacy DTO phone normalization', () => {
   });
 
   it('uses the same E.164 value for a phone-based Telegram URL', () => {
-    expect(telegramActionHrefFromDto(null, '012 345 678')).toBe('https://t.me/+85512345678');
+    const generated = telegramActionHrefFromDto(null, '012 345 678');
+    expect(generated).toBe('https://t.me/+85512345678');
+    expect(generated).toMatch(/^https:\/\/t\.me\/\+\d{7,15}$/);
     expect(telegramActionHrefFromDto('https://t.me/+85512345678', null)).toBe('https://t.me/+85512345678');
+  });
+});
+
+describe('contact diagnostics canary', () => {
+  afterEach(() => {
+    delete (window as unknown as { Telegram?: unknown }).Telegram;
+  });
+
+  it('exposes contact diagnostics only to the designated Telegram user', () => {
+    (window as unknown as { Telegram: { WebApp: unknown } }).Telegram = {
+      WebApp: {
+        initDataUnsafe: { user: { id: 8441221953 } },
+        platform: 'tdesktop',
+        version: '8.0',
+        openTelegramLink: vi.fn(),
+      },
+    };
+
+    expect(isContactDiagnosticCanary()).toBe(true);
+    expect(getContactDiagnostics('012 345 678', null, 'tel:012345678')).toMatchObject({
+      normalizedE164: '+85512345678',
+      generatedTelegramUrl: 'https://t.me/+85512345678',
+      generatedTelHref: 'tel:+85512345678',
+      webAppPlatform: 'tdesktop',
+      webAppVersion: '8.0',
+      hasOpenTelegramLink: true,
+    });
+  });
+
+  it('does not expose diagnostics to other Telegram users', () => {
+    (window as unknown as { Telegram: { WebApp: unknown } }).Telegram = {
+      WebApp: { initDataUnsafe: { user: { id: 1 } } },
+    };
+
+    expect(isContactDiagnosticCanary()).toBe(false);
   });
 });
