@@ -1,7 +1,14 @@
 import React, { useState } from 'react';
-import { Heart, MapPin, Send, Phone, Waves, Zap, Droplets, Ban, Sparkles, MessageCircle } from 'lucide-react';
+import { Heart, MapPin, Send, Phone, Copy, Waves, Zap, Droplets, Ban, Sparkles, MessageCircle } from 'lucide-react';
 import type { PropertyDTO } from '../types';
-import { triggerHaptic, openExternalUrl, openPhoneUrl } from '../services/telegram';
+import { triggerHaptic } from '../services/telegram';
+import {
+  copyPhoneNumber,
+  onPhoneActionClick,
+  openTelegramContact,
+  phoneActionHrefFromDto,
+  telegramActionHrefFromDto,
+} from '../services/contact-actions';
 import posthog from 'posthog-js';
 
 interface PropertyCardProps {
@@ -39,6 +46,8 @@ export const PropertyCard: React.FC<PropertyCardProps> = ({
   const photos = property.photos && property.photos.length > 0 ? property.photos : [];
   const source = sourceLabel(property.originalUrl);
   const freshness = timeAgo(property.postedAt || property.createdAt);
+  const telegramHref = telegramActionHrefFromDto(property.contact.telegramLink, property.contact.phone);
+  const phoneHref = phoneActionHrefFromDto(property.contact.phoneLink, property.contact.phone);
 
   const handleScroll = (e: React.UIEvent<HTMLDivElement>) => {
     const el = e.currentTarget;
@@ -56,27 +65,14 @@ export const PropertyCard: React.FC<PropertyCardProps> = ({
   };
 
   const handleTelegramClick = (e: React.MouseEvent) => {
-    e.stopPropagation();
-    if (property.contact.telegramLink) {
+    if (telegramHref) {
+      triggerHaptic('light');
       try {
         posthog.capture('contact_lead_clicked', { propertyId: property.id, channel: 'telegram' });
       } catch {
         // ignore
       }
-      openExternalUrl(property.contact.telegramLink);
-    }
-  };
-
-  const handlePhoneClick = (e: React.MouseEvent) => {
-    e.stopPropagation();
-    if (property.contact.phoneLink) {
-      triggerHaptic('light');
-      try {
-        posthog.capture('contact_lead_clicked', { propertyId: property.id, channel: 'phone' });
-      } catch {
-        // ignore
-      }
-      openPhoneUrl(property.contact.phoneLink);
+      openTelegramContact(telegramHref, e);
     }
   };
 
@@ -253,9 +249,9 @@ export const PropertyCard: React.FC<PropertyCardProps> = ({
         </div>
 
         {/* Quick Contact Buttons */}
-        {(property.contact.telegramLink || property.contact.phone || property.originalUrl) && (
+        {(telegramHref || property.contact.phone || property.originalUrl) && (
           <div className="mt-auto pt-2 border-t border-zinc-100 dark:border-zinc-700/50 flex items-center gap-2">
-            {property.contact.telegramLink ? (
+            {telegramHref ? (
               <button
                 type="button"
                 onClick={handleTelegramClick}
@@ -292,14 +288,33 @@ export const PropertyCard: React.FC<PropertyCardProps> = ({
               </a>
             )}
 
-            {property.contact.phone && (
-              <button
-                type="button"
-                onClick={handlePhoneClick}
+            {phoneHref && (
+              <a
+                href={phoneHref}
+                onClick={(e) => {
+                  onPhoneActionClick(e);
+                  triggerHaptic('light');
+                  try {
+                    posthog.capture('contact_lead_clicked', { propertyId: property.id, channel: 'phone' });
+                  } catch {
+                    // ignore
+                  }
+                }}
                 className="p-2 bg-zinc-100 dark:bg-zinc-700 hover:bg-zinc-200 text-zinc-700 dark:text-zinc-200 rounded-xl transition-all active:scale-95"
                 aria-label="Call Agent"
               >
                 <Phone className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
+              </a>
+            )}
+            {property.contact.phone && (
+              <button
+                type="button"
+                onClick={(e) => void copyPhoneNumber(property.contact.phone, e)}
+                className="p-2 bg-zinc-100 dark:bg-zinc-700 hover:bg-zinc-200 text-zinc-700 dark:text-zinc-200 rounded-xl transition-all active:scale-95"
+                aria-label="Copy phone number"
+                title="Copy phone number"
+              >
+                <Copy className="w-4 h-4" />
               </button>
             )}
           </div>
@@ -308,4 +323,3 @@ export const PropertyCard: React.FC<PropertyCardProps> = ({
     </article>
   );
 };
-
