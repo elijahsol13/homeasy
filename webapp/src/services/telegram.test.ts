@@ -5,7 +5,7 @@ vi.mock('posthog-js', () => ({
 }));
 
 import { openExternalUrl, getTelegramInitData } from './telegram';
-import { onPhoneActionClick, openTelegramContact, phoneActionHref } from './contact-actions';
+import { onPhoneActionClick, openTelegramContact, phoneActionHref, testTelegramBridge } from './contact-actions';
 
 interface FakeTelegramWebApp {
   initData: string;
@@ -110,6 +110,33 @@ describe('phone contact actions', () => {
     expect(stopPropagation).toHaveBeenCalledOnce();
     expect(tg.openLink).not.toHaveBeenCalled();
     expect(tg.openTelegramLink).not.toHaveBeenCalled();
+  });
+});
+
+describe('Telegram bridge diagnostic', () => {
+  it('calls only openTelegramLink and has no fallback', () => {
+    const tg = { initData: 'x', openLink: vi.fn(), openTelegramLink: vi.fn() };
+    const openSpy = vi.spyOn(window, 'open').mockReturnValue({ opener: null } as Window);
+    setTelegramWebApp(tg);
+
+    expect(testTelegramBridge('https://t.me/+85512345678')).toEqual({ status: 'dispatched' });
+    expect(tg.openTelegramLink).toHaveBeenCalledWith('https://t.me/+85512345678');
+    expect(tg.openLink).not.toHaveBeenCalled();
+    expect(openSpy).not.toHaveBeenCalled();
+    openSpy.mockRestore();
+  });
+
+  it('reports a synchronous bridge error without falling back', () => {
+    const tg = { initData: 'x', openLink: vi.fn(), openTelegramLink: vi.fn(() => { throw new Error('bridge failed'); }) };
+    const openSpy = vi.spyOn(window, 'open').mockReturnValue({ opener: null } as Window);
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    setTelegramWebApp(tg);
+
+    expect(testTelegramBridge('https://t.me/+85512345678')).toEqual({ status: 'error', message: 'bridge failed' });
+    expect(tg.openLink).not.toHaveBeenCalled();
+    expect(openSpy).not.toHaveBeenCalled();
+    openSpy.mockRestore();
+    warnSpy.mockRestore();
   });
 });
 
