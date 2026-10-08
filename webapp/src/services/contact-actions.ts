@@ -1,6 +1,6 @@
 import type React from 'react';
 
-const CONTACT_DIAGNOSTIC_CANARY_USER_ID = '8441221953';
+const CONTACT_DIAGNOSTIC_CANARY_USER_ID = '299321244';
 
 type TelegramBridgeDetails = {
   initDataUnsafe?: { user?: { id?: number | string } };
