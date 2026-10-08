@@ -8,6 +8,7 @@ vi.mock('posthog-js', () => ({ default: { capture: vi.fn(), identify: vi.fn() } 
 import { PropertyCard } from './PropertyCard';
 import { PropertyDetailModal } from './PropertyDetailModal';
 import {
+  formatCambodianTelegramPhone,
   getContactDiagnostics,
   isContactDiagnosticCanary,
   normalizePhoneToE164,
@@ -131,7 +132,7 @@ describe('contact controls in listing UI', () => {
     const chatButton = [...host.querySelectorAll('button')].find((button) => button.textContent?.includes('Message Agent'))!;
     await act(async () => chatButton.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true })));
 
-    expect(openTelegramLink).toHaveBeenCalledWith('https://t.me/+85512345678');
+    expect(openTelegramLink).toHaveBeenCalledWith('https://t.me/+855012345678');
     expect(host.querySelector<HTMLAnchorElement>('a[aria-label="Call Agent"]')?.getAttribute('href')).toBe('tel:+85512345678');
   });
 
@@ -147,7 +148,7 @@ describe('contact controls in listing UI', () => {
     const chatButton = [...host.querySelectorAll('button')].find((button) => button.textContent?.includes('Chat in Telegram'))!;
     await act(async () => chatButton.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true })));
 
-    expect(openTelegramLink).toHaveBeenCalledWith('https://t.me/+85512345678');
+    expect(openTelegramLink).toHaveBeenCalledWith('https://t.me/+855012345678');
     expect(host.querySelector<HTMLAnchorElement>('a[aria-label="Call"]')?.getAttribute('href')).toBe('tel:+85512345678');
   });
 });
@@ -177,11 +178,25 @@ describe('legacy DTO phone normalization', () => {
     expect(phoneActionHrefFromDto('tel:garbage', '012345678')).toBe('tel:+85512345678');
   });
 
-  it('uses the same E.164 value for a phone-based Telegram URL', () => {
-    const generated = telegramActionHrefFromDto(null, '012 345 678');
-    expect(generated).toBe('https://t.me/+85512345678');
-    expect(generated).toMatch(/^https:\/\/t\.me\/\+\d{7,15}$/);
-    expect(telegramActionHrefFromDto('https://t.me/+85512345678', null)).toBe('https://t.me/+85512345678');
+  it('keeps call E.164 separate from Cambodian Telegram resolver identity', () => {
+    expect(phoneActionHrefFromDto('tel:089899265', null)).toBe('tel:+85589899265');
+    expect(formatCambodianTelegramPhone('089 899 265')).toBe('+855089899265');
+    expect(formatCambodianTelegramPhone('+85589899265')).toBe('+855089899265');
+    expect(telegramActionHrefFromDto('https://t.me/+85589899265', '089 899 265')).toBe('https://t.me/+855089899265');
+  });
+
+  it('keeps a longer Cambodian mobile number at 12 digits for call and Telegram', () => {
+    // Existing raw Khmer24 fixture: tests/fixtures/khmer24_raw_fixture_house.json
+    const rawLongMobile = '0888855706';
+    expect(phoneActionHrefFromDto(`tel:${rawLongMobile}`, null)).toBe('tel:+855888855706');
+    expect(formatCambodianTelegramPhone(rawLongMobile)).toBe('+855888855706');
+    expect(telegramActionHrefFromDto(null, rawLongMobile)).toBe('https://t.me/+855888855706');
+  });
+
+  it('preserves an explicitly supplied Telegram phone URL', () => {
+    expect(
+      telegramActionHrefFromDto('https://t.me/+855089899265', '089 899 265', 'https://t.me/+855089899265'),
+    ).toBe('https://t.me/+855089899265');
   });
 });
 
@@ -201,10 +216,10 @@ describe('contact diagnostics canary', () => {
     };
 
     expect(isContactDiagnosticCanary()).toBe(true);
-    expect(getContactDiagnostics('012 345 678', null, 'tel:012345678')).toMatchObject({
-      normalizedE164: '+85512345678',
-      generatedTelegramUrl: 'https://t.me/+85512345678',
-      generatedTelHref: 'tel:+85512345678',
+    expect(getContactDiagnostics('089 899 265', 'https://t.me/+85589899265', 'tel:089899265')).toMatchObject({
+      normalizedE164: '+85589899265',
+      generatedTelegramUrl: 'https://t.me/+855089899265',
+      generatedTelHref: 'tel:+85589899265',
       webAppPlatform: 'tdesktop',
       webAppVersion: '8.0',
       hasOpenTelegramLink: true,

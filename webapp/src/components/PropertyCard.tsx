@@ -47,7 +47,11 @@ export const PropertyCard: React.FC<PropertyCardProps> = ({
   const photos = property.photos && property.photos.length > 0 ? property.photos : [];
   const source = sourceLabel(property.originalUrl);
   const freshness = timeAgo(property.postedAt || property.createdAt);
-  const telegramHref = telegramActionHrefFromDto(property.contact.telegramLink, property.contact.phone);
+  const telegramHref = telegramActionHrefFromDto(
+    property.contact.telegramLink,
+    property.contact.phone,
+    property.contact.telegram,
+  );
   const phoneHref = phoneActionHrefFromDto(property.contact.phoneLink, property.contact.phone);
 
   const handleScroll = (e: React.UIEvent<HTMLDivElement>) => {
@@ -74,7 +78,7 @@ export const PropertyCard: React.FC<PropertyCardProps> = ({
         // ignore
       }
       logCanaryContactDiagnostic(
-        getContactDiagnostics(property.contact.phone, property.contact.telegramLink, property.contact.phoneLink),
+        getContactDiagnostics(property.contact.phone, property.contact.telegramLink, property.contact.phoneLink, property.contact.telegram),
         'telegram',
       );
       openTelegramContact(telegramHref, e);
@@ -305,7 +309,7 @@ export const PropertyCard: React.FC<PropertyCardProps> = ({
                     // ignore
                   }
                   logCanaryContactDiagnostic(
-                    getContactDiagnostics(property.contact.phone, property.contact.telegramLink, property.contact.phoneLink),
+                    getContactDiagnostics(property.contact.phone, property.contact.telegramLink, property.contact.phoneLink, property.contact.telegram),
                     'phone',
                   );
                 }}
