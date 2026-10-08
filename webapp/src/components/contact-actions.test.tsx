@@ -151,6 +151,27 @@ describe('contact controls in listing UI', () => {
     expect(openTelegramLink).toHaveBeenCalledWith('https://t.me/+855012345678');
     expect(host.querySelector<HTMLAnchorElement>('a[aria-label="Call"]')?.getAttribute('href')).toBe('tel:+85512345678');
   });
+
+  it('uses the separate Telegram phone from a real listing for Chat and the display phone for Call', async () => {
+    const separateContacts = {
+      ...property,
+      contact: {
+        phone: '096 815 2427',
+        phoneLink: 'tel:0968152427',
+        telegram: '089 586 258',
+        telegramLink: 'https://t.me/+85589586258',
+      },
+    } as PropertyDTO;
+    await act(async () => root.render(
+      <PropertyCard property={separateContacts} onSelect={vi.fn()} onToggleFavorite={vi.fn()} />,
+    ));
+
+    const chatButton = [...host.querySelectorAll('button')].find((button) => button.textContent?.includes('Message Agent'))!;
+    await act(async () => chatButton.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true })));
+
+    expect(openTelegramLink).toHaveBeenCalledWith('https://t.me/+855089586258');
+    expect(host.querySelector<HTMLAnchorElement>('a[aria-label="Call Agent"]')?.getAttribute('href')).toBe('tel:+855968152427');
+  });
 });
 
 describe('legacy DTO phone normalization', () => {
@@ -197,6 +218,14 @@ describe('legacy DTO phone normalization', () => {
     expect(
       telegramActionHrefFromDto('https://t.me/+855089899265', '089 899 265', 'https://t.me/+855089899265'),
     ).toBe('https://t.me/+855089899265');
+  });
+
+  it('formats a Telegram phone from the source field even when Call uses a different phone', () => {
+    // Existing Siem Reap listing #215 has separate Call and Telegram numbers.
+    expect(
+      telegramActionHrefFromDto('https://t.me/+85589586258', '096 815 2427', '089 586 258'),
+    ).toBe('https://t.me/+855089586258');
+    expect(phoneActionHrefFromDto('tel:0968152427', '096 815 2427')).toBe('tel:+855968152427');
   });
 });
 
