@@ -237,7 +237,7 @@ describe('contact diagnostics canary', () => {
   it('exposes contact diagnostics only to the designated Telegram user', () => {
     (window as unknown as { Telegram: { WebApp: unknown } }).Telegram = {
       WebApp: {
-        initDataUnsafe: { user: { id: 8441221953 } },
+        initDataUnsafe: { user: { id: 299321244 } },
         platform: 'tdesktop',
         version: '8.0',
         openTelegramLink: vi.fn(),
@@ -257,7 +257,7 @@ describe('contact diagnostics canary', () => {
 
   it('does not expose diagnostics to other Telegram users', () => {
     (window as unknown as { Telegram: { WebApp: unknown } }).Telegram = {
-      WebApp: { initDataUnsafe: { user: { id: 1 } } },
+      WebApp: { initDataUnsafe: { user: { id: 8441221953 } } },
     };
 
     expect(isContactDiagnosticCanary()).toBe(false);
