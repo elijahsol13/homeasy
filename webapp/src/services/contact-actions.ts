@@ -41,15 +41,16 @@ export function getContactDiagnostics(
   phone: string | null | undefined,
   telegramLink: string | null | undefined,
   phoneLink: string | null | undefined,
+  telegram?: string | null,
 ): ContactDiagnostics {
   const bridge = telegramBridge();
   const normalizedE164 = normalizePhoneToE164(firstPhoneValue(phoneLink))
     ?? normalizePhoneToE164(firstPhoneValue(phone));
   return {
     rawPhone: phone?.trim() || null,
-    rawTelegram: telegramLink?.trim() || null,
+    rawTelegram: telegram?.trim() || null,
     normalizedE164,
-    generatedTelegramUrl: telegramActionHrefFromDto(telegramLink, phone),
+    generatedTelegramUrl: telegramActionHrefFromDto(telegramLink, phone, telegram),
     generatedTelHref: phoneActionHrefFromDto(phoneLink, phone),
     webAppVersion: bridge?.version ?? null,
     webAppPlatform: bridge?.platform ?? null,
@@ -167,10 +168,41 @@ export function phoneActionHrefFromDto(
   return phoneActionHref(e164 ? `tel:${e164}` : null);
 }
 
-/** Resolve a Telegram username link or build a phone link using the same E.164 normalization. */
+/**
+ * Build the observed Cambodian compatibility form for Telegram resolution.
+ * It intentionally differs from the dialable E.164 value used by tel: links.
+ */
+export function formatCambodianTelegramPhone(raw: string | null | undefined): string | null {
+  const value = firstPhoneValue(raw);
+  if (!value) return null;
+
+  const compact = value.trim().replace(/^tel:/i, '').replace(/[\s().-]/g, '');
+  if (!/^(?:\+\d+|\d+)$/.test(compact)) return null;
+
+  const digits = compact.replace(/\D/g, '');
+  const nsn = digits.startsWith('855')
+    ? digits.slice(3)
+    : digits.startsWith('0')
+      ? digits.slice(1)
+      : digits;
+
+  if (!/^\d{8,9}$/.test(nsn)) return null;
+  return nsn.length === 8 ? `+8550${nsn}` : `+855${nsn}`;
+}
+
+function telegramUrlFromPhone(raw: string | null | undefined): string | null {
+  const cambodianPhone = formatCambodianTelegramPhone(raw);
+  if (cambodianPhone) return `https://t.me/${cambodianPhone}`;
+
+  const e164 = normalizePhoneToE164(firstPhoneValue(raw));
+  return e164 ? `https://t.me/${e164}` : null;
+}
+
+/** Resolve a Telegram username link or derive a phone resolver link from its original contact value. */
 export function telegramActionHrefFromDto(
   telegramLink: string | null | undefined,
   phone: string | null | undefined,
+  telegram?: string | null,
 ): string | null {
   if (telegramLink) {
     try {
@@ -179,19 +211,18 @@ export function telegramActionHrefFromDto(
       const path = parsed.pathname.replace(/^\/+|\/+$/g, '');
       if (['https:', 'http:'].includes(parsed.protocol) && allowedHosts.includes(parsed.hostname.toLowerCase()) && path) {
         if (path.startsWith('+') || /^\d+$/.test(path)) {
-          const e164 = normalizePhoneToE164(path);
-          if (e164) return `https://t.me/${e164}`;
-        } else {
-          return `https://t.me/${path}${parsed.search}${parsed.hash}`;
+          // A Telegram URL supplied by the listing is already the intended resolver identity.
+          if (telegram) return `https://t.me/${path}${parsed.search}${parsed.hash}`;
+          return telegramUrlFromPhone(phone) ?? `https://t.me/${path}${parsed.search}${parsed.hash}`;
         }
+        return `https://t.me/${path}${parsed.search}${parsed.hash}`;
       }
     } catch {
       // Fall back to the phone value below.
     }
   }
 
-  const e164 = normalizePhoneToE164(firstPhoneValue(phone));
-  return e164 ? `https://t.me/${e164}` : null;
+  return telegramUrlFromPhone(telegram) ?? telegramUrlFromPhone(phone);
 }
 
 /** Preserve a phone anchor's native default action while keeping card handlers isolated. */

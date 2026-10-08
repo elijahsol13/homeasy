@@ -92,10 +92,14 @@ export const PropertyDetailModal: React.FC<PropertyDetailModalProps> = ({
 
   if (!property) return null;
 
-  const telegramHref = telegramActionHrefFromDto(property.contact.telegramLink, property.contact.phone);
+  const telegramHref = telegramActionHrefFromDto(
+    property.contact.telegramLink,
+    property.contact.phone,
+    property.contact.telegram,
+  );
   const phoneHref = phoneActionHrefFromDto(property.contact.phoneLink, property.contact.phone);
   const contactDiagnostics = isContactDiagnosticCanary()
-    ? getContactDiagnostics(property.contact.phone, property.contact.telegramLink, property.contact.phoneLink)
+    ? getContactDiagnostics(property.contact.phone, property.contact.telegramLink, property.contact.phoneLink, property.contact.telegram)
     : null;
 
   const photos = property.photos && property.photos.length > 0 ? property.photos : [];
@@ -661,7 +665,7 @@ export const PropertyDetailModal: React.FC<PropertyDetailModalProps> = ({
                   // ignore
                 }
                 logCanaryContactDiagnostic(
-                  getContactDiagnostics(property.contact.phone, property.contact.telegramLink, property.contact.phoneLink),
+                  getContactDiagnostics(property.contact.phone, property.contact.telegramLink, property.contact.phoneLink, property.contact.telegram),
                   'telegram',
                 );
                 openTelegramContact(telegramHref, e);
@@ -716,7 +720,7 @@ export const PropertyDetailModal: React.FC<PropertyDetailModalProps> = ({
                   // ignore
                 }
                 logCanaryContactDiagnostic(
-                  getContactDiagnostics(property.contact.phone, property.contact.telegramLink, property.contact.phoneLink),
+                  getContactDiagnostics(property.contact.phone, property.contact.telegramLink, property.contact.phoneLink, property.contact.telegram),
                   'phone',
                 );
               }}
