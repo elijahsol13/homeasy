@@ -211,7 +211,11 @@ export function telegramActionHrefFromDto(
       const path = parsed.pathname.replace(/^\/+|\/+$/g, '');
       if (['https:', 'http:'].includes(parsed.protocol) && allowedHosts.includes(parsed.hostname.toLowerCase()) && path) {
         if (path.startsWith('+') || /^\d+$/.test(path)) {
-          // A Telegram URL supplied by the listing is already the intended resolver identity.
+          // A numeric Telegram field is a phone supplied by the listing, even
+          // when the API has already generated an E.164 t.me link from it.
+          // Preserve a t.me URL supplied directly by the listing.
+          const sourcePhoneUrl = telegramUrlFromPhone(telegram);
+          if (sourcePhoneUrl) return sourcePhoneUrl;
           if (telegram) return `https://t.me/${path}${parsed.search}${parsed.hash}`;
           return telegramUrlFromPhone(phone) ?? `https://t.me/${path}${parsed.search}${parsed.hash}`;
         }
