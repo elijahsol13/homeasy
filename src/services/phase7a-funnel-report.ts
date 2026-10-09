@@ -129,11 +129,15 @@ function classifyContext(raw: string): ContextKind {
 
   const keys = Object.keys(context);
   if (keys.length === 0) return 'direct';
-  const broadKeys = new Set(['city', 'type', 'sort']);
+  const broadKeys = new Set(['city', 'type', 'sort', 'locations', 'bedrooms', 'bathrooms']);
+  const isEmptySelection = (value: unknown) => value === undefined || (Array.isArray(value) && value.length === 0);
   const isBroad = keys.every((key) => broadKeys.has(key))
     && (context.city === undefined || context.city === 'siem_reap')
     && (context.type === undefined || context.type === 'rent')
-    && (context.sort === undefined || context.sort === 'newest');
+    && (context.sort === undefined || context.sort === 'newest')
+    && isEmptySelection(context.locations)
+    && isEmptySelection(context.bedrooms)
+    && isEmptySelection(context.bathrooms);
   return isBroad ? 'broad' : 'filtered';
 }
 
