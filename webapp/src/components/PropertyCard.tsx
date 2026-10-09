@@ -3,19 +3,18 @@ import { Heart, MapPin, Send, Phone, Waves, Zap, Droplets, Ban, Sparkles, Messag
 import type { PropertyDTO } from '../types';
 import { triggerHaptic } from '../services/telegram';
 import {
-  getContactDiagnostics,
-  logCanaryContactDiagnostic,
   onPhoneActionClick,
   openTelegramContact,
   phoneActionHrefFromDto,
   telegramActionHrefFromDto,
 } from '../services/contact-actions';
 import posthog from 'posthog-js';
+import { formatPropertyTypeLabel } from '../formatters';
 
 interface PropertyCardProps {
   property: PropertyDTO;
   onSelect: (property: PropertyDTO) => void;
-  onToggleFavorite: (propertyId: number) => void;
+  onToggleFavorite: (identity: number | string) => void;
 }
 
 function sourceLabel(url: string | null | undefined): string | null {
@@ -66,21 +65,21 @@ export const PropertyCard: React.FC<PropertyCardProps> = ({
   const handleFavoriteClick = (e: React.MouseEvent) => {
     e.stopPropagation();
     triggerHaptic('medium');
-    onToggleFavorite(property.id);
+    onToggleFavorite(property.publicRef ?? property.id);
   };
 
   const handleTelegramClick = (e: React.MouseEvent) => {
     if (telegramHref) {
       triggerHaptic('light');
       try {
-        posthog.capture('contact_lead_clicked', { propertyId: property.id, channel: 'telegram' });
+        posthog.capture('contact_lead_clicked', {
+          propertyId: property.id,
+          listingRef: property.publicRef ?? null,
+          channel: 'telegram',
+        });
       } catch {
         // ignore
       }
-      logCanaryContactDiagnostic(
-        getContactDiagnostics(property.contact.phone, property.contact.telegramLink, property.contact.phoneLink, property.contact.telegram),
-        'telegram',
-      );
       openTelegramContact(telegramHref, e);
     }
   };
@@ -135,7 +134,7 @@ export const PropertyCard: React.FC<PropertyCardProps> = ({
 
         {/* Property Type Badge */}
         <div className="absolute top-3 left-3 bg-black/60 backdrop-blur-md text-white px-2.5 py-1 rounded-lg text-xs font-semibold tracking-wide pointer-events-none">
-          {property.propertyType}
+          {formatPropertyTypeLabel(property.propertyType)}
         </div>
 
         {/* Admin Review Badge (visible only to admins; pending/rejected items are never served publicly) */}
@@ -304,14 +303,14 @@ export const PropertyCard: React.FC<PropertyCardProps> = ({
                   onPhoneActionClick(e);
                   triggerHaptic('light');
                   try {
-                    posthog.capture('contact_lead_clicked', { propertyId: property.id, channel: 'phone' });
+                    posthog.capture('contact_lead_clicked', {
+                      propertyId: property.id,
+                      listingRef: property.publicRef ?? null,
+                      channel: 'phone',
+                    });
                   } catch {
                     // ignore
                   }
-                  logCanaryContactDiagnostic(
-                    getContactDiagnostics(property.contact.phone, property.contact.telegramLink, property.contact.phoneLink, property.contact.telegram),
-                    'phone',
-                  );
                 }}
                 className="p-2 bg-zinc-100 dark:bg-zinc-700 hover:bg-zinc-200 text-zinc-700 dark:text-zinc-200 rounded-xl transition-all active:scale-95"
                 aria-label="Call Agent"
