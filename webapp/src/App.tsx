@@ -13,8 +13,10 @@ import {
   fetchMe,
   reviewProperty,
   toggleFavorite,
+  trackMiniAppOpen,
+  type TrackingAttribution,
 } from './services/api';
-import { initTelegramWebApp } from './services/telegram';
+import { getTelegramStartParam, initTelegramWebApp } from './services/telegram';
 import { Header } from './components/Header';
 import { PropertyCard } from './components/PropertyCard';
 import { PropertyDetailModal } from './components/PropertyDetailModal';
@@ -31,9 +33,21 @@ const INITIAL_FILTERS: FilterState = {
 };
 
 export const App: React.FC = () => {
-  // Telegram initialization
+  // Telegram initialization + tracked-link attribution bootstrap
+  const trackingBootstrapDone = React.useRef(false);
+  const [attribution, setAttribution] = useState<TrackingAttribution | null>(null);
+
   useEffect(() => {
     initTelegramWebApp();
+
+    if (trackingBootstrapDone.current) return;
+    const startParam = getTelegramStartParam();
+    if (!startParam) return;
+
+    trackingBootstrapDone.current = true;
+    trackMiniAppOpen(startParam)
+      .then((res) => setAttribution(res.attribution))
+      .catch((err) => console.error('[Tracking] Failed to report Mini App open:', err));
   }, []);
 
   // Navigation & Filter states
@@ -219,18 +233,19 @@ export const App: React.FC = () => {
     setActiveTab('map');
   };
 
-  const handleToggleFavorite = async (propertyId: number) => {
+  const handleToggleFavorite = async (identity: number | string) => {
     try {
-      const result = await toggleFavorite(propertyId);
+      const result = await toggleFavorite(identity);
+      const matches=(p:PropertyDTO)=>typeof identity==='string'?p.publicRef===identity:p.id===identity;
       // Update in feed
       setProperties((prev) =>
         prev.map((p) =>
-          p.id === propertyId ? { ...p, isFavorite: result.isFavorite } : p,
+          matches(p) ? { ...p, isFavorite: result.isFavorite } : p,
         ),
       );
       // Update in modal if opened
       setSelectedProperty((prev) =>
-        prev && prev.id === propertyId
+        prev && matches(prev)
           ? { ...prev, isFavorite: result.isFavorite }
           : prev,
       );
@@ -243,6 +258,20 @@ export const App: React.FC = () => {
 
   return (
     <div className="min-h-screen bg-zinc-50 dark:bg-zinc-950 text-zinc-900 dark:text-zinc-100 flex flex-col font-sans transition-colors">
+      {/* Tracked-link request context banner (only when opened from a tracked request link) */}
+      {attribution?.request_id && (
+        <div className="bg-sky-500 text-white px-4 py-3 shadow-sm">
+          <div className="max-w-lg mx-auto flex items-center gap-3">
+            <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-white/20 text-sm">
+              ✨
+            </span>
+            <p className="text-sm font-medium leading-snug">
+              We prepared matches based on your housing request.
+            </p>
+          </div>
+        </div>
+      )}
+
       {/* Top Header with City switcher & search */}
       <Header
         filters={filters}

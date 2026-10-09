@@ -1,7 +1,10 @@
 import type { FilterMetadata, FilterState, MapMarkerDTO, PropertyDTO } from '../types';
 import { getTelegramInitData } from './telegram';
 
-const API_BASE = ((import.meta.env.VITE_API_URL as string | undefined)?.replace(/\/$/, '') || '/api/v1');
+const API_BASE = (
+  (import.meta.env.VITE_API_URL as string | undefined)?.replace(/\/$/, '') ||
+  'https://api.rustycat.cc/api/v1'
+);
 
 function getAuthHeaders(): HeadersInit {
   const headers: Record<string, string> = {
@@ -100,7 +103,7 @@ export async function fetchMe(): Promise<MeResponse> {
   return res.json();
 }
 
-export async function fetchPropertyById(id: number): Promise<PropertyDTO> {
+export async function fetchPropertyById(id: number | string): Promise<PropertyDTO> {
   const res = await fetch(`${API_BASE}/properties/${id}`, {
     headers: getAuthHeaders(),
   });
@@ -195,11 +198,41 @@ export async function reviewProperty(
   return res.json();
 }
 
-export async function toggleFavorite(propertyId: number): Promise<{ isFavorite: boolean }> {
+export interface TrackingAttribution {
+  source: string | null;
+  campaign: string | null;
+  group_id: string | null;
+  post_id: string | null;
+  request_id: string | null;
+  listing_id: number | null;
+  agent_id: number | null;
+}
+
+export interface TrackMiniAppOpenResponse {
+  ok: true;
+  slug: string;
+  attribution: TrackingAttribution;
+}
+
+export async function trackMiniAppOpen(slug: string): Promise<TrackMiniAppOpenResponse> {
+  const res = await fetch(`${API_BASE}/links/${encodeURIComponent(slug)}/opened`, {
+    method: 'POST',
+    headers: getAuthHeaders(),
+    body: '{}',
+  });
+
+  if (!res.ok) {
+    throw new Error(`Failed to report tracked link open: ${res.statusText}`);
+  }
+
+  return res.json();
+}
+
+export async function toggleFavorite(identity: number | string): Promise<{ isFavorite: boolean }> {
   const res = await fetch(`${API_BASE}/favorites/toggle`, {
     method: 'POST',
     headers: getAuthHeaders(),
-    body: JSON.stringify({ propertyId }),
+    body: JSON.stringify(typeof identity==='string'?{publicRef:identity}:{propertyId:identity}),
   });
 
   if (!res.ok) {

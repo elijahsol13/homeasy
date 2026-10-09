@@ -7,6 +7,10 @@ export interface PropertyDTO {
   priceUsd: number;
   currency: 'USD' | 'KHR';
   type: 'rent' | 'sale';
+  matchTier?: 'EXACT' | 'PROBABLE' | 'UNKNOWN';
+  cityTier?: 'EXACT_CITY' | 'PROBABLE_CITY' | 'UNKNOWN_CITY';
+  cityEvidence?: 'LOCAL_EVIDENCE' | 'SOURCE_PRIOR_ONLY';
+  publicRef?: string;
   category: string | null;
   propertyType: string;
   bedrooms: number | null;
@@ -63,6 +67,7 @@ export interface MapFocusRequest {
 
 export interface MapMarkerDTO {
   id: number;
+  publicRef?: string;
   title: string;
   priceUsd: number;
   category: string | null;
@@ -72,6 +77,7 @@ export interface MapMarkerDTO {
   locationKey: string | null;
   city: string;
   coordinatePrecision: 'exact' | 'district' | 'city';
+  locationAliases?: string[];
   hasPool: boolean | null;
   thumbnail: string | null;
   coordinates: { lat: number; lng: number } | null;
@@ -109,4 +115,3 @@ export interface FilterState {
 }
 
 export type ActiveTab = 'feed' | 'map' | 'saved';
-

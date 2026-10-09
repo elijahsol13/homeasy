@@ -19,22 +19,18 @@ import {
 import type { PropertyDTO } from '../types';
 import { triggerHaptic, openExternalUrl } from '../services/telegram';
 import {
-  copyContactDiagnostic,
-  getContactDiagnostics,
-  isContactDiagnosticCanary,
-  logCanaryContactDiagnostic,
   onPhoneActionClick,
   openTelegramContact,
   phoneActionHrefFromDto,
-  testTelegramBridge,
   telegramActionHrefFromDto,
 } from '../services/contact-actions';
 import posthog from 'posthog-js';
+import { formatPropertyTypeLabel } from '../formatters';
 
 interface PropertyDetailModalProps {
   property: PropertyDTO | null;
   onClose: () => void;
-  onToggleFavorite: (propertyId: number) => void;
+  onToggleFavorite: (identity: number | string) => void;
   onShowOnMap: (property: PropertyDTO) => void;
   isAdmin?: boolean;
   onReview?: (propertyId: number, action: 'approve' | 'reject') => void;
@@ -51,7 +47,6 @@ export const PropertyDetailModal: React.FC<PropertyDetailModalProps> = ({
   const [activePhoto, setActivePhoto] = useState(0);
   const [reviewBusy, setReviewBusy] = useState<'approve' | 'reject' | null>(null);
   const [lightboxOpen, setLightboxOpen] = useState(false);
-  const [bridgeTestResult, setBridgeTestResult] = useState<string | null>(null);
   const carouselRef = React.useRef<HTMLDivElement>(null);
   const lightboxRef = React.useRef<HTMLDivElement>(null);
   const propertyId = property?.id;
@@ -60,7 +55,6 @@ export const PropertyDetailModal: React.FC<PropertyDetailModalProps> = ({
     setActivePhoto(0);
     setReviewBusy(null);
     setLightboxOpen(false);
-    setBridgeTestResult(null);
   }, [propertyId]);
 
   // Sync lightbox scroll position to the photo that was tapped
@@ -98,10 +92,6 @@ export const PropertyDetailModal: React.FC<PropertyDetailModalProps> = ({
     property.contact.telegram,
   );
   const phoneHref = phoneActionHrefFromDto(property.contact.phoneLink, property.contact.phone);
-  const contactDiagnostics = isContactDiagnosticCanary()
-    ? getContactDiagnostics(property.contact.phone, property.contact.telegramLink, property.contact.phoneLink, property.contact.telegram)
-    : null;
-
   const photos = property.photos && property.photos.length > 0 ? property.photos : [];
 
   const effectiveMapsUrl =
@@ -135,7 +125,7 @@ export const PropertyDetailModal: React.FC<PropertyDetailModalProps> = ({
             type="button"
             onClick={() => {
               triggerHaptic('medium');
-              onToggleFavorite(property.id);
+              onToggleFavorite(property.publicRef ?? property.id);
             }}
             className="w-10 h-10 rounded-full bg-black/50 backdrop-blur-md text-white flex items-center justify-center hover:bg-black/70 active:scale-95 transition-all pointer-events-auto"
             aria-label="Favorite"
@@ -238,7 +228,7 @@ export const PropertyDetailModal: React.FC<PropertyDetailModalProps> = ({
           <div>
             <div className="flex items-center gap-2 mb-2">
               <span className="bg-sky-100 dark:bg-sky-950/80 text-sky-700 dark:text-sky-300 text-xs font-bold px-2.5 py-1 rounded-md uppercase tracking-wider">
-                {property.propertyType}
+                {formatPropertyTypeLabel(property.propertyType)}
               </span>
               <span className="text-xs text-zinc-500 dark:text-zinc-400 capitalize">
                 {property.type === 'rent' ? 'For Rent' : 'For Sale'}
@@ -274,7 +264,11 @@ export const PropertyDetailModal: React.FC<PropertyDetailModalProps> = ({
               <div>
                 <div>{property.location || property.city}, Cambodia</div>
                 <div className="text-[11px] text-zinc-400">
-                  {property.coordinatePrecision === 'exact' ? 'Exact location supplied' : 'Approximate district location'}
+                  {property.coordinatePrecision === 'exact'
+                    ? 'Exact location supplied'
+                    : property.coordinatePrecision === 'district'
+                      ? 'Approximate district location'
+                      : 'City-level only · area not confirmed'}
                 </div>
               </div>
             </div>
@@ -605,54 +599,6 @@ export const PropertyDetailModal: React.FC<PropertyDetailModalProps> = ({
               <span className="text-zinc-700 dark:text-zinc-200 select-all">{property.contact.phone}</span>
             </div>
           )}
-          {contactDiagnostics && (
-            <div className="mx-4 mt-3 rounded-lg border border-amber-300/70 bg-amber-50 p-3 text-[10px] leading-relaxed text-amber-950 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-100">
-              <div className="mb-1 text-xs font-bold">Contact diagnostic · canary only</div>
-              <div className="break-all">Phone raw: {contactDiagnostics.rawPhone ?? '—'}</div>
-              <div className="break-all">Telegram raw: {contactDiagnostics.rawTelegram ?? '—'}</div>
-              <div>E164: {contactDiagnostics.normalizedE164 ?? '—'}</div>
-              <div className="break-all">Telegram URL: {contactDiagnostics.generatedTelegramUrl ?? '—'}</div>
-              <div>Tel: {contactDiagnostics.generatedTelHref ?? '—'}</div>
-              <div>TG platform: {contactDiagnostics.webAppPlatform ?? '—'}</div>
-              <div>TG WebApp version: {contactDiagnostics.webAppVersion ?? '—'}</div>
-              <div>openTelegramLink: {String(contactDiagnostics.hasOpenTelegramLink)}</div>
-              <div className="mt-2 flex flex-wrap gap-2">
-                {contactDiagnostics.generatedTelegramUrl && (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const result = testTelegramBridge(contactDiagnostics.generatedTelegramUrl!);
-                      setBridgeTestResult(
-                        result.status === 'error'
-                          ? `bridge synchronous error: ${result.message}`
-                          : `bridge: ${result.status}`,
-                      );
-                    }}
-                    className="rounded-md bg-amber-200 px-2 py-1 font-semibold text-amber-950 dark:bg-amber-800 dark:text-amber-50"
-                  >
-                    Test TG bridge
-                  </button>
-                )}
-                {contactDiagnostics.generatedTelegramUrl && (
-                  <button
-                    type="button"
-                    onClick={(e) => void copyContactDiagnostic(contactDiagnostics.generatedTelegramUrl, e)}
-                    className="rounded-md bg-amber-200 px-2 py-1 font-semibold text-amber-950 dark:bg-amber-800 dark:text-amber-50"
-                  >
-                    Copy exact URL
-                  </button>
-                )}
-                <button
-                  type="button"
-                  onClick={(e) => void copyContactDiagnostic(JSON.stringify(contactDiagnostics, null, 2), e)}
-                  className="rounded-md bg-amber-200 px-2 py-1 font-semibold text-amber-950 dark:bg-amber-800 dark:text-amber-50"
-                >
-                  Copy debug
-                </button>
-              </div>
-              {bridgeTestResult && <div className="mt-2 font-semibold">{bridgeTestResult}</div>}
-            </div>
-          )}
           <div className="p-4 flex items-center gap-3">
           {telegramHref ? (
             <button
@@ -660,14 +606,14 @@ export const PropertyDetailModal: React.FC<PropertyDetailModalProps> = ({
               onClick={(e) => {
                 triggerHaptic('light');
                 try {
-                  posthog.capture('contact_lead_clicked', { propertyId: property.id, channel: 'telegram' });
+                  posthog.capture('contact_lead_clicked', {
+                    propertyId: property.id,
+                    listingRef: property.publicRef ?? null,
+                    channel: 'telegram',
+                  });
                 } catch {
                   // ignore
                 }
-                logCanaryContactDiagnostic(
-                  getContactDiagnostics(property.contact.phone, property.contact.telegramLink, property.contact.phoneLink, property.contact.telegram),
-                  'telegram',
-                );
                 openTelegramContact(telegramHref, e);
               }}
               className="flex-1 bg-sky-500 hover:bg-sky-600 text-white font-bold py-3 px-4 rounded-xl flex items-center justify-center gap-2 shadow-md active:scale-98 transition-all"
@@ -715,14 +661,14 @@ export const PropertyDetailModal: React.FC<PropertyDetailModalProps> = ({
                 onPhoneActionClick(e);
                 triggerHaptic('light');
                 try {
-                  posthog.capture('contact_lead_clicked', { propertyId: property.id, channel: 'phone' });
+                  posthog.capture('contact_lead_clicked', {
+                    propertyId: property.id,
+                    listingRef: property.publicRef ?? null,
+                    channel: 'phone',
+                  });
                 } catch {
                   // ignore
                 }
-                logCanaryContactDiagnostic(
-                  getContactDiagnostics(property.contact.phone, property.contact.telegramLink, property.contact.phoneLink, property.contact.telegram),
-                  'phone',
-                );
               }}
               className="p-3 bg-emerald-500 hover:bg-emerald-600 text-white rounded-xl shadow-md active:scale-95 transition-all flex items-center justify-center"
               aria-label="Call"

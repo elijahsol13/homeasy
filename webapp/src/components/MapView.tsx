@@ -4,6 +4,7 @@ import type { CityKey, MapFocusRequest, MapMarkerDTO, PropertyDTO } from '../typ
 import { fetchMapMarkers, fetchPropertyById } from '../services/api';
 import { triggerHaptic } from '../services/telegram';
 import { ArrowLeft, ChevronRight, Waves, MapPin } from 'lucide-react';
+import { formatPropertyTypeLabel } from '../formatters';
 
 interface MapViewProps {
   city: CityKey;
@@ -33,7 +34,11 @@ export const MapView: React.FC<MapViewProps> = ({
 
   const [markers, setMarkers] = useState<MapMarkerDTO[]>([]);
   const [selectedMarker, setSelectedMarker] = useState<MapMarkerDTO | null>(null);
-  const [zoomedCluster, setZoomedCluster] = useState<{ location: string; count: number } | null>(null);
+  const [zoomedCluster, setZoomedCluster] = useState<{
+    location: string;
+    count: number;
+    coordinatePrecision: 'district' | 'city';
+  } | null>(null);
   const [loading, setLoading] = useState(true);
   const debounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -199,7 +204,11 @@ export const MapView: React.FC<MapViewProps> = ({
         if (isCluster) {
           // Zoom into the district; the "no exact address" banner follows.
           setSelectedMarker(null);
-          setZoomedCluster({ location: item.location, count: item.count ?? 0 });
+          setZoomedCluster({
+            location: item.location,
+            count: item.count ?? 0,
+            coordinatePrecision: item.coordinatePrecision === 'city' ? 'city' : 'district',
+          });
           mapInstanceRef.current?.flyTo(
             [item.coordinates!.lat, item.coordinates!.lng],
             15,
@@ -218,11 +227,13 @@ export const MapView: React.FC<MapViewProps> = ({
     if (!focusRequest || focusRequest.city !== city || !mapInstanceRef.current) return;
     const target = focusRequest.coordinatePrecision === 'exact'
       ? markers.find((marker) => marker.id === focusRequest.propertyId)
-      : markers.find((marker) =>
+      : markers.find((marker) => marker.isExact === false && (
           focusRequest.locationKey
-            ? marker.locationKey === focusRequest.locationKey && marker.isExact === false
-            : marker.location === focusRequest.location && marker.isExact === false,
-        );
+            ? marker.locationKey === focusRequest.locationKey
+            : marker.location === focusRequest.location || marker.locationAliases?.includes(focusRequest.location)
+        )) ?? (focusRequest.coordinatePrecision === 'city'
+          ? markers.find((marker) => marker.isExact === false && marker.coordinatePrecision === 'city')
+          : undefined);
     const coordinates = target?.coordinates ?? focusRequest.coordinates;
     if (!coordinates) return;
 
@@ -236,7 +247,11 @@ export const MapView: React.FC<MapViewProps> = ({
 
     if (target.isExact === false || target.count) {
       setSelectedMarker(null);
-      setZoomedCluster({ location: target.location, count: target.count ?? 0 });
+      setZoomedCluster({
+        location: target.location,
+        count: target.count ?? 0,
+        coordinatePrecision: target.coordinatePrecision === 'city' ? 'city' : 'district',
+      });
     } else if (target) {
       setZoomedCluster(null);
       setSelectedMarker(target);
@@ -256,7 +271,7 @@ export const MapView: React.FC<MapViewProps> = ({
     }
 
     try {
-      const full = await fetchPropertyById(selectedMarker.id);
+      const full = await fetchPropertyById(selectedMarker.publicRef ?? selectedMarker.id);
       onSelectProperty(full);
     } catch (err) {
       console.error('Failed to load full property:', err);
@@ -291,20 +306,20 @@ export const MapView: React.FC<MapViewProps> = ({
 
       {/* Floating banner: district zoomed — N listings have no exact address */}
       {zoomedCluster && !loading && (
-        <div className="absolute top-4 inset-x-4 z-20 flex justify-center animate-in slide-in-from-top duration-200">
-          <div className="bg-white/95 dark:bg-zinc-800/95 backdrop-blur-md rounded-2xl shadow-lg border border-teal-200 dark:border-teal-800 px-4 py-2.5 flex items-center gap-3 max-w-full">
+        <div className="absolute top-16 inset-x-4 z-40 flex justify-center animate-in slide-in-from-top duration-200">
+          <div className="bg-white/95 dark:bg-zinc-800/95 backdrop-blur-md rounded-2xl shadow-lg border border-teal-200 dark:border-teal-800 px-4 py-3 flex items-center gap-3 max-w-full">
             <div className="flex-1 min-w-0">
-              <div className="text-[11px] font-semibold text-zinc-700 dark:text-zinc-200 truncate">
-                {zoomedCluster.location}: {zoomedCluster.count} listing{zoomedCluster.count === 1 ? '' : 's'} without an exact address
+              <div className="text-sm leading-snug font-semibold text-zinc-800 dark:text-zinc-100 whitespace-normal">
+                {zoomedCluster.location}: {zoomedCluster.count} listing{zoomedCluster.count === 1 ? '' : 's'} {zoomedCluster.coordinatePrecision === 'city' ? 'with unverified area' : 'without an exact address'}
               </div>
-              {onSelectLocation && (
+              {onSelectLocation && zoomedCluster.coordinatePrecision !== 'city' && (
                 <button
                   type="button"
                   onClick={() => {
                     triggerHaptic('medium');
                     onSelectLocation(zoomedCluster.location);
                   }}
-                  className="text-[11px] font-bold text-teal-600 dark:text-teal-400 hover:underline"
+                  className="text-xs font-bold text-teal-600 dark:text-teal-400 hover:underline mt-1"
                 >
                   View as list →
                 </button>
@@ -358,7 +373,9 @@ export const MapView: React.FC<MapViewProps> = ({
                     </span>
                   </div>
                   <div className="text-xs text-zinc-600 dark:text-zinc-300 font-medium mt-0.5">
-                    Rental properties from <span className="font-bold text-teal-600 dark:text-teal-400">${selectedMarker.priceUsd}/mo</span>
+                    {selectedMarker.coordinatePrecision === 'city'
+                      ? 'Area not confirmed for these listings'
+                      : <>Rental properties from <span className="font-bold text-teal-600 dark:text-teal-400">${selectedMarker.priceUsd}/mo</span></>}
                   </div>
                   <div className="text-[11px] text-teal-700 dark:text-teal-400 font-semibold mt-1 flex items-center gap-1">
                     Tap to explore listings in {selectedMarker.location} →
@@ -371,7 +388,7 @@ export const MapView: React.FC<MapViewProps> = ({
                       ${selectedMarker.priceUsd}/mo
                     </span>
                     <span className="text-[10px] font-semibold bg-sky-100 dark:bg-sky-950 text-sky-700 dark:text-sky-300 px-1.5 py-0.5 rounded">
-                      {selectedMarker.propertyType}
+                      {formatPropertyTypeLabel(selectedMarker.propertyType)}
                     </span>
                   </div>
 
@@ -401,4 +418,3 @@ export const MapView: React.FC<MapViewProps> = ({
     </div>
   );
 };
-
