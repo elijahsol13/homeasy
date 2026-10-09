@@ -14,9 +14,10 @@ export async function generateImagePHash(imageUrl: string, timeoutMs = 6000): Pr
     return null;
   }
 
+  let timeoutId: ReturnType<typeof setTimeout> | undefined;
   try {
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+    timeoutId = setTimeout(() => controller.abort(), timeoutMs);
 
     const response = await fetch(imageUrl, {
       signal: controller.signal,
@@ -25,8 +26,6 @@ export async function generateImagePHash(imageUrl: string, timeoutMs = 6000): Pr
         Accept: 'image/*,*/*',
       },
     });
-
-    clearTimeout(timeoutId);
 
     if (!response.ok) {
       return null;
@@ -64,8 +63,12 @@ export async function generateImagePHash(imageUrl: string, timeoutMs = 6000): Pr
     return hash;
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
-    console.warn(`[pHash] Failed to compute hash for ${imageUrl}: ${msg}`);
+    let safeImageRef=imageUrl;
+    try{const url=new URL(imageUrl);safeImageRef=`${url.origin}${url.pathname}`;}catch{/* preserve a non-URL diagnostic */}
+    console.warn(`[pHash] Failed to compute hash for ${safeImageRef}: ${msg}`);
     return null;
+  } finally {
+    if (timeoutId !== undefined) clearTimeout(timeoutId);
   }
 }
 
@@ -86,4 +89,3 @@ export function computeHammingDistance(hash1: string | null, hash2: string | nul
 
   return distance;
 }
-

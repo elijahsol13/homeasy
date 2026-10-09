@@ -52,8 +52,8 @@ function checkRateLimit(telegramId: number): { allowed: boolean; message?: strin
 // ─── Render AI Result Card ───────────────────────────────────────────────────
 
 function renderCriteriaMessage(criteria: NLSearchCriteria, matchingCount: number): { text: string; keyboard: InlineKeyboard } {
-  const cityLabel = criteria.city === 'phnom_penh' ? '🏙 Phnom Penh' : '🌴 Siem Reap';
-  const typeLabel = criteria.type === 'sale' ? '🏷️ For Sale' : '🏠 For Rent';
+  const cityLabel = '🌴 Siem Reap';
+  const typeLabel = '🏠 Monthly Rent';
   const categoryLabel = criteria.category ? ` (${criteria.category})` : '';
 
   const minCents = criteria.min_price ? criteria.min_price * 100 : null;
@@ -475,8 +475,11 @@ export function extractDraftFromCriteriaText(text: string): FilterDraft | null {
   if (!text || !text.includes('Search Criteria Understood')) return null;
   const clean = text.replace(/<[^>]+>/g, '');
 
-  const city: CityKey = clean.includes('Phnom Penh') ? 'phnom_penh' : 'siem_reap';
-  const type: 'rent' | 'sale' = clean.includes('For Sale') ? 'sale' : 'rent';
+  // Historical cards for other cities/transactions must not revive an unsupported
+  // search flow while the AI-search MVP is Siem Reap monthly rentals only.
+  if (clean.includes('Phnom Penh') || clean.includes('For Sale')) return null;
+  const city: CityKey = 'siem_reap';
+  const type = 'rent' as const;
 
   // Category
   const catMatch = /\((apartment|condo|house|villa|land|room|hotel)\)/i.exec(clean);
@@ -553,10 +556,9 @@ async function handleSearchCriteriaResult(ctx: MyContext, criteria: NLSearchCrit
   if (!criteria.is_real_estate_query) {
     await ctx.reply(
       `🤖 <b>HomEasy AI Assistant</b>\n\n` +
-        `I can instantly find rental and sale properties in <b>Siem Reap</b> and <b>Phnom Penh</b> from your voice notes or text messages.\n\n` +
+        `I can instantly find monthly rentals in <b>Siem Reap</b> from your voice notes or text messages.\n\n` +
         `💡 <b>Try asking:</b>\n` +
         `• <i>"Looking for a 1-bedroom apartment with pool in Siem Reap under $400"</i>\n` +
-        `• <i>"Studio in Phnom Penh city center for 6 months, pet-friendly"</i>\n` +
         `• <i>"3-bedroom house in Wat Bo between $500 and $800"</i>`,
       {
         parse_mode: 'HTML',

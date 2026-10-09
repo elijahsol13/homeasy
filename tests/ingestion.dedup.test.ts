@@ -1,6 +1,7 @@
 import { computeHammingDistance } from '../src/modules/parser/phash';
 import {
   normalizePhoneNumber,
+  normalizePhoneToE164,
   formatPhoneNumber,
   formatDomesticPhone,
   formatInternationalPhone,
@@ -38,6 +39,15 @@ describe('Ingestion & Deduplication Engine', () => {
   });
 
   describe('Cambodian Phone Number Normalization & Formatting', () => {
+    test('normalizes action numbers to E.164 without rewriting explicit foreign country codes', () => {
+      expect(normalizePhoneToE164('012345678')).toBe('+85512345678');
+      expect(normalizePhoneToE164('0969343456')).toBe('+855969343456');
+      expect(normalizePhoneToE164('+855 12 345 678')).toBe('+85512345678');
+      expect(normalizePhoneToE164('855969343456')).toBe('+855969343456');
+      expect(normalizePhoneToE164('+66 81 234 5678')).toBe('+66812345678');
+      expect(normalizePhoneToE164('123')).toBeNull();
+    });
+
     test('normalizes +855 format', () => {
       expect(normalizePhoneNumber('+855 12 345 678')).toBe('85512345678');
       expect(normalizePhoneNumber('+85512345678')).toBe('85512345678');

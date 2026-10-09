@@ -2,6 +2,7 @@ import { DatabaseSync } from 'node:sqlite';
 import path from 'path';
 import fs from 'fs';
 import { env } from '../config/env';
+import { installLegacyPropertiesWriteGuard } from './legacy-write-guard';
 
 /**
  * Creates and initializes a new DatabaseSync connection.
@@ -40,6 +41,10 @@ export function createDatabase(customPath?: string): DatabaseSync {
   db.exec('PRAGMA foreign_keys = ON');
   db.exec('PRAGMA cache_size = -2000'); // 2 MB page cache instead of 32 MB
   db.exec('PRAGMA temp_store = FILE');   // Offload temporary tables to disk rather than RAM
+
+  // Enforce the shadow boundary on every application path using this connection,
+  // including older maintenance scripts that may otherwise write properties.
+  if (env.SHADOW_INGESTION) installLegacyPropertiesWriteGuard(db);
 
   return db;
 }

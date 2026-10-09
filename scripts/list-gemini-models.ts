@@ -2,9 +2,8 @@
  * HomEasy — Gemini Model Availability Auditor
  *
  * Google renames/retires Gemini model IDs frequently (several times a year).
- * The extraction cascade (`GEMINI_MODEL_CASCADE` in src/modules/parser/extractor.ts)
- * and the NL search fallback list (`fallbackModels` in src/services/nl-search.service.ts)
- * are both hardcoded lists that silently rot over time — a model that's shut down
+ * The extraction and NL-search cascades share `GEMINI_FREE_MODELS`
+ * in src/modules/ai/cascade.ts. Model IDs can silently rot over time — a shut-down model
  * just wastes a cascade slot (extra latency) until it falls through to a working one.
  *
  * Run this periodically (or whenever extraction quality seems to degrade) to see
@@ -16,7 +15,7 @@
 import 'dotenv/config';
 import { GoogleGenAI } from '@google/genai';
 import { env } from '../src/config/env';
-import { GEMINI_MODEL_CASCADE } from '../src/modules/parser/extractor';
+import { GEMINI_FREE_MODELS } from '../src/modules/ai';
 
 async function main() {
   if (!env.GEMINI_API_KEY) {
@@ -45,7 +44,7 @@ async function main() {
   console.log('═══════════════════════════════════════════════════════════════\n');
 
   let deadCount = 0;
-  for (const modelName of GEMINI_MODEL_CASCADE) {
+  for (const modelName of GEMINI_FREE_MODELS) {
     const isLive = liveModels.has(modelName);
     console.log(`  ${isLive ? '✅ LIVE' : '❌ DEAD/UNKNOWN'}  ${modelName}`);
     if (!isLive) deadCount++;
@@ -56,9 +55,9 @@ async function main() {
     console.log('✅ All configured models are live. No action needed.');
   } else {
     console.log(
-      `⚠️  ${deadCount} of ${GEMINI_MODEL_CASCADE.length} configured model(s) are NOT in the live catalog.`,
+      `⚠️  ${deadCount} of ${GEMINI_FREE_MODELS.length} configured model(s) are NOT in the live catalog.`,
     );
-    console.log('   Remove or replace them in GEMINI_MODEL_CASCADE (src/modules/parser/extractor.ts)');
+    console.log('   Remove or replace them in GEMINI_FREE_MODELS (src/modules/ai/cascade.ts)');
     console.log('   and in the fallbackModels list (src/services/nl-search.service.ts).');
   }
   console.log('═══════════════════════════════════════════════════════════════\n');

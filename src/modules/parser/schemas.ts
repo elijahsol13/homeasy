@@ -50,6 +50,8 @@ export const RawListingSchema = z.object({
   is_real_estate: z.boolean().nullish(),
   /** Deposit expressed as a number of monthly rent payments, kept separate from amount. */
   deposit_months: z.union([z.string(), z.number()]).optional(),
+  /** Lossless canonical extraction; legacy display columns are only a projection. */
+  listing_facts_json: z.string().optional(),
 });
 
 export type RawListing = z.infer<typeof RawListingSchema>;
@@ -98,6 +100,7 @@ export const CleanPropertySchema = z.object({
   latitude: z.number().nullable().default(null),
   longitude: z.number().nullable().default(null),
   raw_text: z.string().nullable().default(null),
+  listing_facts_json: z.string().nullable().default(null),
   parse_warnings: z.array(z.string()).default([]),
   review_status: z.enum(['approved', 'pending']).default('approved'),
   review_reason: z.string().nullable().default(null),

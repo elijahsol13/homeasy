@@ -194,7 +194,7 @@ describe('Natural Language Search & Guardrails Engine', () => {
       expect(draft?.locations).toEqual(['Wat Bo']);
     });
 
-    it('recovers studio, pool requirement, price range, and Phnom Penh', () => {
+    it('does not recover a historical Phnom Penh sale card while AI search is Siem Reap rentals only', () => {
       const messageText = `
 🎯 <b>Search Criteria Understood:</b>
 
@@ -207,15 +207,7 @@ describe('Natural Language Search & Guardrails Engine', () => {
 `.trim();
 
       const draft = extractDraftFromCriteriaText(messageText);
-      expect(draft).not.toBeNull();
-      expect(draft?.city).toBe('phnom_penh');
-      expect(draft?.type).toBe('sale');
-      expect(draft?.category).toBe('condo');
-      expect(draft?.min_price).toBe(50000);
-      expect(draft?.max_price).toBe(120000);
-      expect(draft?.bedrooms).toEqual([0, 2]);
-      expect(draft?.locations).toEqual(['BKK1']);
-      expect(draft?.requires_pool).toBe(true);
+      expect(draft).toBeNull();
     });
 
     it('returns null for unrelated text messages', () => {

@@ -46,6 +46,7 @@ function mockCleanProperty(overrides: Partial<CleanProperty> = {}): CleanPropert
     review_status: 'approved',
     review_reason: null,
     ...overrides,
+    listing_facts_json: overrides.listing_facts_json ?? null,
   };
 }
 
@@ -270,4 +271,3 @@ describe('Deduplicator Engine', () => {
     });
   });
 });
-

@@ -57,6 +57,36 @@ export function normalizeLocationString(loc: string): string {
 // ─── Phone normalization & formatting ─────────────────────────────────────────
 
 /**
+ * Converts one phone number to E.164 while preserving explicit country codes.
+ * Cambodian national numbers beginning with 0 are converted to +855; bare
+ * 8/9-digit Cambodian subscriber forms are also accepted for existing data.
+ */
+export function normalizePhoneToE164(phone: string | undefined | null): string | null {
+  if (!phone) return null;
+  const raw = phone.trim();
+  const compact = raw.replace(/[\s().-]/g, '');
+  if (!compact || !/^(?:\+\d+|\d+)$/.test(compact)) return null;
+
+  const digits = compact.replace(/\D/g, '');
+  if (digits.length < 7 || digits.length > 15) return null;
+
+  if (compact.startsWith('+')) return `+${digits}`;
+  if (compact.startsWith('00')) {
+    const internationalDigits = digits.slice(2);
+    return internationalDigits.length >= 7 && internationalDigits.length <= 15
+      ? `+${internationalDigits}`
+      : null;
+  }
+  if (digits.startsWith('855')) return `+${digits}`;
+  if (digits.startsWith('0')) {
+    const internationalDigits = `855${digits.slice(1)}`;
+    return internationalDigits.length <= 15 ? `+${internationalDigits}` : null;
+  }
+  if (digits.length === 8 || digits.length === 9) return `+855${digits}`;
+  return null;
+}
+
+/**
  * Normalizes Cambodian phone numbers to a uniform international format digits string
  * e.g. "+855 12 345 678" -> "85512345678"
  *      "012-345-678"     -> "85512345678"
@@ -441,4 +471,3 @@ export function cleanPhotoUrls(urls: string[] | undefined | null): string[] {
 
   return filtered;
 }
-
