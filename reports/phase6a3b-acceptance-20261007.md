@@ -1,7 +1,7 @@
 # Phase 6A.3b acceptance — moderation calibration and permanent backfill
 
-Date: 2026-10-07  
-Production read path: `legacy`  
+Date: 2026-10-07
+Production read path: `legacy`
 External source requests, Bright Data requests, and AI calls during this phase: **0**
 
 ## Moderation calibration

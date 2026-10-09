@@ -61,7 +61,7 @@ function redactSample(row: Row) {
     offerType:row.offer_type??null,classification:row.classification,category:row.category??null,
     propertyType:row.property_type??null,price:typeof row.price==='number'&&row.price>0?row.price:null,currency:row.currency??null,
     bedrooms:row.bedrooms??null,location:compact(row.explicit_location)||compact(row.sangkat)||compact(row.property_explicit_location)||compact(row.property_sangkat)||null,
-    signals,text }; 
+    signals,text };
 }
 function deterministicSample(bucket: Row[], n: number): Row[] {
   return [...bucket].sort((a,b)=>createHash('sha256').update(`phase6a2-exclusion-sample:${a.id}`).digest('hex')
