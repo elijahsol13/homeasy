@@ -2,6 +2,7 @@ import type { FastifyPluginAsync } from 'fastify';
 import type { AppContainer } from '../../../container';
 import { requireTelegramAuth } from '../auth';
 import { toPropertyDTO } from '../dto';
+import { isCanonicalReadCanary, listingReadPathForUser } from '../listing-read-path';
 
 export const favoritesRoutes: FastifyPluginAsync<{ container: AppContainer }> = async (fastify, opts) => {
   const { container } = opts;
@@ -17,7 +18,11 @@ export const favoritesRoutes: FastifyPluginAsync<{ container: AppContainer }> = 
       const tgUser = request.telegramUser!;
       const user = container.usersRepo.upsertUser(tgUser.id, tgUser.username ?? null);
 
-      const favorites = container.favoritesRepo.getUserFavorites(user.id);
+      const readPath = listingReadPathForUser(tgUser.id);
+      const favorites = readPath==='canonical'
+        ? container.favoritesRepo.getCanonicalFavorites(user.id,container.canonicalListingRepo)
+        : container.favoritesRepo.getUserFavorites(user.id);
+      if (isCanonicalReadCanary(tgUser.id)) request.log.info({ event: 'canonical_canary_favorites_list', servedPath: readPath, count: favorites.length });
       const items = favorites.map((prop) => toPropertyDTO(prop, true));
 
       return reply.send({
@@ -52,7 +57,23 @@ export const favoritesRoutes: FastifyPluginAsync<{ container: AppContainer }> = 
       const tgUser = request.telegramUser!;
       const user = container.usersRepo.upsertUser(tgUser.id, tgUser.username ?? null);
 
-      const body = request.body as { propertyId?: number };
+      const body = request.body as { propertyId?: number; publicRef?: string };
+      if(listingReadPathForUser(tgUser.id)==='canonical'){
+        if(typeof body?.publicRef!=='string'){
+          if(isCanonicalReadCanary(tgUser.id))request.log.warn({event:'canonical_canary_favorite_resolution',servedPath:'canonical',resolved:false,reason:'missing_public_ref'});
+          return reply.status(400).send({statusCode:400,error:'Bad Request',message:'Field "publicRef" is required'});
+        }
+        const identity=container.listingIdentityRepo.resolvePublicRef(body.publicRef);
+        const listing=identity?container.canonicalListingRepo.getPropertyById(identity.listingId):undefined;
+        if(!identity||!listing){
+          if(isCanonicalReadCanary(tgUser.id))request.log.info({event:'canonical_canary_favorite_resolution',servedPath:'canonical',publicRef:body.publicRef,resolved:false});
+          return reply.status(404).send({statusCode:404,error:'Not Found',message:'Listing not found'});
+        }
+        const isFavorite=container.favoritesRepo.toggleCanonicalFavorite(user.id,identity.listingId);
+        const totalFavorites=(container.db.prepare('SELECT COUNT(*) n FROM canonical_user_favorites WHERE user_id=?').get(user.id) as {n:number}).n;
+        if(isCanonicalReadCanary(tgUser.id))request.log.info({event:'canonical_canary_favorite_resolution',servedPath:'canonical',publicRef:body.publicRef,resolved:true,isFavorite});
+        return reply.send({publicRef:body.publicRef,isFavorite,totalFavorites});
+      }
       const propertyId = body?.propertyId;
 
       if (!propertyId || typeof propertyId !== 'number') {
@@ -91,4 +112,3 @@ export const favoritesRoutes: FastifyPluginAsync<{ container: AppContainer }> = 
     },
   );
 };
-

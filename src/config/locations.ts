@@ -16,7 +16,11 @@ export const CAMBODIA_LOCATIONS: LocationEntry[] = [
     khmerName: 'ស្វាយដង្គុំ',
     city: 'siem_reap',
     administrativeType: 'sangkat',
-    aliases: ['svay dangkum', 'svay dang kum', 'svaydangkum', 'svay'],
+    aliases: [
+      'svay dangkum', 'svay dang kum', 'svaydangkum', 'svay',
+      'phsa kraom', 'phsa kraom residence', 'phsar kraom', 'phsar kraom residence',
+      'phsar kraoum', 'psar kraom', 'psar kroam', 'phsar kroam',
+    ],
     googleMapsPlaceQuery: 'Sangkat Svay Dangkum, Krong Siem Reap, Cambodia',
   },
   {
@@ -72,7 +76,7 @@ export const CAMBODIA_LOCATIONS: LocationEntry[] = [
     khmerName: 'សៀមរាប',
     city: 'siem_reap',
     administrativeType: 'sangkat',
-    aliases: ['sangkat siem reap', 'siem reap thmey', 'phsar kraom', 'phsar leu'],
+    aliases: ['sangkat siem reap', 'siem reap thmey', 'phsar leu'],
     googleMapsPlaceQuery: 'Sangkat Siem Reap, Krong Siem Reap, Cambodia',
   },
   {
@@ -795,5 +799,4 @@ export function crossValidateLocation(
     trustLevel: 'fallback',
   };
 }
-
 

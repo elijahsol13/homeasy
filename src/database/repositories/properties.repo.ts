@@ -56,6 +56,7 @@ export interface Property {
   marketing_landmarks?: string[];
   /** Original un-normalized post text, kept for re-parsing/debugging. */
   raw_text?: string | null;
+  listing_facts_json?: string | null;
   /** Machine-readable extraction issue codes (e.g. 'price_missing'). */
   parse_warnings?: string[];
   /** ISO timestamp of the last source-page re-verification. */
@@ -66,6 +67,11 @@ export interface Property {
   amenities?: string[];
   review_status?: 'approved' | 'pending' | 'rejected';
   review_reason?: string | null;
+  /** Derived read confidence for canonical search results. */
+  match_tier?: 'EXACT' | 'PROBABLE' | 'UNKNOWN';
+  city_tier?: 'EXACT_CITY' | 'PROBABLE_CITY' | 'UNKNOWN_CITY';
+  city_evidence?: 'LOCAL_EVIDENCE' | 'SOURCE_PRIOR_ONLY';
+  public_listing_ref?: string;
 }
 
 interface PropertyRow
@@ -311,13 +317,13 @@ export class PropertiesRepository {
             bedrooms, bathrooms, deposit, min_lease, has_pool, location, location_key, raw_location, city, coordinate_precision,
             maps_url, source_url, photos, image_phash, image_phashes, direct_contact, original_url, posted_at, updated_at,
             electricity, water, cleaning, restrictions, pet_friendly, primary_landmark, landmarks, marketing_landmarks, raw_text, parse_warnings, latitude, longitude, is_active,
-            property_type, amenities, review_status, review_reason)
+            property_type, amenities, review_status, review_reason, listing_facts_json)
          VALUES (?, ?, ?, ?, ?, ?, ?,
                  ?, ?, ?, ?, ?,
                  ?, ?, ?, ?, ?,
                  ?, ?, ?, ?, ?,
                  ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%SZ', 'now'),
-                 ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                 ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         input.hash,
@@ -362,6 +368,7 @@ export class PropertiesRepository {
         amenitiesJson,
         input.review_status ?? 'approved',
         input.review_reason ?? null,
+        input.listing_facts_json ?? null,
       );
 
     const newId = result.lastInsertRowid as number;
@@ -464,6 +471,7 @@ export class PropertiesRepository {
       location?: string;
       description?: string;
       raw_text?: string;
+      listing_facts_json?: string | null;
       parse_warnings?: string[];
       maps_url?: string;
       posted_at?: string | null;
@@ -582,6 +590,7 @@ export class PropertiesRepository {
              description = ?,
              raw_text = ?,
              parse_warnings = ?,
+             listing_facts_json = ?,
              updated_at = (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
          WHERE id = ?`,
       )
@@ -604,6 +613,7 @@ export class PropertiesRepository {
         newDescription,
         newRawText,
         newParseWarnings,
+        update.listing_facts_json ?? existing.listing_facts_json ?? null,
         id,
       );
 

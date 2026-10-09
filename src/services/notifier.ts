@@ -1,13 +1,7 @@
 import { Api, type InlineKeyboard } from 'grammy';
 import type { Property } from '../database/repositories/properties.repo';
 import { CITIES, KHR_TO_USD_RATE, RATE_LIMIT } from '../config/settings';
-import { listingActionKeyboard, getTelegramContactLink } from '../modules/bot/keyboards/listing.keyboard';
-import { formatDomesticPhone, formatInternationalPhone } from '../modules/parser/normalizer';
-import {
-  crossValidateLocation,
-  extractCoordinatesFromMapsUrl,
-} from '../config/locations';
-import { findLandmarksInText } from '../config/landmarks';
+import { listingActionKeyboard } from '../modules/bot/keyboards/listing.keyboard';
 import {
   extractElectricity,
   extractWater,
@@ -28,10 +22,6 @@ export function formatPrice(priceCents: number, currency: 'USD' | 'KHR'): string
 
 export function escapeHtml(text: string): string {
   return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-}
-
-function truncate(text: string, maxLen: number): string {
-  return text.length <= maxLen ? text : `${text.slice(0, maxLen - 3)}...`;
 }
 
 export function formatListingTimestamp(rawDate?: string): string {
@@ -166,269 +156,60 @@ export function extractRestrictions(text: string): string[] {
 }
 
 export function formatListingCard(property: Property): string {
-  const priceStr = property.price > 0 ? formatPrice(property.price, property.currency) : null;
-  const cityLabel = CITIES[property.city] ?? property.city;
-  const typeEmoji = property.type === 'rent' ? '🏠' : '🏷️';
-  const typeLabel = property.type === 'rent' ? 'For Rent' : 'For Sale';
-  const desc = property.description || '';
-
-  // 1. Specific Property Type extraction
-  const specificType = extractPropertyType(desc, property.category);
-  let catLabel: string | null = null;
-  if (specificType) {
-    switch (specificType) {
-      case 'Flat House':
-        catLabel = '🏘️ Flat House';
-        break;
-      case 'Private Villa':
-        catLabel = '🏡 Private Villa';
-        break;
-      case 'Private House':
-        catLabel = '🏡 Private House';
-        break;
-      case 'Condo':
-        catLabel = '🏢 Condo';
-        break;
-      case 'Apartment':
-        catLabel = '🏬 Apartment';
-        break;
-      case 'Hotel Room':
-        catLabel = '🏨 Hotel Room';
-        break;
-      case 'Room':
-        catLabel = '🛏️ Room';
-        break;
-      default:
-        catLabel = specificType;
-        break;
-    }
-  } else if (property.category) {
-    catLabel =
-      property.category === 'apartment'
-        ? '🏬 Apartment'
-        : property.category === 'house'
-          ? '🏡 House'
-          : property.category === 'hotel'
-            ? '🏨 Hotel Room'
-            : '🛏️ Room';
-  }
-
-  // 1. Price line
-  const priceLine = priceStr
-    ? (property.type === 'rent' ? `💰 <b>${priceStr}/mo</b>` : `💰 <b>${priceStr}</b>`)
-    : '💰 <i>Contact for Price</i>';
-
-  // 2. Terms line (Deposit, Min Lease) - Dynamic, ONLY render if present
-  const terms: string[] = [];
-  if (property.deposit !== null && property.deposit > 0) {
-    terms.push(`Deposit: ${formatPrice(property.deposit, property.currency)}`);
-  }
-  if (property.min_lease !== null && property.min_lease > 0) {
-    terms.push(`Min Lease: ${property.min_lease} mos`);
-  } else if (property.type === 'rent') {
-    terms.push(`Lease: unspecified (ask owner)`);
-  }
-  const termsLine = terms.length > 0 ? ` · ${terms.join(' · ')}` : '';
-
-  // 3. Location line with cross-validation & sanity checks
-  const pinCoords = property.maps_url
-    ? extractCoordinatesFromMapsUrl(property.maps_url)
-    : null;
-
-  let hotelName: string | null = null;
-  if (specificType === 'Hotel Room' || property.category === 'hotel') {
-    const hotelMatch =
-      desc.match(/(?:at|in|hotel:?)\s+([A-Z][A-Za-z0-9\s'&-]{2,30}(?:Hotel|Boutique|Resort|Lodge|Suites|Villa))/i) ||
-      property.title.match(/([A-Z][A-Za-z0-9\s'&-]{2,30}(?:Hotel|Boutique|Resort|Lodge|Suites|Villa))/i);
-    if (hotelMatch && hotelMatch[1]) {
-      hotelName = hotelMatch[1].trim();
-    }
-  }
-
-  const crossVal = crossValidateLocation(property.city, {
-    pinCoords,
-    rawMapsUrl: property.maps_url,
-    textLocation: property.location,
-    attributeLocation: null,
-    hotelName,
-  });
-
-  const finalMapsUrl = crossVal.finalMapsUrl;
-  const displayLocation = crossVal.resolvedLocation;
-
-  const isSpecific =
-    displayLocation &&
-    displayLocation.trim().length > 0 &&
-    displayLocation.toLowerCase() !== cityLabel.toLowerCase() &&
-    displayLocation.toLowerCase() !== property.city.toLowerCase() &&
-    displayLocation.toLowerCase() !== 'siem reap' &&
-    displayLocation.toLowerCase() !== 'phnom penh';
-
-  const locText = isSpecific
-    ? `<a href="${escapeHtml(finalMapsUrl)}">📍 <b>${escapeHtml(displayLocation)}</b>, ${cityLabel} ↗</a>`
-    : `<a href="${escapeHtml(finalMapsUrl)}">📍 <b>${cityLabel}</b> ↗</a>`;
-
-  // Landmarks line
-  const detectedLandmarks = findLandmarksInText(desc, property.city);
-  let landmarkLine = '';
-  if (detectedLandmarks.length > 0) {
-    const lm = detectedLandmarks[0];
-    landmarkLine = `\n<a href="${escapeHtml(lm.gmapsLink)}">🚩 Landmark: <b>${escapeHtml(lm.canonicalName)}</b> ↗</a>`;
-  }
-
-  // 4. Features line (Bedrooms, Bathrooms, Pool, Size, Floor, Furnishing)
-  const features: string[] = [];
-  if (property.bedrooms !== null && property.bedrooms >= 0) {
-    const beds = property.bedrooms === 0 ? 1 : property.bedrooms;
-    features.push(`${beds} BR`);
-  }
-  if (property.bathrooms !== null && property.bathrooms > 0) {
-    features.push(`${property.bathrooms} Bath`);
-  }
-  if (property.has_pool) {
-    features.push('🏊 Pool');
-  }
-
-  // Extract additional specs (Size, Floor, Furniture) from description if present
-  const sizeMatch =
-    desc.match(/(?:Size|📐 Size):\s*([0-9]+(?:\.[0-9]+)?\s*(?:m²|m2|sqm|sq\.?m\.?|[xX*]\s*[0-9]+m?))/i) ||
-    desc.match(/\b([0-9]{2,4}\s*(?:m²|m2|sqm))\b/i);
-  if (sizeMatch && sizeMatch[1]) {
-    features.push(`📐 ${sizeMatch[1].trim()}`);
-  }
-
-  const floorMatch = desc.match(/(?:Floor|🏢 Floor):\s*([0-9a-zA-Z\s]+?)(?:·|\n|$)/i);
-  if (floorMatch && floorMatch[1]) {
-    features.push(`🏢 ${floorMatch[1].trim()}`);
-  }
-
-  if (
-    /\b(?:fully furnished|full furniture|furnished)\b/i.test(desc) &&
-    !/\bunfurnished|non-furnished\b/i.test(desc)
-  ) {
-    features.push('🛋️ Furnished');
-  }
-
-  const featuresLine = features.length > 0 ? `\n🛏 ${features.join(' · ')}` : '';
-
-  // 5. Utilities line (EDC / Fixed electricity, State / Fixed water)
-  const electricity = extractElectricity(desc);
-  const water = extractWater(desc);
-  const utilities: string[] = [];
-  if (electricity) {
-    utilities.push(`⚡ Electricity: ${electricity}`);
-  }
-  if (water) {
-    utilities.push(`💧 Water: ${water}`);
-  }
-  const utilitiesLine = utilities.length > 0 ? `\n${utilities.join(' · ')}` : '';
-
-  // 6. Amenities row (Gym, Elevator, Balcony, Parking, Security, Cleaning, Wi-Fi, Pets)
-  const amenities: string[] = [];
-  if (/\b(?:gym|fitness)\b/i.test(desc)) amenities.push('🏋️ Gym');
-  if (/\b(?:elevator|lift)\b/i.test(desc)) amenities.push('🛗 Elevator');
-  if (/\b(?:balcony|terrace)\b/i.test(desc)) amenities.push('🌅 Balcony');
-  if (/\b(?:parking|garage)\b/i.test(desc)) amenities.push('🚗 Parking');
-  if (/\b(?:security|24\/7|guard)\b/i.test(desc)) amenities.push('🛡️ Security');
-
-  const cleaning = extractCleaning(desc);
-  if (cleaning) amenities.push(cleaning);
-
-  const restrictions = extractRestrictions(desc);
-  const hasPetRestriction = restrictions.includes('🚫 No Pets');
-  if (!hasPetRestriction && /\b(?:pet friendly|pets allowed)\b/i.test(desc)) {
-    amenities.push('🐾 Pet-friendly');
-  }
-  if (/\b(?:free wifi|free internet|high speed wifi|wifi included)\b/i.test(desc)) amenities.push('📶 Free Wi-Fi');
-
-  const amenitiesLine = amenities.length > 0 ? `\n✨ ${amenities.join(' · ')}` : '';
-
-  // 7. Restrictions row (Prominently displays any bans: pets, smoking, parties, subleasing)
-  const restrictionsLine = restrictions.length > 0 ? `\n⛔ <b>Restrictions:</b> ${restrictions.join(' · ')}` : '';
-
-  // 8. Description excerpt (cleaned of technical tags and capped under 240 chars)
-  const cleanedDesc = desc
-    .replace(/(?:Size|Floor|Furniture|Facing|Parking):[^\n]+/gi, '')
-    .trim();
-  const descLine = cleanedDesc
-    ? `\n\n${escapeHtml(truncate(cleanedDesc, 240))}`
-    : '';
-
-  // 9. Processing timestamp (placed right above contact section)
-  const timestampText = `\n\n${formatListingTimestamp(property.created_at || property.parsed_at)}`;
-
-  // 10. Direct contact details (formatted with domestic & international phone masks, no Contact header)
-  const contactLines: string[] = [];
-  if (property.direct_contact.phone) {
-    const parts = property.direct_contact.phone.split(/[/,|\n]+/).map((p) => p.trim()).filter(Boolean);
-    const formattedParts = parts.map((p) => {
-      const dom = formatDomesticPhone(p);
-      const intl = formatInternationalPhone(p);
-      if (dom && intl) {
-        return `<code>${escapeHtml(dom)}</code> (<code>${escapeHtml(intl)}</code>)`;
-      }
-      const fallback = dom || intl || p;
-      return `<code>${escapeHtml(fallback)}</code>`;
-    });
-    if (formattedParts.length > 0) {
-      contactLines.push(`📞 Phone: ${formattedParts.join(' / ')}`);
-    }
-  }
-
-  if (property.direct_contact.telegram) {
-    const rawTg = property.direct_contact.telegram.trim();
-    if (rawTg.startsWith('http://') || rawTg.startsWith('https://')) {
-      const display = rawTg.replace(/^https?:\/\/t\.me\//, '@');
-      contactLines.push(`💬 Telegram: <a href="${escapeHtml(rawTg)}">${escapeHtml(display)} ↗</a>`);
-    } else if (rawTg.startsWith('@')) {
-      const cleanHandle = rawTg.slice(1);
-      contactLines.push(`💬 Telegram: <a href="https://t.me/${escapeHtml(cleanHandle)}">@${escapeHtml(cleanHandle)} ↗</a>`);
-    } else {
-      const dom = formatDomesticPhone(rawTg) || rawTg;
-      const digits = rawTg.replace(/\D/g, '');
-      const intl = digits.startsWith('855') ? digits : (digits.startsWith('0') ? `855${digits.slice(1)}` : `855${digits}`);
-      contactLines.push(`💬 Telegram: <a href="https://t.me/+${escapeHtml(intl)}">${escapeHtml(dom)} ↗</a>`);
-    }
-  } else {
-    const tgLink = getTelegramContactLink(property.direct_contact);
-    if (tgLink) {
-      contactLines.push(`💬 Telegram: <a href="${escapeHtml(tgLink)}">DM via Phone ↗</a>`);
-    }
-  }
-
-  if (property.direct_contact.whatsapp) {
-    const rawWa = property.direct_contact.whatsapp.trim();
-    const dom = formatDomesticPhone(rawWa) || rawWa;
-    const digits = rawWa.replace(/\D/g, '');
-    const intl = digits.startsWith('855') ? digits : (digits.startsWith('0') ? `855${digits.slice(1)}` : `855${digits}`);
-    contactLines.push(`🟢 WhatsApp: <a href="https://wa.me/${escapeHtml(intl)}">${escapeHtml(dom)} ↗</a>`);
-  }
-
-  const source = property.source_url || property.original_url;
-  if (source && (source.startsWith('http://') || source.startsWith('https://'))) {
-    const cleanSource = source.replace('web.facebook.com', 'www.facebook.com');
-    contactLines.push(`🔗 Source: <a href="${escapeHtml(cleanSource)}">View Link</a>`);
-  }
-
-  const contactSection =
-    contactLines.length > 0 ? `\n\n${contactLines.join('\n')}` : '';
-
-  const catLine = catLabel ? ` · <i>${catLabel}</i>` : '';
-
-  return (
-    `${typeEmoji} <b>${escapeHtml(property.title)}</b>\n` +
-    `<i>${typeLabel}</i>${catLine}\n\n` +
-    `${priceLine}${termsLine}\n` +
-    `${locText}${landmarkLine}` +
-    `${featuresLine}` +
-    `${utilitiesLine}` +
-    `${amenitiesLine}` +
-    `${restrictionsLine}` +
-    `${descLine}` +
-    `${timestampText}` +
-    `${contactSection}\n\n` +
-    `🔔 <i>New match for your search alert!</i>`
+  const description = property.description || '';
+  const fullText = `${property.title}\n${description}`;
+  const rawPropertyType = property.property_type?.trim()
+    || extractPropertyType(fullText, property.category)
+    || (property.category ? property.category[0]!.toUpperCase() + property.category.slice(1) : 'Property');
+  const propertyType = rawPropertyType.replace(/(^|[\s/(-])([\p{L}])/gu, (_match, separator: string, letter: string) =>
+    `${separator}${letter.toLocaleUpperCase()}`,
   );
+  const location = property.location?.trim() || CITIES[property.city] || property.city;
+  const priceUsd = Math.round(property.price / 100);
+  const price = priceUsd > 0
+    ? `💰 <b>$${priceUsd.toLocaleString('en-US')}</b>${property.type === 'rent' ? '/month' : ''}`
+    : '💰 <i>Price on request</i>';
+
+  const sourceUrl = property.original_url || '';
+  const source = sourceUrl.includes('facebook.com') || sourceUrl.includes('fb.com')
+    ? 'Facebook'
+    : sourceUrl.includes('khmer24.com') ? 'Khmer24' : null;
+  const timestamp = property.posted_at || property.created_at;
+  let freshness: string | null = null;
+  if (timestamp) {
+    const parsed = Date.parse(timestamp);
+    if (!Number.isNaN(parsed)) {
+      const days = Math.floor((Date.now() - parsed) / 86_400_000);
+      freshness = days <= 0 ? 'today' : days === 1 ? '1d ago' : days < 30 ? `${days}d ago`
+        : `${Math.floor(days / 30)}mo ago`;
+    }
+  }
+  const sourceMeta = [source, freshness ? `posted ${freshness}` : null].filter(Boolean).join(' · ');
+
+  const features: string[] = [];
+  if (property.bedrooms !== null) {
+    features.push(`🛏 ${property.bedrooms === 0 ? 'Studio' : `${property.bedrooms} BR`}`);
+  }
+  if (property.bathrooms !== null) features.push(`🚿 ${property.bathrooms} Bath`);
+  if (property.has_pool) features.push('🏊 Pool');
+
+  const electricity = property.electricity ?? extractElectricity(fullText);
+  const water = property.water ?? extractWater(fullText);
+  const cleaning = property.cleaning ?? extractCleaning(fullText);
+  if (electricity) features.push(`⚡ ${electricity.replace('Fixed Rate ', '')}`);
+  if (water) features.push(`💧 ${water}`);
+  if (cleaning) features.push('✨ Cleaning');
+
+  const restrictions = property.restrictions?.length ? property.restrictions : extractRestrictions(fullText);
+  if (restrictions.length > 0) features.push(restrictions[0]!);
+
+  return [
+    `<i>${escapeHtml(propertyType)}</i>`,
+    `${price} · 📍 <b>${escapeHtml(location)}</b>`,
+    `<b>${escapeHtml(property.title)}</b>`,
+    sourceMeta ? escapeHtml(sourceMeta) : null,
+    features.length > 0 ? features.map(escapeHtml).join(' · ') : null,
+  ].filter((line): line is string => Boolean(line)).join('\n');
 }
 
 export async function sendListingCard(
