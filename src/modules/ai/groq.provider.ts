@@ -13,7 +13,6 @@ const API_URL = 'https://api.groq.com/openai/v1/chat/completions';
 function sanitizeJson(text: string): string {
   return text.replace(/```(?:json)?/gi, '').replace(/```/g, '').trim();
 }
-
 export class GroqProvider implements AiProvider {
   name = 'groq';
   private apiKey: string | undefined;
@@ -142,4 +141,3 @@ export class GroqProvider implements AiProvider {
     return { data, metric };
   }
 }
-

@@ -1,7 +1,7 @@
 # Phase 6A.1 — Canonical correctness and query performance
 
-Date: 2026-10-07  
-Input: read-only `data/rebuild/phase6a-checkpoint-20261007.db`  
+Date: 2026-10-07
+Input: read-only `data/rebuild/phase6a-checkpoint-20261007.db`
 Production read path: `LISTING_READ_PATH=legacy`; no cutover performed.
 
 ## Acceptance summary
