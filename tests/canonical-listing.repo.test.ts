@@ -63,7 +63,7 @@ describe('CanonicalListingRepository', () => {
     expect(property).toMatchObject({
       id:1, price:25000, location:'Sala Kamreuk', bedrooms:1,
       direct_contact:{phone:'+855 12 345 678'},
-      photos:['https://img.test/canonical.jpg'],
+      photos:['https://img.test/canonical.jpg','https://img.test/a.jpg'],
       amenities:['Wi-Fi'],
     });
   });

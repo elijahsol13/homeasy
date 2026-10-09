@@ -478,8 +478,10 @@ export class CanonicalShadowService {
           updated_at=strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE id=?`)
           .run(priceCents,currency,asText(facts.title_en)||null,asText(facts.description_en)||null,JSON.stringify(facts),source.last_seen_at,listingId);
       }else this.db.prepare(`UPDATE canonical_listings SET last_seen_at=MAX(last_seen_at,?),updated_at=strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE id=?`).run(source.last_seen_at,listingId);
-      if(listing.property_id!==null)this.db.prepare(`UPDATE canonical_properties SET last_observed_at=MAX(COALESCE(last_observed_at,''),?),
-        updated_at=strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE id=?`).run(source.last_seen_at,listing.property_id);
+      if(listing.property_id!==null)this.db.prepare(`UPDATE canonical_properties SET
+        latitude=COALESCE(?,latitude),longitude=COALESCE(?,longitude),last_observed_at=MAX(COALESCE(last_observed_at,''),?),
+        updated_at=strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE id=?`)
+        .run(num(facts.latitude),num(facts.longitude),source.last_seen_at,listing.property_id);
       this.reconcileMediaForSourceItem(sourceItemId,occurrenceId??null,listingId,listing.property_id,candidate.photoAssets.filter((photo)=>photo.sourceItemId===sourceItemId),observedAt);
       out.processed++;
     }
@@ -640,9 +642,10 @@ export class CanonicalShadowService {
     this.db.exec('SAVEPOINT canonical_shadow_build');
     try{
       const upsertProperty=this.db.prepare(`INSERT INTO canonical_properties
-        (city,sangkat,canonical_address,explicit_location,property_type,bedrooms,bathrooms,building_name,unit_identifier,property_fingerprint,algorithm_version,canonical_key,first_observed_at,last_observed_at)
-        VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(algorithm_version,canonical_key) WHERE canonical_key IS NOT NULL DO UPDATE SET
+        (city,sangkat,canonical_address,explicit_location,latitude,longitude,property_type,bedrooms,bathrooms,building_name,unit_identifier,property_fingerprint,algorithm_version,canonical_key,first_observed_at,last_observed_at)
+        VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(algorithm_version,canonical_key) WHERE canonical_key IS NOT NULL DO UPDATE SET
         city=excluded.city,sangkat=excluded.sangkat,canonical_address=excluded.canonical_address,explicit_location=excluded.explicit_location,
+        latitude=COALESCE(excluded.latitude,canonical_properties.latitude),longitude=COALESCE(excluded.longitude,canonical_properties.longitude),
         property_type=excluded.property_type,bedrooms=excluded.bedrooms,bathrooms=excluded.bathrooms,building_name=excluded.building_name,
         unit_identifier=excluded.unit_identifier,property_fingerprint=excluded.property_fingerprint,first_observed_at=excluded.first_observed_at,
         last_observed_at=excluded.last_observed_at,updated_at=strftime('%Y-%m-%dT%H:%M:%SZ','now')`);
@@ -657,7 +660,9 @@ export class CanonicalShadowService {
           WHERE o.source_entity_key=? AND o.is_current=1 AND o.source_item_id IN (${memberIds.map(()=>'?').join(',')}) AND l.property_id IS NOT NULL ORDER BY l.property_id`)
           .all(this.algorithmVersion,...memberIds) as Array<{property_id:number}>;
         if(bound.length===1)this.db.prepare('UPDATE canonical_properties SET canonical_key=? WHERE id=?').run(group.key,bound[0]!.property_id);
-        upsertProperty.run(city,sqlValue(fact(best,'sangkat','location')),sqlValue(fact(best,'explicit_location','location')),sqlValue(fact(best,'explicit_location')),sqlValue(fact(best,'property_type')),num(fact(best,'bedrooms')),num(fact(best,'bathrooms')),sqlValue(fact(best,'building_name')),sqlValue(fact(best,'unit_identifier')),group.key,this.algorithmVersion,group.key,first,last);
+        upsertProperty.run(city,sqlValue(fact(best,'sangkat','location')),sqlValue(fact(best,'explicit_location','location')),sqlValue(fact(best,'explicit_location')),
+          num(fact(best,'latitude')),num(fact(best,'longitude')),sqlValue(fact(best,'property_type')),num(fact(best,'bedrooms')),num(fact(best,'bathrooms')),
+          sqlValue(fact(best,'building_name')),sqlValue(fact(best,'unit_identifier')),group.key,this.algorithmVersion,group.key,first,last);
       }
       const upsertListing=this.db.prepare(`INSERT INTO canonical_listings
         (property_id,public_ref,status,availability_status,price,currency,title,description,property_type,category,bedrooms,bathrooms,min_lease_months,lease_term_text,deposit_amount,deposit_months,pet_friendly,amenities,restrictions,electricity_type,electricity_rate,water_type,water_rate,city,sangkat,explicit_location,first_seen_at,last_seen_at,dedupe_confidence,listing_facts_json,content_hash,algorithm_version,canonical_key)

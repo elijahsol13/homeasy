@@ -42,22 +42,20 @@ describe('Dynamic Telegram Listing Card Formatter', () => {
     updated_at: new Date().toISOString(),
   };
 
-  test('omits features row and terms row when bedrooms, bathrooms, pool, deposit, min_lease are null/false', () => {
+  test('renders a compact listing summary and omits absent features', () => {
     const card = formatListingCard(baseProperty);
 
     // Should NOT contain the bed/bath row icon or placeholders
     expect(card).not.toContain('🛏');
     expect(card).not.toContain('—');
-    expect(card).not.toContain('📋');
     expect(card).not.toContain('Deposit:');
     expect(card).not.toContain('Min Lease:');
 
-    // Should contain essentials
-    expect(card).toContain('🏠 <b>Modern House in Siem Reap</b>');
-    expect(card).toContain('💰 <b>$350/mo</b>');
-    expect(card).toContain('📞 Phone: <code>089 899 084</code> (<code>+855 89 899 084</code>)');
-    expect(card).toContain('🔗 Source:');
-    expect(card).not.toContain('👤 <b>Contact:</b>');
+    expect(card).toContain('<i>House</i>');
+    expect(card).toContain('💰 <b>$350</b>/month · 📍 <b>Svay Dangkum</b>');
+    expect(card).toContain('<b>Modern House in Siem Reap</b>');
+    expect(card).toContain('Facebook · posted today');
+    expect(card).not.toContain('089899084');
   });
 
   test('dynamically includes only present features and terms', () => {
@@ -72,8 +70,9 @@ describe('Dynamic Telegram Listing Card Formatter', () => {
 
     const card = formatListingCard(fullProperty);
 
-    expect(card).toContain('Deposit: $350 · Min Lease: 6 mos');
-    expect(card).toContain('🛏 2 BR · 2 Bath · 🏊 Pool');
+    expect(card).not.toContain('Deposit:');
+    expect(card).not.toContain('Min Lease:');
+    expect(card).toContain('🛏 2 BR · 🚿 2 Bath · 🏊 Pool');
   });
 
   test('renders studio correctly when bedrooms is 0', () => {
@@ -87,16 +86,17 @@ describe('Dynamic Telegram Listing Card Formatter', () => {
 
     const card = formatListingCard(studioProperty);
 
-    expect(card).toContain('🛏 1 BR · 1 Bath');
+    expect(card).toContain('🛏 Studio · 🚿 1 Bath');
     expect(card).not.toContain('🏊 Pool');
   });
 
-  test('renders custom maps_url when provided, and generated query when not', () => {
+  test('renders the canonical location without embedding map links in the compact card', () => {
     const cardWithCustomMaps = formatListingCard({
       ...baseProperty,
       maps_url: 'https://maps.app.goo.gl/sample123',
     });
-    expect(cardWithCustomMaps).toContain('href="https://maps.app.goo.gl/sample123"');
+    expect(cardWithCustomMaps).toContain('📍 <b>Svay Dangkum</b>');
+    expect(cardWithCustomMaps).not.toContain('href=');
 
     const cardWithSpecificMaps = formatListingCard({
       ...baseProperty,
@@ -104,8 +104,8 @@ describe('Dynamic Telegram Listing Card Formatter', () => {
       location: 'Sala Kamreuk',
       city: 'siem_reap',
     });
-    expect(cardWithSpecificMaps).toContain('href="https://www.google.com/maps/search/?api=1&amp;query=Sangkat%20Sala%20Kamreuk%2C%20Krong%20Siem%20Reap%2C%20Cambodia"');
-    expect(cardWithSpecificMaps).toContain('📍 <b>Sala Kamreuk</b>, Siem Reap ↗');
+    expect(cardWithSpecificMaps).toContain('📍 <b>Sala Kamreuk</b>');
+    expect(cardWithSpecificMaps).not.toContain('href=');
 
     const cardWithCityOnlyMaps = formatListingCard({
       ...baseProperty,
@@ -113,18 +113,13 @@ describe('Dynamic Telegram Listing Card Formatter', () => {
       location: '',
       city: 'siem_reap',
     });
-    expect(cardWithCityOnlyMaps).toContain('href="https://www.google.com/maps/search/?api=1&amp;query=Siem%20Reap%2C%20Cambodia"');
-    expect(cardWithCityOnlyMaps).toContain('📍 <b>Siem Reap</b> ↗');
+    expect(cardWithCityOnlyMaps).toContain('📍 <b>Siem Reap</b>');
+    expect(cardWithCityOnlyMaps).not.toContain('href=');
   });
 
-  test('formats listing timestamps nicely and positions above contact section', () => {
+  test('renders compact freshness metadata and formats full timestamps for callers', () => {
     const card = formatListingCard(baseProperty);
-    expect(card).toContain('🕒 Added: Today at');
-
-    const timestampIndex = card.indexOf('🕒 Added:');
-    const contactIndex = card.indexOf('📞 Phone:');
-    expect(timestampIndex).toBeGreaterThan(0);
-    expect(contactIndex).toBeGreaterThan(timestampIndex);
+    expect(card).toContain('Facebook · posted today');
 
     // Test formatListingTimestamp unit scenarios
     const now = new Date();
@@ -144,7 +139,7 @@ describe('Dynamic Telegram Listing Card Formatter', () => {
     expect(notifier.getApi()).toBe(mockApi);
   });
 
-  test('formats extra amenities and specs when present in description', () => {
+  test('keeps the compact card to primary structured features', () => {
     const richProperty: Property = {
       ...baseProperty,
       description:
@@ -155,13 +150,10 @@ describe('Dynamic Telegram Listing Card Formatter', () => {
     };
 
     const card = formatListingCard(richProperty);
-    expect(card).toContain('📐 120m²');
-    expect(card).toContain('🏢 2nd');
-    expect(card).toContain('🛋️ Furnished');
-    expect(card).toContain('🏋️ Gym');
-    expect(card).toContain('🛗 Elevator');
-    expect(card).toContain('🌅 Balcony');
-    expect(card).toContain('📶 Free Wi-Fi');
+    expect(card).toContain('<i>Private Villa</i>');
+    expect(card).toContain('🛏 3 BR · 🚿 3 Bath · 🏊 Pool');
+    expect(card).not.toContain('120m²');
+    expect(card).not.toContain('Furnished');
   });
 
   test('sendListingCard sends media group capped at 3 photos', async () => {
@@ -233,13 +225,13 @@ describe('Dynamic Telegram Listing Card Formatter', () => {
         ...baseProperty,
         category: 'apartment',
       });
-      expect(aptCard).toContain('🏬 Apartment');
+      expect(aptCard).toContain('<i>Apartment</i>');
 
       const hotelCard = formatListingCard({
         ...baseProperty,
         category: 'hotel',
       });
-      expect(hotelCard).toContain('🏨 Hotel Room');
+      expect(hotelCard).toContain('<i>Hotel Room</i>');
     });
 
     test('renders specific property types (Flat House, Private Villa, Condo)', () => {
@@ -247,19 +239,19 @@ describe('Dynamic Telegram Listing Card Formatter', () => {
         ...baseProperty,
         description: 'New shophouse / flat house for rent in Krong Siem Reap. 4 bedrooms.',
       });
-      expect(flatHouseCard).toContain('🏘️ Flat House');
+      expect(flatHouseCard).toContain('<i>Flat House</i>');
 
       const villaCard = formatListingCard({
         ...baseProperty,
         description: 'Private villa with swimming pool and private garden.',
       });
-      expect(villaCard).toContain('🏡 Private Villa');
+      expect(villaCard).toContain('<i>Private Villa</i>');
 
       const condoCard = formatListingCard({
         ...baseProperty,
         description: 'Modern luxury condo on the 12th floor with gym and pool.',
       });
-      expect(condoCard).toContain('🏢 Condo');
+      expect(condoCard).toContain('<i>Condo</i>');
     });
 
     test('renders Cambodian utilities (Electricity & Water)', () => {
@@ -267,22 +259,22 @@ describe('Dynamic Telegram Listing Card Formatter', () => {
         ...baseProperty,
         description: 'Apartment for rent. Electricity: EDC state rate $0.20/kwh. Free water included.',
       });
-      expect(cardWithUtilities).toContain('⚡ Electricity: EDC (State Rate) ~$0.20/kWh · 💧 Water: Included');
+      expect(cardWithUtilities).toContain('⚡ EDC (State Rate) ~$0.20/kWh · 💧 Included');
 
       const cardWithFixedRates = formatListingCard({
         ...baseProperty,
         description: 'Modern room. Electricity $0.25/kwh, water $5/person.',
       });
-      expect(cardWithFixedRates).toContain('⚡ Electricity: Fixed Rate ($0.25/kWh) · 💧 Water: Fixed ($5/person)');
+      expect(cardWithFixedRates).toContain('⚡ ($0.25/kWh) · 💧 Fixed ($5/person)');
     });
 
-    test('renders landmarks with Google Maps links', () => {
+    test('omits landmarks and links from the compact notification card', () => {
       const cardWithLandmark = formatListingCard({
         ...baseProperty,
         description: 'Cozy apartment located along Apsara Road near Angkor Wat.',
       });
-      expect(cardWithLandmark).toContain('🚩 Landmark: <b>Apsara Road (Charles de Gaulle)</b> ↗');
-      expect(cardWithLandmark).toContain('href="https://www.google.com/maps/place/Charles+De+Gaulle,+Krong+Siem+Reap"');
+      expect(cardWithLandmark).not.toContain('Landmark:');
+      expect(cardWithLandmark).not.toContain('href=');
     });
 
     test('discards bogus coordinates inside Lake Tonle Sap and falls back to district polygon', () => {
@@ -294,8 +286,7 @@ describe('Dynamic Telegram Listing Card Formatter', () => {
       });
       // Should NOT contain the lake coordinates
       expect(cardWithLakeCoords).not.toContain('13.100000');
-      // Should fall back to the canonical Sala Kamreuk query
-      expect(cardWithLakeCoords).toContain('Sangkat%20Sala%20Kamreuk');
+      expect(cardWithLakeCoords).toContain('📍 <b>Sala Kamreuk</b>');
     });
 
     test('renders cleaning in amenities and prominent restrictions row', () => {
@@ -306,9 +297,8 @@ describe('Dynamic Telegram Listing Card Formatter', () => {
       };
 
       const card = formatListingCard(listingWithRestrictions);
-      expect(card).toContain('✨ 🧹 Cleaning 2x/week');
-      expect(card).toContain('⛔ <b>Restrictions:</b> 🚫 No Pets · 🚭 No Smoking · 🤫 No Parties / Quiet Hours');
-      // Must not falsely add pet friendly
+      expect(card).toContain('✨ Cleaning · 🚫 No Pets');
+      expect(card).not.toContain('No Smoking');
       expect(card).not.toContain('🐾 Pet-friendly');
     });
 
@@ -319,8 +309,8 @@ describe('Dynamic Telegram Listing Card Formatter', () => {
       };
 
       const card = formatListingCard(petFriendlyListing);
-      expect(card).toContain('✨ 🧹 Cleaning Included · 🐾 Pet-friendly');
-      expect(card).not.toContain('⛔ <b>Restrictions:</b>');
+      expect(card).toContain('✨ Cleaning');
+      expect(card).not.toContain('🐾 Pet-friendly');
     });
   });
 });
