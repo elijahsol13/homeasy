@@ -84,7 +84,10 @@ describe('contact controls in listing UI', () => {
 
   it('opens Telegram from a card without selecting the card', async () => {
     const onSelect = vi.fn();
-    await act(async () => root.render(<PropertyCard property={property} onSelect={onSelect} onToggleFavorite={vi.fn()} />));
+    const onTelegramContactDispatched = vi.fn();
+    await act(async () => root.render(
+      <PropertyCard property={property} onSelect={onSelect} onToggleFavorite={vi.fn()} onTelegramContactDispatched={onTelegramContactDispatched} />,
+    ));
     const chatButton = [...host.querySelectorAll('button')].find((button) => button.textContent?.includes('Message Agent'))!;
     await act(async () => chatButton.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true })));
 
@@ -92,6 +95,8 @@ describe('contact controls in listing UI', () => {
     expect(openTelegramLink).toHaveBeenCalledWith('https://t.me/agent_sr');
     expect(closeMiniApp).not.toHaveBeenCalled();
     expect(onSelect).not.toHaveBeenCalled();
+    expect(onTelegramContactDispatched).toHaveBeenCalledWith(property);
+    expect(onTelegramContactDispatched.mock.invocationCallOrder[0]).toBeLessThan(openTelegramLink.mock.invocationCallOrder[0]);
   });
 
   it('hides Call and keeps a selectable number without a copy control in the card', async () => {
@@ -102,7 +107,7 @@ describe('contact controls in listing UI', () => {
     expect(openTelegramLink).not.toHaveBeenCalled();
   });
 
-  it('keeps the detail modal open after Telegram chat and renders native call', async () => {
+  it('keeps the detail modal open after Telegram chat while Call stays hidden', async () => {
     const onClose = vi.fn();
     await act(async () => root.render(
       <PropertyDetailModal property={property} onClose={onClose} onToggleFavorite={vi.fn()} onShowOnMap={vi.fn()} />,

@@ -10,6 +10,7 @@ interface PropertyCardProps {
   property: PropertyDTO;
   onSelect: (property: PropertyDTO) => void;
   onToggleFavorite: (identity: number | string) => void;
+  onTelegramContactDispatched?: (property: PropertyDTO) => void;
 }
 
 function sourceLabel(url: string | null | undefined): string | null {
@@ -35,6 +36,7 @@ export const PropertyCard: React.FC<PropertyCardProps> = ({
   property,
   onSelect,
   onToggleFavorite,
+  onTelegramContactDispatched,
 }) => {
   const carouselRef = React.useRef<HTMLDivElement>(null);
   const [photoIndex, setPhotoIndex] = useState(0);
@@ -74,6 +76,7 @@ export const PropertyCard: React.FC<PropertyCardProps> = ({
       } catch {
         // ignore
       }
+      onTelegramContactDispatched?.(property);
       openTelegramContact(telegramHref, e);
     }
   };

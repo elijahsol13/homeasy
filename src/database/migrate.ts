@@ -978,6 +978,57 @@ SELECT listing_id,review_status,review_reason,updated_at,decision_origin FROM ca
 DROP TABLE canonical_listing_moderation_v49;
 CREATE INDEX IF NOT EXISTS idx_canonical_moderation_status ON canonical_listing_moderation(review_status,listing_id);
 `,
+
+  // ── v51: first-party interest, offer, and contact-grant funnel ───────────────
+  `
+CREATE TABLE IF NOT EXISTS listing_interests (
+  id TEXT PRIMARY KEY,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  listing_id INTEGER NOT NULL REFERENCES canonical_listings(id) ON DELETE CASCADE,
+  search_context_json TEXT NOT NULL DEFAULT '{}',
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+  last_seen_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+  UNIQUE(user_id, listing_id)
+);
+CREATE INDEX IF NOT EXISTS idx_listing_interests_user_created ON listing_interests(user_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_listing_interests_listing_created ON listing_interests(listing_id, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS interest_requests (
+  id TEXT PRIMARY KEY,
+  interest_id TEXT NOT NULL UNIQUE REFERENCES listing_interests(id) ON DELETE CASCADE,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  listing_id INTEGER NOT NULL REFERENCES canonical_listings(id) ON DELETE CASCADE,
+  request_kind TEXT NOT NULL DEFAULT 'LIGHTWEIGHT_LISTING_INTEREST'
+    CHECK(request_kind IN ('LIGHTWEIGHT_LISTING_INTEREST')),
+  status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active','closed')),
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+  UNIQUE(user_id, listing_id)
+);
+CREATE INDEX IF NOT EXISTS idx_interest_requests_user_created ON interest_requests(user_id, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS listing_offers (
+  id TEXT PRIMARY KEY,
+  request_id TEXT NOT NULL REFERENCES interest_requests(id) ON DELETE CASCADE,
+  listing_id INTEGER NOT NULL REFERENCES canonical_listings(id) ON DELETE CASCADE,
+  offer_kind TEXT NOT NULL DEFAULT 'LISTING_MATCH'
+    CHECK(offer_kind IN ('LISTING_MATCH')),
+  status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active','closed')),
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+  UNIQUE(request_id, listing_id)
+);
+CREATE INDEX IF NOT EXISTS idx_listing_offers_listing_created ON listing_offers(listing_id, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS contact_grants (
+  id TEXT PRIMARY KEY,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  listing_id INTEGER NOT NULL REFERENCES canonical_listings(id) ON DELETE CASCADE,
+  offer_id TEXT NOT NULL UNIQUE REFERENCES listing_offers(id) ON DELETE CASCADE,
+  status TEXT NOT NULL DEFAULT 'granted' CHECK(status IN ('granted','revoked')),
+  granted_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+  UNIQUE(user_id, listing_id)
+);
+CREATE INDEX IF NOT EXISTS idx_contact_grants_user_granted ON contact_grants(user_id, granted_at DESC);
+`,
 ];
 
 /**

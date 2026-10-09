@@ -26,6 +26,7 @@ interface PropertyDetailModalProps {
   onClose: () => void;
   onToggleFavorite: (identity: number | string) => void;
   onShowOnMap: (property: PropertyDTO) => void;
+  onTelegramContactDispatched?: (property: PropertyDTO) => void;
   isAdmin?: boolean;
   onReview?: (propertyId: number, action: 'approve' | 'reject') => void;
 }
@@ -35,6 +36,7 @@ export const PropertyDetailModal: React.FC<PropertyDetailModalProps> = ({
   onClose,
   onToggleFavorite,
   onShowOnMap,
+  onTelegramContactDispatched,
   isAdmin = false,
   onReview,
 }) => {
@@ -607,6 +609,7 @@ export const PropertyDetailModal: React.FC<PropertyDetailModalProps> = ({
                 } catch {
                   // ignore
                 }
+                onTelegramContactDispatched?.(property);
                 openTelegramContact(telegramHref, e);
               }}
               className="flex-1 bg-sky-500 hover:bg-sky-600 text-white font-bold py-3 px-4 rounded-xl flex items-center justify-center gap-2 shadow-md active:scale-98 transition-all"

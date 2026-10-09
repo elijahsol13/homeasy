@@ -19,6 +19,7 @@ import { SourceIngestionRepository } from './database/repositories/source-ingest
 import { RepostClusteringService } from './modules/parser/repost-clustering';
 import { CanonicalShadowService } from './modules/parser/canonical-dedupe';
 import { ListingIdentityRepository } from './database/repositories/listing-identity.repo';
+import { InterestsRepository } from './database/repositories/interests.repo';
 
 export interface AppContainer {
   db: DatabaseSync;
@@ -38,6 +39,7 @@ export interface AppContainer {
   linkVerifierService: LinkVerifierService;
   trackedLinksRepo: TrackedLinksRepository;
   sourceIngestionRepo: SourceIngestionRepository;
+  interestsRepo: InterestsRepository;
 }
 
 export interface CreateContainerOptions {
@@ -63,6 +65,7 @@ export function createContainer(options?: CreateContainerOptions): AppContainer 
   const alertService = new AlertService(options?.api);
   const matcherService = new MatcherService(filtersRepo, usersRepo, propertiesRepo, notifierService);
   const sourceIngestionRepo = new SourceIngestionRepository(db);
+  const interestsRepo = new InterestsRepository(db);
   const ingestionService = new IngestionService(propertiesRepo, matcherService, alertService, sourceIngestionRepo,
     new RepostClusteringService(db), new CanonicalShadowService(db));
   const nlSearchService = new NLSearchService(propertiesRepo, analyticsRepo);
@@ -88,6 +91,7 @@ export function createContainer(options?: CreateContainerOptions): AppContainer 
     linkVerifierService,
     trackedLinksRepo,
     sourceIngestionRepo,
+    interestsRepo,
   } as AppContainer;
 
   return container;
