@@ -94,9 +94,9 @@ describe('contact controls in listing UI', () => {
     expect(onSelect).not.toHaveBeenCalled();
   });
 
-  it('renders native call and a selectable number without a copy control in the card', async () => {
+  it('hides Call and keeps a selectable number without a copy control in the card', async () => {
     await act(async () => root.render(<PropertyCard property={property} onSelect={vi.fn()} onToggleFavorite={vi.fn()} />));
-    expect(host.querySelector<HTMLAnchorElement>('a[aria-label="Call Agent"]')?.getAttribute('href')).toBe('tel:+85512345678');
+    expect(host.querySelector('a[aria-label="Call Agent"]')).toBeNull();
     expect(host.querySelector('button[aria-label="Copy phone number"]')).toBeNull();
     expect(host.querySelector('[aria-label="Phone number"]')?.textContent).toBe('012 345 678');
     expect(openTelegramLink).not.toHaveBeenCalled();
@@ -113,7 +113,7 @@ describe('contact controls in listing UI', () => {
     expect(openTelegramLink).toHaveBeenCalledTimes(1);
     expect(closeMiniApp).not.toHaveBeenCalled();
     expect(onClose).not.toHaveBeenCalled();
-    expect(host.querySelector<HTMLAnchorElement>('a[aria-label="Call"]')?.getAttribute('href')).toBe('tel:+85512345678');
+    expect(host.querySelector('a[aria-label="Call"]')).toBeNull();
     expect(host.querySelector('button[aria-label="Copy phone number"]')).toBeNull();
     expect(host.textContent).toContain('012 345 678');
   });
@@ -131,7 +131,7 @@ describe('contact controls in listing UI', () => {
     await act(async () => chatButton.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true })));
 
     expect(openTelegramLink).toHaveBeenCalledWith('https://t.me/+855012345678');
-    expect(host.querySelector<HTMLAnchorElement>('a[aria-label="Call Agent"]')?.getAttribute('href')).toBe('tel:+85512345678');
+    expect(host.querySelector('a[aria-label="Call Agent"]')).toBeNull();
   });
 
   it('adapts legacy phone DTO values in the detail modal', async () => {
@@ -147,10 +147,10 @@ describe('contact controls in listing UI', () => {
     await act(async () => chatButton.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true })));
 
     expect(openTelegramLink).toHaveBeenCalledWith('https://t.me/+855012345678');
-    expect(host.querySelector<HTMLAnchorElement>('a[aria-label="Call"]')?.getAttribute('href')).toBe('tel:+85512345678');
+    expect(host.querySelector('a[aria-label="Call"]')).toBeNull();
   });
 
-  it('uses the separate Telegram phone from a real listing for Chat and the display phone for Call', async () => {
+  it('uses the separate Telegram phone from a real listing for Chat while Call stays hidden', async () => {
     const separateContacts = {
       ...property,
       contact: {
@@ -168,7 +168,7 @@ describe('contact controls in listing UI', () => {
     await act(async () => chatButton.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true })));
 
     expect(openTelegramLink).toHaveBeenCalledWith('https://t.me/+855089586258');
-    expect(host.querySelector<HTMLAnchorElement>('a[aria-label="Call Agent"]')?.getAttribute('href')).toBe('tel:+855968152427');
+    expect(host.querySelector('a[aria-label="Call Agent"]')).toBeNull();
   });
 });
 

@@ -1,13 +1,8 @@
 import React, { useState } from 'react';
-import { Heart, MapPin, Send, Phone, Waves, Zap, Droplets, Ban, Sparkles, MessageCircle } from 'lucide-react';
+import { Heart, MapPin, Send, Waves, Zap, Droplets, Ban, Sparkles, MessageCircle } from 'lucide-react';
 import type { PropertyDTO } from '../types';
 import { triggerHaptic } from '../services/telegram';
-import {
-  onPhoneActionClick,
-  openTelegramContact,
-  phoneActionHrefFromDto,
-  telegramActionHrefFromDto,
-} from '../services/contact-actions';
+import { openTelegramContact, telegramActionHrefFromDto } from '../services/contact-actions';
 import posthog from 'posthog-js';
 import { formatPropertyTypeLabel } from '../formatters';
 
@@ -51,7 +46,6 @@ export const PropertyCard: React.FC<PropertyCardProps> = ({
     property.contact.phone,
     property.contact.telegram,
   );
-  const phoneHref = phoneActionHrefFromDto(property.contact.phoneLink, property.contact.phone);
 
   const handleScroll = (e: React.UIEvent<HTMLDivElement>) => {
     const el = e.currentTarget;
@@ -296,28 +290,6 @@ export const PropertyCard: React.FC<PropertyCardProps> = ({
               </a>
             )}
 
-            {phoneHref && (
-              <a
-                href={phoneHref}
-                onClick={(e) => {
-                  onPhoneActionClick(e);
-                  triggerHaptic('light');
-                  try {
-                    posthog.capture('contact_lead_clicked', {
-                      propertyId: property.id,
-                      listingRef: property.publicRef ?? null,
-                      channel: 'phone',
-                    });
-                  } catch {
-                    // ignore
-                  }
-                }}
-                className="p-2 bg-zinc-100 dark:bg-zinc-700 hover:bg-zinc-200 text-zinc-700 dark:text-zinc-200 rounded-xl transition-all active:scale-95"
-                aria-label="Call Agent"
-              >
-                <Phone className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
-              </a>
-            )}
             {property.contact.phone && (
               <span className="min-w-0 truncate text-[11px] text-zinc-500 dark:text-zinc-400 select-all" aria-label="Phone number">
                 {property.contact.phone}
