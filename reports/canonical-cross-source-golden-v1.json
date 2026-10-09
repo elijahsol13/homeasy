@@ -1,0 +1,2370 @@
+{
+  "fixtureId": "cross-source-golden-v1",
+  "createdAt": "2026-10-07",
+  "humanLabelsAreIndependentOfAlgorithm": true,
+  "algorithmVersionAtReview": "canonical-dedupe-v1",
+  "pairCount": 30,
+  "source": {
+    "facebookCandidates": 103,
+    "khmer24Candidates": 321
+  },
+  "labelDefinitions": {
+    "SAME_LISTING": "Same commercial offer across sources",
+    "SAME_PROPERTY_DIFFERENT_LISTING": "Same physical property with distinct offers",
+    "POSSIBLE_SAME_PROPERTY": "Human review cannot resolve identity",
+    "DIFFERENT_PROPERTY": "Evidence supports different physical properties",
+    "UNKNOWN": "Insufficient evidence to assign another label"
+  },
+  "pairs": [
+    {
+      "candidateA": "facebook_group:7",
+      "candidateB": "khmer24:2764",
+      "humanLabel": "SAME_LISTING",
+      "humanRationale": "Same unique property code DV018, near-identical listing text and terms, and two matching cross-source dHash images.",
+      "evidence": {
+        "facebook": {
+          "candidateId": "facebook_group:7",
+          "sourceType": "FACEBOOK_GROUP",
+          "propertyCode": "DV018",
+          "title": "2-Bedroom Villa in Sala Kamreuk",
+          "textSnippet": "🏡 2-Bedroom Villa for Rent in with Pool in Sala Kamreuk, Siem Reap City\n\nLocated in Sangkat Sala Kamreuk, Siem Reap City, this fully furnished 2-bedroom villa offers open-plan living with modern interiors and access to shared compound amenities including a swimming pool, garden, playground, and fitness gym.\n\nProperty Details:\n• Rental Price: USD 1,250 / month\n• Bedrooms: 2\n• Bathrooms: 2 \n• Furnishing: Fully furnished\n• Interior: Open living and dining area, kitchen with hood, dark tile floors, ceiling fans, and AC\n• Amenities: Shared pool, gym, garden, playground, BBQ area, generator, and free Wi-Fi.\n• Location: Sangkat Sala Kamreuk, Siem Reap City\n\n---------------------------------------\n",
+          "price": 1250,
+          "currency": "USD",
+          "offerType": null,
+          "location": "Sala Kamreuk",
+          "bedrooms": 2,
+          "bathrooms": 2,
+          "propertyType": "Private Villa"
+        },
+        "khmer24": {
+          "candidateId": "khmer24:2764",
+          "sourceType": "KHMER24",
+          "propertyCode": "DV018",
+          "title": "2BR Private Villa in Sala Kamreuk",
+          "textSnippet": "Contact Daka Kun Realty at [phone]/[phone] ( WhatsApp & Telegram) or Email: [email]\nProperty ID: DV018\n\nLocated in Sangkat Sala Kamreuk, Siem Reap City, this fully furnished 2-bedroom villa offers open-plan living with modern interiors and access to shared compound amenities including a swimming pool, garden, playground, and fitness gym.\n\nProperty Details:\n• Rental Price: USD 1,250 / month\n• Bedrooms: 2\n• Bathrooms: 2 \n• Furnishing: Fully furnished\n• Interior: Open living and dining area, kitchen with hood, dark tile floors, ceiling fans, and AC\n• Amenities: Shared pool, gym, garden, playground, BBQ area, generator, and free Wi-Fi.\n• Location: Sangkat Sala Kamreuk, Siem Reap City\n—----------",
+          "price": 1250,
+          "currency": "USD",
+          "offerType": "rent",
+          "location": "Sala Kamreuk",
+          "bedrooms": 2,
+          "bathrooms": null,
+          "propertyType": "Private Villa"
+        }
+      },
+      "algorithmOutputV1": {
+        "decision": "SAME_LISTING",
+        "propertyScore": 1,
+        "listingScore": 1,
+        "propertyFamilies": {
+          "IDENTIFIERS": 0.6,
+          "MEDIA": 0.45,
+          "CONTACT": 0.35,
+          "LOCATION": 0.27,
+          "STRUCTURED": 0.2,
+          "TEXT": 0.1
+        },
+        "listingFamilies": {
+          "IDENTIFIERS": 0.5,
+          "MEDIA": 0.2,
+          "CONTACT": 0.45,
+          "LOCATION": 0.05,
+          "STRUCTURED": 0.45,
+          "TEXT": 0.1
+        },
+        "sharedContactTypes": [
+          "EMAIL",
+          "PHONE"
+        ],
+        "sharedCodes": [
+          "PROPERTY_CODE:dv018"
+        ],
+        "photoMatchCount": 2,
+        "photoHammingDistances": [
+          0,
+          1
+        ],
+        "retrievalSignalTypes": [
+          "identifier",
+          "phash",
+          "price",
+          "structured",
+          "token"
+        ],
+        "reasonTypes": [
+          "shared listing/property identifier",
+          "2 matching dHash photo pair(s), Hamming <= 5",
+          "shared phone",
+          "shared messaging/email identifiers",
+          "same location",
+          "same bedrooms",
+          "same property type",
+          "same asking price within 5%",
+          "same offer type",
+          "text_jaccard=0.878",
+          "property_score=1.000",
+          "listing_score=1.000"
+        ]
+      }
+    },
+    {
+      "candidateA": "facebook_group:815",
+      "candidateB": "khmer24:2890",
+      "humanLabel": "DIFFERENT_PROPERTY",
+      "humanRationale": "The two listings show distinct agency property codes (DV2316 vs DV2299); shared Daka Kun agent contacts are agency-level evidence.",
+      "evidence": {
+        "facebook": {
+          "candidateId": "facebook_group:815",
+          "sourceType": "FACEBOOK_GROUP",
+          "propertyCode": "DV2316",
+          "title": "3 Bedrooms House with Pool",
+          "textSnippet": "🏡3 Bedrooms House for Rent in Siem Reap City, Svay Dangkum\n\nBeautiful 3-bedroom house with a private swimming pool available for rent in Sangkat Svay Dangkum, Siem Reap City. Fully furnished and featuring a private garden.\n\nProperty Details:\n• Rental Price: USD 1,000 / month\n• Layout: 3 Bedrooms, 4 Bathrooms, Living Area and Kitchen\n• Facilities: Swimming Pool, Garden, and Parking Space\n• Furnishing: Fully Furnished\n• Location: Sangkat Svay Dangkum, Siem Reap City\n\n---------------------------------------\nProperty Code: DV2316\nMore option: www.dakakunrealty.com\nTelegram Channel: [url]\n[phone]/[phone] (WhatsApp & Telegram)\n[email]\nReal Estate Agent: Yeun Sam Ath\nNr: R-21-381-01",
+          "price": 1000,
+          "currency": "USD",
+          "offerType": null,
+          "location": "Svay Dangkum",
+          "bedrooms": 3,
+          "bathrooms": 4,
+          "propertyType": "Private House"
+        },
+        "khmer24": {
+          "candidateId": "khmer24:2890",
+          "sourceType": "KHMER24",
+          "propertyCode": "DV2299",
+          "title": "3BR House in Svay Dangkum",
+          "textSnippet": "Contact Daka Kun Realty at [phone]/[phone] ( WhatsApp & Telegram) or Email: [email]\nProperty ID: DV2299\n\nRental Price: USD​ 600​ Per month \n\nSpacious 3-bedroom home for rent in Sangkat Svay Dangkum. Set on a 482 sqm plot, it features a wooden upper story, garden gazebo, lawn, and large paved parking area.\n\nProperty Details:\n• Land Size: 15m x 35m (482 sqm)\n• Bedrooms: 3\n• Bathrooms: 3\n• Furnishing: Unfurnished\n• Interior: Tiled living space, kitchen, and wood-paneled upper level.\n• Outdoor: Wooden gazebo, lawn, large paved parking yard, and perimeter wall.\n• Pet Policy: Pet-friendly\n• Location: Sangkat Svay Dangkum, Siem Reap City\n—------------------------------------------------------------",
+          "price": 600,
+          "currency": "USD",
+          "offerType": "rent",
+          "location": "Svay Dangkum",
+          "bedrooms": 3,
+          "bathrooms": 3,
+          "propertyType": "Private House"
+        }
+      },
+      "algorithmOutputV1": {
+        "decision": "POSSIBLE_SAME_PROPERTY",
+        "propertyScore": 0.77,
+        "listingScore": 0.7,
+        "propertyFamilies": {
+          "IDENTIFIERS": 0,
+          "MEDIA": 0,
+          "CONTACT": 0.35,
+          "LOCATION": 0.27,
+          "STRUCTURED": 0.15000000000000002,
+          "TEXT": 0
+        },
+        "listingFamilies": {
+          "IDENTIFIERS": 0,
+          "MEDIA": 0,
+          "CONTACT": 0.45,
+          "LOCATION": 0.05,
+          "STRUCTURED": 0.2,
+          "TEXT": 0
+        },
+        "sharedContactTypes": [
+          "EMAIL",
+          "PHONE"
+        ],
+        "sharedCodes": [],
+        "photoMatchCount": 0,
+        "photoHammingDistances": [],
+        "retrievalSignalTypes": [
+          "identifier",
+          "phash",
+          "structured",
+          "token"
+        ],
+        "reasonTypes": [
+          "shared phone",
+          "shared messaging/email identifiers",
+          "same location",
+          "same bedrooms",
+          "same property type",
+          "same offer type",
+          "text_jaccard=0.404",
+          "property_score=0.770",
+          "listing_score=0.700"
+        ]
+      }
+    },
+    {
+      "candidateA": "facebook_group:815",
+      "candidateB": "khmer24:2936",
+      "humanLabel": "DIFFERENT_PROPERTY",
+      "humanRationale": "The two listings show distinct agency property codes (DV2316 vs DV2033); shared Daka Kun agent contacts are agency-level evidence.",
+      "evidence": {
+        "facebook": {
+          "candidateId": "facebook_group:815",
+          "sourceType": "FACEBOOK_GROUP",
+          "propertyCode": "DV2316",
+          "title": "3 Bedrooms House with Pool",
+          "textSnippet": "🏡3 Bedrooms House for Rent in Siem Reap City, Svay Dangkum\n\nBeautiful 3-bedroom house with a private swimming pool available for rent in Sangkat Svay Dangkum, Siem Reap City. Fully furnished and featuring a private garden.\n\nProperty Details:\n• Rental Price: USD 1,000 / month\n• Layout: 3 Bedrooms, 4 Bathrooms, Living Area and Kitchen\n• Facilities: Swimming Pool, Garden, and Parking Space\n• Furnishing: Fully Furnished\n• Location: Sangkat Svay Dangkum, Siem Reap City\n\n---------------------------------------\nProperty Code: DV2316\nMore option: www.dakakunrealty.com\nTelegram Channel: [url]\n[phone]/[phone] (WhatsApp & Telegram)\n[email]\nReal Estate Agent: Yeun Sam Ath\nNr: R-21-381-01",
+          "price": 1000,
+          "currency": "USD",
+          "offerType": null,
+          "location": "Svay Dangkum",
+          "bedrooms": 3,
+          "bathrooms": 4,
+          "propertyType": "Private House"
+        },
+        "khmer24": {
+          "candidateId": "khmer24:2936",
+          "sourceType": "KHMER24",
+          "propertyCode": "DV2033",
+          "title": "3-Bedroom Flat House for Rent in Siem Reap City",
+          "textSnippet": "Contact Daka Kun Realty at [phone]/[phone] ( WhatsApp & Telegram) or Email: [email]\nProperty ID: DV2033\n\nSpacious 3-bedroom flat house for rent in Sangkat Svay Dangkum. Fully furnished with modern interiors, private balconies, and dedicated parking space.\n\nProperty Details:\n• Rental Price: USD 400 / month\n• Land Area: 113 sqm\n• Layout: 3 Bed | 4 Bath | Living Area & Kitchen\n• Furnishing: Fully Furnished\n• Features: Private balconies, AC, and front parking space.\n• Location: Sangkat Svay Dangkum, Siem Reap City\n—----------------------------------------------------------------------------\nMore option: www.dakakunrealty.com\nTelegram channel ---> [url]\nReal Estate Agent: Yeun Sam Ath\nNr: R-21-38",
+          "price": 400,
+          "currency": "USD",
+          "offerType": "rent",
+          "location": "Svay Dangkum",
+          "bedrooms": 3,
+          "bathrooms": 4,
+          "propertyType": "flat house"
+        }
+      },
+      "algorithmOutputV1": {
+        "decision": "POSSIBLE_SAME_PROPERTY",
+        "propertyScore": 0.75,
+        "listingScore": 0.68,
+        "propertyFamilies": {
+          "IDENTIFIERS": 0,
+          "MEDIA": 0,
+          "CONTACT": 0.35,
+          "LOCATION": 0.27,
+          "STRUCTURED": 0.13,
+          "TEXT": 0
+        },
+        "listingFamilies": {
+          "IDENTIFIERS": 0,
+          "MEDIA": 0,
+          "CONTACT": 0.45,
+          "LOCATION": 0.05,
+          "STRUCTURED": 0.18,
+          "TEXT": 0
+        },
+        "sharedContactTypes": [
+          "EMAIL",
+          "PHONE"
+        ],
+        "sharedCodes": [],
+        "photoMatchCount": 0,
+        "photoHammingDistances": [],
+        "retrievalSignalTypes": [
+          "identifier",
+          "token"
+        ],
+        "reasonTypes": [
+          "shared phone",
+          "shared messaging/email identifiers",
+          "same location",
+          "same bedrooms",
+          "same offer type",
+          "text_jaccard=0.541",
+          "property_score=0.750",
+          "listing_score=0.680"
+        ]
+      }
+    },
+    {
+      "candidateA": "facebook_group:219",
+      "candidateB": "khmer24:2821",
+      "humanLabel": "DIFFERENT_PROPERTY",
+      "humanRationale": "The two listings show distinct agency property codes (DV2313 vs DV2298); shared Daka Kun agent contacts are agency-level evidence.",
+      "evidence": {
+        "facebook": {
+          "candidateId": "facebook_group:219",
+          "sourceType": "FACEBOOK_GROUP",
+          "propertyCode": "DV2313",
+          "title": "3-Bedroom Wooden House for Rent",
+          "textSnippet": "🏡3-Bedroom Wooden House for Rent in Siem Reap City\n\nCharming 3-bedroom wooden house with a private swimming pool available for sale in Sangkat Chreav, Siem Reap City. Offering comfortable living space and an outdoor terrace.\n\nProperty Details:\n• Rental Price : USD 1300 / month \n• Land Area: 269 sqm\n• House Size: 6m x 9m\n• Layout: 3 bedrooms, 3 bathrooms, living area and kitchen \n• Features: Fully furnished, private swimming pool, outdoor terrace, garden lawn, and private parking space\n• Located​ in​ Sangkat  Siem Reap, Siem Reap City\n---------------------------------------\nProperty Code: DV2313\nMore option: www.dakakunrealty.com\nTelegram Channel: [url]\n[phone]/[phone] (WhatsApp & Telegram)\n",
+          "price": 1300,
+          "currency": "USD",
+          "offerType": null,
+          "location": "Chreav",
+          "bedrooms": 3,
+          "bathrooms": 3,
+          "propertyType": "Private House"
+        },
+        "khmer24": {
+          "candidateId": "khmer24:2821",
+          "sourceType": "KHMER24",
+          "propertyCode": "DV2298",
+          "title": "2BR Private House in Chreav",
+          "textSnippet": "Contact Daka Kun Realty at [phone]/[phone] ( WhatsApp & Telegram) or Email: [email]\nProperty ID: DV2298\n\nRental Price: USD 250 Per month \n\nPet-friendly two-story home with a mezzanine level and private balcony, offering a functional multi-level layout and standard city utility connections.\n\nProperty Details:\n• Land Size: 5m x 22m (110 sqm)\n• House Size: 4m x 11m (80 sqm)\n• Bedrooms: 2\n• Bathrooms: 3\n• Furnishing: Semi-furnished\n• Interior: Open living space, kitchen, air-conditioned bedrooms, mezzanine level, and en-suite bathroom setups\n• Outdoor: Private first-floor balcony, ground-floor parking space, and gated entryway\n• Pet Policy: Pet-friendly\n• Utilities: EDC electricity & city water ",
+          "price": 250,
+          "currency": "USD",
+          "offerType": "rent",
+          "location": "Chreav",
+          "bedrooms": 2,
+          "bathrooms": 3,
+          "propertyType": "Private House"
+        }
+      },
+      "algorithmOutputV1": {
+        "decision": "POSSIBLE_SAME_PROPERTY",
+        "propertyScore": 0.74,
+        "listingScore": 0.62,
+        "propertyFamilies": {
+          "IDENTIFIERS": 0,
+          "MEDIA": 0,
+          "CONTACT": 0.35,
+          "LOCATION": 0.27,
+          "STRUCTURED": 0.12000000000000001,
+          "TEXT": 0
+        },
+        "listingFamilies": {
+          "IDENTIFIERS": 0,
+          "MEDIA": 0,
+          "CONTACT": 0.45,
+          "LOCATION": 0.05,
+          "STRUCTURED": 0.12000000000000001,
+          "TEXT": 0
+        },
+        "sharedContactTypes": [
+          "EMAIL",
+          "PHONE"
+        ],
+        "sharedCodes": [],
+        "photoMatchCount": 0,
+        "photoHammingDistances": [],
+        "retrievalSignalTypes": [
+          "identifier",
+          "location",
+          "phash",
+          "token"
+        ],
+        "reasonTypes": [
+          "shared phone",
+          "shared messaging/email identifiers",
+          "same location",
+          "same property type",
+          "conflicting offer types",
+          "text_jaccard=0.363",
+          "property_score=0.740",
+          "listing_score=0.620"
+        ]
+      }
+    },
+    {
+      "candidateA": "facebook_group:67",
+      "candidateB": "khmer24:2890",
+      "humanLabel": "DIFFERENT_PROPERTY",
+      "humanRationale": "The two listings show distinct agency property codes (DV649 vs DV2299); shared Daka Kun agent contacts are agency-level evidence.",
+      "evidence": {
+        "facebook": {
+          "candidateId": "facebook_group:67",
+          "sourceType": "FACEBOOK_GROUP",
+          "propertyCode": "DV649",
+          "title": "5 Bedrooms House in Svay Dangkum",
+          "textSnippet": "🏡5 Bedrooms House for Rent in Siem Reap City, Svay Dangkum\n\nSpacious 5-bedroom house  for rent in Sangkat Svay Dangkum, Siem Reap City. Offering generous living space and essential amenities, this property is an ideal choice for large families or shared living.\n\nProperty Details:\n\n• Rental Price: USD 550 / month\n• 5 Bedrooms and 6 Bathrooms\n• Living Room and Kitchen\n• Semi-furnished\n• Air conditioner\n• Balcony and Rooftop\n• Parking Space\n• Security and Gate\n• Located in Sangkat Svay Dangkum, Siem Reap city\n\n---------------------------------------\nProperty Code: DV649\nMore option: www.dakakunrealty.com\nTelegram Channel: [url]\n[phone]/[phone] (WhatsApp & Telegram)\n[email]\nReal Estate Agent: Y",
+          "price": 550,
+          "currency": "USD",
+          "offerType": null,
+          "location": "Svay Dangkum",
+          "bedrooms": 5,
+          "bathrooms": 6,
+          "propertyType": "Private House"
+        },
+        "khmer24": {
+          "candidateId": "khmer24:2890",
+          "sourceType": "KHMER24",
+          "propertyCode": "DV2299",
+          "title": "3BR House in Svay Dangkum",
+          "textSnippet": "Contact Daka Kun Realty at [phone]/[phone] ( WhatsApp & Telegram) or Email: [email]\nProperty ID: DV2299\n\nRental Price: USD​ 600​ Per month \n\nSpacious 3-bedroom home for rent in Sangkat Svay Dangkum. Set on a 482 sqm plot, it features a wooden upper story, garden gazebo, lawn, and large paved parking area.\n\nProperty Details:\n• Land Size: 15m x 35m (482 sqm)\n• Bedrooms: 3\n• Bathrooms: 3\n• Furnishing: Unfurnished\n• Interior: Tiled living space, kitchen, and wood-paneled upper level.\n• Outdoor: Wooden gazebo, lawn, large paved parking yard, and perimeter wall.\n• Pet Policy: Pet-friendly\n• Location: Sangkat Svay Dangkum, Siem Reap City\n—------------------------------------------------------------",
+          "price": 600,
+          "currency": "USD",
+          "offerType": "rent",
+          "location": "Svay Dangkum",
+          "bedrooms": 3,
+          "bathrooms": 3,
+          "propertyType": "Private House"
+        }
+      },
+      "algorithmOutputV1": {
+        "decision": "POSSIBLE_SAME_PROPERTY",
+        "propertyScore": 0.74,
+        "listingScore": 0.62,
+        "propertyFamilies": {
+          "IDENTIFIERS": 0,
+          "MEDIA": 0,
+          "CONTACT": 0.35,
+          "LOCATION": 0.27,
+          "STRUCTURED": 0.12000000000000001,
+          "TEXT": 0
+        },
+        "listingFamilies": {
+          "IDENTIFIERS": 0,
+          "MEDIA": 0,
+          "CONTACT": 0.45,
+          "LOCATION": 0.05,
+          "STRUCTURED": 0.12000000000000001,
+          "TEXT": 0
+        },
+        "sharedContactTypes": [
+          "EMAIL",
+          "PHONE"
+        ],
+        "sharedCodes": [],
+        "photoMatchCount": 0,
+        "photoHammingDistances": [],
+        "retrievalSignalTypes": [
+          "identifier",
+          "price"
+        ],
+        "reasonTypes": [
+          "shared phone",
+          "shared messaging/email identifiers",
+          "same location",
+          "same property type",
+          "same offer type",
+          "text_jaccard=0.350",
+          "property_score=0.740",
+          "listing_score=0.620"
+        ]
+      }
+    },
+    {
+      "candidateA": "facebook_group:67",
+      "candidateB": "khmer24:2934",
+      "humanLabel": "DIFFERENT_PROPERTY",
+      "humanRationale": "The two listings show distinct agency property codes (DV649 vs DV574); shared Daka Kun agent contacts are agency-level evidence.",
+      "evidence": {
+        "facebook": {
+          "candidateId": "facebook_group:67",
+          "sourceType": "FACEBOOK_GROUP",
+          "propertyCode": "DV649",
+          "title": "5 Bedrooms House in Svay Dangkum",
+          "textSnippet": "🏡5 Bedrooms House for Rent in Siem Reap City, Svay Dangkum\n\nSpacious 5-bedroom house  for rent in Sangkat Svay Dangkum, Siem Reap City. Offering generous living space and essential amenities, this property is an ideal choice for large families or shared living.\n\nProperty Details:\n\n• Rental Price: USD 550 / month\n• 5 Bedrooms and 6 Bathrooms\n• Living Room and Kitchen\n• Semi-furnished\n• Air conditioner\n• Balcony and Rooftop\n• Parking Space\n• Security and Gate\n• Located in Sangkat Svay Dangkum, Siem Reap city\n\n---------------------------------------\nProperty Code: DV649\nMore option: www.dakakunrealty.com\nTelegram Channel: [url]\n[phone]/[phone] (WhatsApp & Telegram)\n[email]\nReal Estate Agent: Y",
+          "price": 550,
+          "currency": "USD",
+          "offerType": null,
+          "location": "Svay Dangkum",
+          "bedrooms": 5,
+          "bathrooms": 6,
+          "propertyType": "Private House"
+        },
+        "khmer24": {
+          "candidateId": "khmer24:2934",
+          "sourceType": "KHMER24",
+          "propertyCode": "DV574",
+          "title": "5-Bedroom Villa with Swimming Pool for Rent in Siem Reap City, Svay Dangkum",
+          "textSnippet": "Contact Daka Kun at +855 89 899 084 ( Whatsapp, Wechat, Line, Telegram )or mail to: [email]\nProperty ID: DV574\n\nSpacious 5-bedroom villa for rent in Siem Reap city. Features rich wooden interiors, a large pool with built-in bar seating, tropical gardens, and private parking.\n\nProperty Details:\n• Rental Price: USD 1,800 / month\n• Layout: 5 Bed | 7 Bath | Living Area & Kitchen\n• Furnishing: Fully Furnished\n• Features: Outdoor swimming pool with built-in bar stools, poolside lounge chairs, outdoor dining courtyard with umbrellas, private balconies, and parking area.\n• Location: Sangkat Svay Dangkum, Siem Reap City\n—----------------------------------------------------------------------------\nMor",
+          "price": 2500,
+          "currency": "USD",
+          "offerType": "rent",
+          "location": "Svay Dangkum",
+          "bedrooms": 5,
+          "bathrooms": 7,
+          "propertyType": "villa"
+        }
+      },
+      "algorithmOutputV1": {
+        "decision": "POSSIBLE_SAME_PROPERTY",
+        "propertyScore": 0.7,
+        "listingScore": 0.63,
+        "propertyFamilies": {
+          "IDENTIFIERS": 0,
+          "MEDIA": 0,
+          "CONTACT": 0.35,
+          "LOCATION": 0.27,
+          "STRUCTURED": 0.08,
+          "TEXT": 0
+        },
+        "listingFamilies": {
+          "IDENTIFIERS": 0,
+          "MEDIA": 0,
+          "CONTACT": 0.45,
+          "LOCATION": 0.05,
+          "STRUCTURED": 0.13,
+          "TEXT": 0
+        },
+        "sharedContactTypes": [
+          "EMAIL",
+          "PHONE"
+        ],
+        "sharedCodes": [],
+        "photoMatchCount": 0,
+        "photoHammingDistances": [],
+        "retrievalSignalTypes": [
+          "phash"
+        ],
+        "reasonTypes": [
+          "shared phone",
+          "shared messaging/email identifiers",
+          "same location",
+          "same bedrooms",
+          "same offer type",
+          "text_jaccard=0.347",
+          "property_score=0.700",
+          "listing_score=0.630"
+        ]
+      }
+    },
+    {
+      "candidateA": "facebook_group:67",
+      "candidateB": "khmer24:2827",
+      "humanLabel": "DIFFERENT_PROPERTY",
+      "humanRationale": "Distinct explicit property codes (DV649 vs DV1112) and differing property details.",
+      "evidence": {
+        "facebook": {
+          "candidateId": "facebook_group:67",
+          "sourceType": "FACEBOOK_GROUP",
+          "propertyCode": "DV649",
+          "title": "5 Bedrooms House in Svay Dangkum",
+          "textSnippet": "🏡5 Bedrooms House for Rent in Siem Reap City, Svay Dangkum\n\nSpacious 5-bedroom house  for rent in Sangkat Svay Dangkum, Siem Reap City. Offering generous living space and essential amenities, this property is an ideal choice for large families or shared living.\n\nProperty Details:\n\n• Rental Price: USD 550 / month\n• 5 Bedrooms and 6 Bathrooms\n• Living Room and Kitchen\n• Semi-furnished\n• Air conditioner\n• Balcony and Rooftop\n• Parking Space\n• Security and Gate\n• Located in Sangkat Svay Dangkum, Siem Reap city\n\n---------------------------------------\nProperty Code: DV649\nMore option: www.dakakunrealty.com\nTelegram Channel: [url]\n[phone]/[phone] (WhatsApp & Telegram)\n[email]\nReal Estate Agent: Y",
+          "price": 550,
+          "currency": "USD",
+          "offerType": null,
+          "location": "Svay Dangkum",
+          "bedrooms": 5,
+          "bathrooms": 6,
+          "propertyType": "Private House"
+        },
+        "khmer24": {
+          "candidateId": "khmer24:2827",
+          "sourceType": "KHMER24",
+          "propertyCode": "DV1112",
+          "title": "2BR Private House in Svay Dangkum",
+          "textSnippet": "Contact Daka Kun Realty at [phone]/[phone] ( WhatsApp & Telegram) or Email: [email]\nProperty ID: DV1112\n\nRental Price: USD 350 per month\n\n2-bedroom home located on a concrete road in Sangkat Svay Dangkum, Siem Reap. Set on a 10m x 20m plot, this house features a paved front courtyard, semi-furnished interiors, and convenient access.\n\nProperty Details:\n• Land Size: 10m x 20m\n• House Size: 8m x 13m\n• Bedrooms: 2\n• Bathrooms: 3\n• Furnishing: Semi-furnished\n• Interior: living room with ceiling lighting, air conditioning, and a functional kitchen area with fitted countertops\n• Outdoor: front courtyard with garden borders, high boundary wall, and secure front gate along a concrete road.\n• Location",
+          "price": 400,
+          "currency": "USD",
+          "offerType": "rent",
+          "location": "Svay Dangkum",
+          "bedrooms": 2,
+          "bathrooms": null,
+          "propertyType": "Private House"
+        }
+      },
+      "algorithmOutputV1": {
+        "decision": "DIFFERENT_PROPERTY",
+        "propertyScore": 0.69,
+        "listingScore": 0.62,
+        "propertyFamilies": {
+          "IDENTIFIERS": 0,
+          "MEDIA": 0,
+          "CONTACT": 0.35,
+          "LOCATION": 0.27,
+          "STRUCTURED": 0.07,
+          "TEXT": 0
+        },
+        "listingFamilies": {
+          "IDENTIFIERS": 0,
+          "MEDIA": 0,
+          "CONTACT": 0.45,
+          "LOCATION": 0.05,
+          "STRUCTURED": 0.12000000000000001,
+          "TEXT": 0
+        },
+        "sharedContactTypes": [
+          "EMAIL",
+          "PHONE"
+        ],
+        "sharedCodes": [],
+        "photoMatchCount": 0,
+        "photoHammingDistances": [],
+        "retrievalSignalTypes": [
+          "identifier",
+          "phash",
+          "token"
+        ],
+        "reasonTypes": [
+          "shared phone",
+          "shared messaging/email identifiers",
+          "same location",
+          "same property type",
+          "same offer type",
+          "text_jaccard=0.368",
+          "property_score=0.690",
+          "listing_score=0.620"
+        ]
+      }
+    },
+    {
+      "candidateA": "facebook_group:815",
+      "candidateB": "khmer24:2827",
+      "humanLabel": "DIFFERENT_PROPERTY",
+      "humanRationale": "Distinct explicit property codes (DV2316 vs DV1112) and differing property details.",
+      "evidence": {
+        "facebook": {
+          "candidateId": "facebook_group:815",
+          "sourceType": "FACEBOOK_GROUP",
+          "propertyCode": "DV2316",
+          "title": "3 Bedrooms House with Pool",
+          "textSnippet": "🏡3 Bedrooms House for Rent in Siem Reap City, Svay Dangkum\n\nBeautiful 3-bedroom house with a private swimming pool available for rent in Sangkat Svay Dangkum, Siem Reap City. Fully furnished and featuring a private garden.\n\nProperty Details:\n• Rental Price: USD 1,000 / month\n• Layout: 3 Bedrooms, 4 Bathrooms, Living Area and Kitchen\n• Facilities: Swimming Pool, Garden, and Parking Space\n• Furnishing: Fully Furnished\n• Location: Sangkat Svay Dangkum, Siem Reap City\n\n---------------------------------------\nProperty Code: DV2316\nMore option: www.dakakunrealty.com\nTelegram Channel: [url]\n[phone]/[phone] (WhatsApp & Telegram)\n[email]\nReal Estate Agent: Yeun Sam Ath\nNr: R-21-381-01",
+          "price": 1000,
+          "currency": "USD",
+          "offerType": null,
+          "location": "Svay Dangkum",
+          "bedrooms": 3,
+          "bathrooms": 4,
+          "propertyType": "Private House"
+        },
+        "khmer24": {
+          "candidateId": "khmer24:2827",
+          "sourceType": "KHMER24",
+          "propertyCode": "DV1112",
+          "title": "2BR Private House in Svay Dangkum",
+          "textSnippet": "Contact Daka Kun Realty at [phone]/[phone] ( WhatsApp & Telegram) or Email: [email]\nProperty ID: DV1112\n\nRental Price: USD 350 per month\n\n2-bedroom home located on a concrete road in Sangkat Svay Dangkum, Siem Reap. Set on a 10m x 20m plot, this house features a paved front courtyard, semi-furnished interiors, and convenient access.\n\nProperty Details:\n• Land Size: 10m x 20m\n• House Size: 8m x 13m\n• Bedrooms: 2\n• Bathrooms: 3\n• Furnishing: Semi-furnished\n• Interior: living room with ceiling lighting, air conditioning, and a functional kitchen area with fitted countertops\n• Outdoor: front courtyard with garden borders, high boundary wall, and secure front gate along a concrete road.\n• Location",
+          "price": 400,
+          "currency": "USD",
+          "offerType": "rent",
+          "location": "Svay Dangkum",
+          "bedrooms": 2,
+          "bathrooms": null,
+          "propertyType": "Private House"
+        }
+      },
+      "algorithmOutputV1": {
+        "decision": "DIFFERENT_PROPERTY",
+        "propertyScore": 0.69,
+        "listingScore": 0.62,
+        "propertyFamilies": {
+          "IDENTIFIERS": 0,
+          "MEDIA": 0,
+          "CONTACT": 0.35,
+          "LOCATION": 0.27,
+          "STRUCTURED": 0.07,
+          "TEXT": 0
+        },
+        "listingFamilies": {
+          "IDENTIFIERS": 0,
+          "MEDIA": 0,
+          "CONTACT": 0.45,
+          "LOCATION": 0.05,
+          "STRUCTURED": 0.12000000000000001,
+          "TEXT": 0
+        },
+        "sharedContactTypes": [
+          "EMAIL",
+          "PHONE"
+        ],
+        "sharedCodes": [],
+        "photoMatchCount": 0,
+        "photoHammingDistances": [],
+        "retrievalSignalTypes": [
+          "identifier",
+          "phash",
+          "token"
+        ],
+        "reasonTypes": [
+          "shared phone",
+          "shared messaging/email identifiers",
+          "same location",
+          "same property type",
+          "same offer type",
+          "text_jaccard=0.380",
+          "property_score=0.690",
+          "listing_score=0.620"
+        ]
+      }
+    },
+    {
+      "candidateA": "facebook_group:219",
+      "candidateB": "khmer24:2890",
+      "humanLabel": "DIFFERENT_PROPERTY",
+      "humanRationale": "Distinct explicit property codes (DV2313 vs DV2299) and differing property details.",
+      "evidence": {
+        "facebook": {
+          "candidateId": "facebook_group:219",
+          "sourceType": "FACEBOOK_GROUP",
+          "propertyCode": "DV2313",
+          "title": "3-Bedroom Wooden House for Rent",
+          "textSnippet": "🏡3-Bedroom Wooden House for Rent in Siem Reap City\n\nCharming 3-bedroom wooden house with a private swimming pool available for sale in Sangkat Chreav, Siem Reap City. Offering comfortable living space and an outdoor terrace.\n\nProperty Details:\n• Rental Price : USD 1300 / month \n• Land Area: 269 sqm\n• House Size: 6m x 9m\n• Layout: 3 bedrooms, 3 bathrooms, living area and kitchen \n• Features: Fully furnished, private swimming pool, outdoor terrace, garden lawn, and private parking space\n• Located​ in​ Sangkat  Siem Reap, Siem Reap City\n---------------------------------------\nProperty Code: DV2313\nMore option: www.dakakunrealty.com\nTelegram Channel: [url]\n[phone]/[phone] (WhatsApp & Telegram)\n",
+          "price": 1300,
+          "currency": "USD",
+          "offerType": null,
+          "location": "Chreav",
+          "bedrooms": 3,
+          "bathrooms": 3,
+          "propertyType": "Private House"
+        },
+        "khmer24": {
+          "candidateId": "khmer24:2890",
+          "sourceType": "KHMER24",
+          "propertyCode": "DV2299",
+          "title": "3BR House in Svay Dangkum",
+          "textSnippet": "Contact Daka Kun Realty at [phone]/[phone] ( WhatsApp & Telegram) or Email: [email]\nProperty ID: DV2299\n\nRental Price: USD​ 600​ Per month \n\nSpacious 3-bedroom home for rent in Sangkat Svay Dangkum. Set on a 482 sqm plot, it features a wooden upper story, garden gazebo, lawn, and large paved parking area.\n\nProperty Details:\n• Land Size: 15m x 35m (482 sqm)\n• Bedrooms: 3\n• Bathrooms: 3\n• Furnishing: Unfurnished\n• Interior: Tiled living space, kitchen, and wood-paneled upper level.\n• Outdoor: Wooden gazebo, lawn, large paved parking yard, and perimeter wall.\n• Pet Policy: Pet-friendly\n• Location: Sangkat Svay Dangkum, Siem Reap City\n—------------------------------------------------------------",
+          "price": 600,
+          "currency": "USD",
+          "offerType": "rent",
+          "location": "Svay Dangkum",
+          "bedrooms": 3,
+          "bathrooms": 3,
+          "propertyType": "Private House"
+        }
+      },
+      "algorithmOutputV1": {
+        "decision": "DIFFERENT_PROPERTY",
+        "propertyScore": 0.63,
+        "listingScore": 0.65,
+        "propertyFamilies": {
+          "IDENTIFIERS": 0,
+          "MEDIA": 0,
+          "CONTACT": 0.35,
+          "LOCATION": 0.08,
+          "STRUCTURED": 0.2,
+          "TEXT": 0
+        },
+        "listingFamilies": {
+          "IDENTIFIERS": 0,
+          "MEDIA": 0,
+          "CONTACT": 0.45,
+          "LOCATION": 0,
+          "STRUCTURED": 0.2,
+          "TEXT": 0
+        },
+        "sharedContactTypes": [
+          "EMAIL",
+          "PHONE"
+        ],
+        "sharedCodes": [],
+        "photoMatchCount": 0,
+        "photoHammingDistances": [],
+        "retrievalSignalTypes": [
+          "identifier",
+          "token"
+        ],
+        "reasonTypes": [
+          "shared phone",
+          "shared messaging/email identifiers",
+          "same bedrooms",
+          "same property type",
+          "conflicting offer types",
+          "text_jaccard=0.406",
+          "property_score=0.630",
+          "listing_score=0.650"
+        ]
+      }
+    },
+    {
+      "candidateA": "facebook_group:796",
+      "candidateB": "khmer24:2821",
+      "humanLabel": "DIFFERENT_PROPERTY",
+      "humanRationale": "Distinct explicit property codes (DV603 vs DV2298) and differing property details.",
+      "evidence": {
+        "facebook": {
+          "candidateId": "facebook_group:796",
+          "sourceType": "FACEBOOK_GROUP",
+          "propertyCode": "DV603",
+          "title": "2-Bedroom Townhouse with Shared Pool",
+          "textSnippet": "🏡2-Bedroom Townhouse with Shared Pool for Rent in Siem Reap City\n\nCharming 2-bedroom townhouse for rent in Siem Reap City. Fully furnished with open living space, full access to a shared swimming pool, and parking space.\n\nProperty Details:\n• Rental Price: USD 350 / month\n• Layout: 2 Bed | 3 Bath | Living Room & Kitchen\n• Furnishing: Fully Furnished\n• Features: Shared swimming pool, fully equipped living and kitchen spaces, and secure parking area.\n• Location: Sangkat Srangae, Siem Reap City\n---------------------------------------\nProperty Code: DV603\nMore option: www.dakakunrealty.com\nTelegram Channel: [url]\n[phone]/[phone] (WhatsApp & Telegram)\n[email]\nReal Estate Agent: Yeun Sam Ath\nNr: R",
+          "price": 350,
+          "currency": "USD",
+          "offerType": null,
+          "location": "Srangae",
+          "bedrooms": 2,
+          "bathrooms": 3,
+          "propertyType": "Private House"
+        },
+        "khmer24": {
+          "candidateId": "khmer24:2821",
+          "sourceType": "KHMER24",
+          "propertyCode": "DV2298",
+          "title": "2BR Private House in Chreav",
+          "textSnippet": "Contact Daka Kun Realty at [phone]/[phone] ( WhatsApp & Telegram) or Email: [email]\nProperty ID: DV2298\n\nRental Price: USD 250 Per month \n\nPet-friendly two-story home with a mezzanine level and private balcony, offering a functional multi-level layout and standard city utility connections.\n\nProperty Details:\n• Land Size: 5m x 22m (110 sqm)\n• House Size: 4m x 11m (80 sqm)\n• Bedrooms: 2\n• Bathrooms: 3\n• Furnishing: Semi-furnished\n• Interior: Open living space, kitchen, air-conditioned bedrooms, mezzanine level, and en-suite bathroom setups\n• Outdoor: Private first-floor balcony, ground-floor parking space, and gated entryway\n• Pet Policy: Pet-friendly\n• Utilities: EDC electricity & city water ",
+          "price": 250,
+          "currency": "USD",
+          "offerType": "rent",
+          "location": "Chreav",
+          "bedrooms": 2,
+          "bathrooms": 3,
+          "propertyType": "Private House"
+        }
+      },
+      "algorithmOutputV1": {
+        "decision": "DIFFERENT_PROPERTY",
+        "propertyScore": 0.63,
+        "listingScore": 0.7,
+        "propertyFamilies": {
+          "IDENTIFIERS": 0,
+          "MEDIA": 0,
+          "CONTACT": 0.35,
+          "LOCATION": 0.08,
+          "STRUCTURED": 0.2,
+          "TEXT": 0
+        },
+        "listingFamilies": {
+          "IDENTIFIERS": 0,
+          "MEDIA": 0,
+          "CONTACT": 0.45,
+          "LOCATION": 0,
+          "STRUCTURED": 0.25,
+          "TEXT": 0
+        },
+        "sharedContactTypes": [
+          "EMAIL",
+          "PHONE"
+        ],
+        "sharedCodes": [],
+        "photoMatchCount": 0,
+        "photoHammingDistances": [],
+        "retrievalSignalTypes": [
+          "identifier",
+          "token"
+        ],
+        "reasonTypes": [
+          "shared phone",
+          "shared messaging/email identifiers",
+          "same bedrooms",
+          "same property type",
+          "same offer type",
+          "text_jaccard=0.319",
+          "property_score=0.630",
+          "listing_score=0.700"
+        ]
+      }
+    },
+    {
+      "candidateA": "facebook_group:796",
+      "candidateB": "khmer24:2827",
+      "humanLabel": "DIFFERENT_PROPERTY",
+      "humanRationale": "Distinct explicit property codes (DV603 vs DV1112) and differing property details.",
+      "evidence": {
+        "facebook": {
+          "candidateId": "facebook_group:796",
+          "sourceType": "FACEBOOK_GROUP",
+          "propertyCode": "DV603",
+          "title": "2-Bedroom Townhouse with Shared Pool",
+          "textSnippet": "🏡2-Bedroom Townhouse with Shared Pool for Rent in Siem Reap City\n\nCharming 2-bedroom townhouse for rent in Siem Reap City. Fully furnished with open living space, full access to a shared swimming pool, and parking space.\n\nProperty Details:\n• Rental Price: USD 350 / month\n• Layout: 2 Bed | 3 Bath | Living Room & Kitchen\n• Furnishing: Fully Furnished\n• Features: Shared swimming pool, fully equipped living and kitchen spaces, and secure parking area.\n• Location: Sangkat Srangae, Siem Reap City\n---------------------------------------\nProperty Code: DV603\nMore option: www.dakakunrealty.com\nTelegram Channel: [url]\n[phone]/[phone] (WhatsApp & Telegram)\n[email]\nReal Estate Agent: Yeun Sam Ath\nNr: R",
+          "price": 350,
+          "currency": "USD",
+          "offerType": null,
+          "location": "Srangae",
+          "bedrooms": 2,
+          "bathrooms": 3,
+          "propertyType": "Private House"
+        },
+        "khmer24": {
+          "candidateId": "khmer24:2827",
+          "sourceType": "KHMER24",
+          "propertyCode": "DV1112",
+          "title": "2BR Private House in Svay Dangkum",
+          "textSnippet": "Contact Daka Kun Realty at [phone]/[phone] ( WhatsApp & Telegram) or Email: [email]\nProperty ID: DV1112\n\nRental Price: USD 350 per month\n\n2-bedroom home located on a concrete road in Sangkat Svay Dangkum, Siem Reap. Set on a 10m x 20m plot, this house features a paved front courtyard, semi-furnished interiors, and convenient access.\n\nProperty Details:\n• Land Size: 10m x 20m\n• House Size: 8m x 13m\n• Bedrooms: 2\n• Bathrooms: 3\n• Furnishing: Semi-furnished\n• Interior: living room with ceiling lighting, air conditioning, and a functional kitchen area with fitted countertops\n• Outdoor: front courtyard with garden borders, high boundary wall, and secure front gate along a concrete road.\n• Location",
+          "price": 400,
+          "currency": "USD",
+          "offerType": "rent",
+          "location": "Svay Dangkum",
+          "bedrooms": 2,
+          "bathrooms": null,
+          "propertyType": "Private House"
+        }
+      },
+      "algorithmOutputV1": {
+        "decision": "DIFFERENT_PROPERTY",
+        "propertyScore": 0.63,
+        "listingScore": 0.9,
+        "propertyFamilies": {
+          "IDENTIFIERS": 0,
+          "MEDIA": 0,
+          "CONTACT": 0.35,
+          "LOCATION": 0.08,
+          "STRUCTURED": 0.2,
+          "TEXT": 0
+        },
+        "listingFamilies": {
+          "IDENTIFIERS": 0,
+          "MEDIA": 0,
+          "CONTACT": 0.45,
+          "LOCATION": 0,
+          "STRUCTURED": 0.45,
+          "TEXT": 0
+        },
+        "sharedContactTypes": [
+          "EMAIL",
+          "PHONE"
+        ],
+        "sharedCodes": [],
+        "photoMatchCount": 0,
+        "photoHammingDistances": [],
+        "retrievalSignalTypes": [
+          "identifier",
+          "token"
+        ],
+        "reasonTypes": [
+          "shared phone",
+          "shared messaging/email identifiers",
+          "same bedrooms",
+          "same property type",
+          "same asking price within 5%",
+          "same offer type",
+          "text_jaccard=0.362",
+          "property_score=0.630",
+          "listing_score=0.900"
+        ]
+      }
+    },
+    {
+      "candidateA": "facebook_group:7",
+      "candidateB": "khmer24:2724",
+      "humanLabel": "DIFFERENT_PROPERTY",
+      "humanRationale": "Distinct explicit property codes (DV018 vs DV2269) and differing property details.",
+      "evidence": {
+        "facebook": {
+          "candidateId": "facebook_group:7",
+          "sourceType": "FACEBOOK_GROUP",
+          "propertyCode": "DV018",
+          "title": "2-Bedroom Villa in Sala Kamreuk",
+          "textSnippet": "🏡 2-Bedroom Villa for Rent in with Pool in Sala Kamreuk, Siem Reap City\n\nLocated in Sangkat Sala Kamreuk, Siem Reap City, this fully furnished 2-bedroom villa offers open-plan living with modern interiors and access to shared compound amenities including a swimming pool, garden, playground, and fitness gym.\n\nProperty Details:\n• Rental Price: USD 1,250 / month\n• Bedrooms: 2\n• Bathrooms: 2 \n• Furnishing: Fully furnished\n• Interior: Open living and dining area, kitchen with hood, dark tile floors, ceiling fans, and AC\n• Amenities: Shared pool, gym, garden, playground, BBQ area, generator, and free Wi-Fi.\n• Location: Sangkat Sala Kamreuk, Siem Reap City\n\n---------------------------------------\n",
+          "price": 1250,
+          "currency": "USD",
+          "offerType": null,
+          "location": "Sala Kamreuk",
+          "bedrooms": 2,
+          "bathrooms": 2,
+          "propertyType": "Private Villa"
+        },
+        "khmer24": {
+          "candidateId": "khmer24:2724",
+          "sourceType": "KHMER24",
+          "propertyCode": "DV2269",
+          "title": "4BR House in Sala Kamreuk",
+          "textSnippet": "Contact Daka Kun Realty at [phone]/[phone] ( WhatsApp & Telegram) or Email: [email]\nProperty ID: DV2269\n\nRental Price: USD 2,000 Per month \n\nSet on a 1,273 sqm plot in Sala Kamreuk, this fully furnished 4-bedroom home features custom woodwork, a chef's kitchen with island, patterned tile floors, landscaped garden, and quick river access.\n\nProperty Details:\n• Rental Price: USD 1,200 / month\n• Land Size: Approx. 1,273 sqm\n• House Size: 8m x 25m\n• Bedrooms: 4\n• Bathrooms: 5 \n• Furnishing: Fully furnished\n• Interior: Living room with leather sofas, kitchen, master bedroom with wooden wardrobes, and AC\n• Outdoor: Landscaped garden, lawn seating, and parking.\n• Location: Sangkat Sala Kamreuk, Siem",
+          "price": 2000,
+          "currency": "USD",
+          "offerType": "rent",
+          "location": "Sala Kamreuk",
+          "bedrooms": 4,
+          "bathrooms": null,
+          "propertyType": "Private House"
+        }
+      },
+      "algorithmOutputV1": {
+        "decision": "DIFFERENT_PROPERTY",
+        "propertyScore": 0.62,
+        "listingScore": 0.55,
+        "propertyFamilies": {
+          "IDENTIFIERS": 0,
+          "MEDIA": 0,
+          "CONTACT": 0.35,
+          "LOCATION": 0.27,
+          "STRUCTURED": 0,
+          "TEXT": 0
+        },
+        "listingFamilies": {
+          "IDENTIFIERS": 0,
+          "MEDIA": 0,
+          "CONTACT": 0.45,
+          "LOCATION": 0.05,
+          "STRUCTURED": 0.05,
+          "TEXT": 0
+        },
+        "sharedContactTypes": [
+          "EMAIL",
+          "PHONE"
+        ],
+        "sharedCodes": [],
+        "photoMatchCount": 0,
+        "photoHammingDistances": [],
+        "retrievalSignalTypes": [
+          "identifier",
+          "token"
+        ],
+        "reasonTypes": [
+          "shared phone",
+          "shared messaging/email identifiers",
+          "same location",
+          "same offer type",
+          "text_jaccard=0.374",
+          "property_score=0.620",
+          "listing_score=0.550"
+        ]
+      }
+    },
+    {
+      "candidateA": "facebook_group:67",
+      "candidateB": "khmer24:2936",
+      "humanLabel": "DIFFERENT_PROPERTY",
+      "humanRationale": "Distinct explicit property codes (DV649 vs DV2033) and differing property details.",
+      "evidence": {
+        "facebook": {
+          "candidateId": "facebook_group:67",
+          "sourceType": "FACEBOOK_GROUP",
+          "propertyCode": "DV649",
+          "title": "5 Bedrooms House in Svay Dangkum",
+          "textSnippet": "🏡5 Bedrooms House for Rent in Siem Reap City, Svay Dangkum\n\nSpacious 5-bedroom house  for rent in Sangkat Svay Dangkum, Siem Reap City. Offering generous living space and essential amenities, this property is an ideal choice for large families or shared living.\n\nProperty Details:\n\n• Rental Price: USD 550 / month\n• 5 Bedrooms and 6 Bathrooms\n• Living Room and Kitchen\n• Semi-furnished\n• Air conditioner\n• Balcony and Rooftop\n• Parking Space\n• Security and Gate\n• Located in Sangkat Svay Dangkum, Siem Reap city\n\n---------------------------------------\nProperty Code: DV649\nMore option: www.dakakunrealty.com\nTelegram Channel: [url]\n[phone]/[phone] (WhatsApp & Telegram)\n[email]\nReal Estate Agent: Y",
+          "price": 550,
+          "currency": "USD",
+          "offerType": null,
+          "location": "Svay Dangkum",
+          "bedrooms": 5,
+          "bathrooms": 6,
+          "propertyType": "Private House"
+        },
+        "khmer24": {
+          "candidateId": "khmer24:2936",
+          "sourceType": "KHMER24",
+          "propertyCode": "DV2033",
+          "title": "3-Bedroom Flat House for Rent in Siem Reap City",
+          "textSnippet": "Contact Daka Kun Realty at [phone]/[phone] ( WhatsApp & Telegram) or Email: [email]\nProperty ID: DV2033\n\nSpacious 3-bedroom flat house for rent in Sangkat Svay Dangkum. Fully furnished with modern interiors, private balconies, and dedicated parking space.\n\nProperty Details:\n• Rental Price: USD 400 / month\n• Land Area: 113 sqm\n• Layout: 3 Bed | 4 Bath | Living Area & Kitchen\n• Furnishing: Fully Furnished\n• Features: Private balconies, AC, and front parking space.\n• Location: Sangkat Svay Dangkum, Siem Reap City\n—----------------------------------------------------------------------------\nMore option: www.dakakunrealty.com\nTelegram channel ---> [url]\nReal Estate Agent: Yeun Sam Ath\nNr: R-21-38",
+          "price": 400,
+          "currency": "USD",
+          "offerType": "rent",
+          "location": "Svay Dangkum",
+          "bedrooms": 3,
+          "bathrooms": 4,
+          "propertyType": "flat house"
+        }
+      },
+      "algorithmOutputV1": {
+        "decision": "DIFFERENT_PROPERTY",
+        "propertyScore": 0.62,
+        "listingScore": 0.55,
+        "propertyFamilies": {
+          "IDENTIFIERS": 0,
+          "MEDIA": 0,
+          "CONTACT": 0.35,
+          "LOCATION": 0.27,
+          "STRUCTURED": 0,
+          "TEXT": 0
+        },
+        "listingFamilies": {
+          "IDENTIFIERS": 0,
+          "MEDIA": 0,
+          "CONTACT": 0.45,
+          "LOCATION": 0.05,
+          "STRUCTURED": 0.05,
+          "TEXT": 0
+        },
+        "sharedContactTypes": [
+          "EMAIL",
+          "PHONE"
+        ],
+        "sharedCodes": [],
+        "photoMatchCount": 0,
+        "photoHammingDistances": [],
+        "retrievalSignalTypes": [
+          "identifier",
+          "phash"
+        ],
+        "reasonTypes": [
+          "shared phone",
+          "shared messaging/email identifiers",
+          "same location",
+          "same offer type",
+          "text_jaccard=0.407",
+          "property_score=0.620",
+          "listing_score=0.550"
+        ]
+      }
+    },
+    {
+      "candidateA": "facebook_group:7",
+      "candidateB": "khmer24:2733",
+      "humanLabel": "DIFFERENT_PROPERTY",
+      "humanRationale": "Distinct explicit property codes (DV018 vs DV1870) and differing property details.",
+      "evidence": {
+        "facebook": {
+          "candidateId": "facebook_group:7",
+          "sourceType": "FACEBOOK_GROUP",
+          "propertyCode": "DV018",
+          "title": "2-Bedroom Villa in Sala Kamreuk",
+          "textSnippet": "🏡 2-Bedroom Villa for Rent in with Pool in Sala Kamreuk, Siem Reap City\n\nLocated in Sangkat Sala Kamreuk, Siem Reap City, this fully furnished 2-bedroom villa offers open-plan living with modern interiors and access to shared compound amenities including a swimming pool, garden, playground, and fitness gym.\n\nProperty Details:\n• Rental Price: USD 1,250 / month\n• Bedrooms: 2\n• Bathrooms: 2 \n• Furnishing: Fully furnished\n• Interior: Open living and dining area, kitchen with hood, dark tile floors, ceiling fans, and AC\n• Amenities: Shared pool, gym, garden, playground, BBQ area, generator, and free Wi-Fi.\n• Location: Sangkat Sala Kamreuk, Siem Reap City\n\n---------------------------------------\n",
+          "price": 1250,
+          "currency": "USD",
+          "offerType": null,
+          "location": "Sala Kamreuk",
+          "bedrooms": 2,
+          "bathrooms": 2,
+          "propertyType": "Private Villa"
+        },
+        "khmer24": {
+          "candidateId": "khmer24:2733",
+          "sourceType": "KHMER24",
+          "propertyCode": "DV1870",
+          "title": "ផ្ទះសម្រាប់លក់-ផ្លូវសូកូឡា​ (សាលាកំរើក) / House for Sale in Siem Reap City, Chocolate Rd",
+          "textSnippet": "ផ្ទះសម្រាប់លក់-ផ្លូវសូកូឡា​ (សាលាកំរើក) / House for Sale in Siem Reap City, Chocolate Rd\n***English Below*** ទំនាក់ទំនងមក Daka Kun Realty តាមរយៈលេខទូរស័ព្ទ [phone] / [phone] ( WhatsApp/Telegram )​ ឬផ្ញើសារមកកាន់អ៉ីមែល ៖ [email] លេខកូត៖​ DV1870 តម្លៃ៖ 225,000 ដុល្លារ (ចរចា) • ទំហំដី៖ 10ម x 40ម • ទំហំផ្ទះ៖ 8.5ម x 16ម • ប្រភេទប្លង់រឹង •​ 3 បន្ទប់គេង និង 3 បន្ទប់ទឹក •​ បន្ទប់ទទួលភ្ញៀវ និង ផ្ទះបាយ •​ តម្លៃមិនរួមសម្ភារៈ • សួនច្បារ និង ចំណត • ទីតាំង៖ ស្ថិតសង្កាត់សាលាកំរើក, ក្រុងសៀមរាប —------------------------------------------------------------------------ Contact Daka Kun Realty at [phone]/[phone] ( WhatsApp & Telegram) or Email: [email] Property ID: DV1870 Price: USD 225,000 (Negotiable) • Askin",
+          "price": 225000,
+          "currency": "USD",
+          "offerType": "sale",
+          "location": "Sala Kamreuk",
+          "bedrooms": 3,
+          "bathrooms": 3,
+          "propertyType": "house"
+        }
+      },
+      "algorithmOutputV1": {
+        "decision": "DIFFERENT_PROPERTY",
+        "propertyScore": 0.62,
+        "listingScore": 0.5,
+        "propertyFamilies": {
+          "IDENTIFIERS": 0,
+          "MEDIA": 0,
+          "CONTACT": 0.35,
+          "LOCATION": 0.27,
+          "STRUCTURED": 0,
+          "TEXT": 0
+        },
+        "listingFamilies": {
+          "IDENTIFIERS": 0,
+          "MEDIA": 0,
+          "CONTACT": 0.45,
+          "LOCATION": 0.05,
+          "STRUCTURED": 0,
+          "TEXT": 0
+        },
+        "sharedContactTypes": [
+          "EMAIL",
+          "PHONE"
+        ],
+        "sharedCodes": [],
+        "photoMatchCount": 0,
+        "photoHammingDistances": [],
+        "retrievalSignalTypes": [
+          "identifier",
+          "token"
+        ],
+        "reasonTypes": [
+          "shared phone",
+          "shared messaging/email identifiers",
+          "same location",
+          "conflicting offer types",
+          "text_jaccard=0.187",
+          "property_score=0.620",
+          "listing_score=0.500"
+        ]
+      }
+    },
+    {
+      "candidateA": "facebook_group:815",
+      "candidateB": "khmer24:2934",
+      "humanLabel": "DIFFERENT_PROPERTY",
+      "humanRationale": "Distinct explicit property codes (DV2316 vs DV574) and differing property details.",
+      "evidence": {
+        "facebook": {
+          "candidateId": "facebook_group:815",
+          "sourceType": "FACEBOOK_GROUP",
+          "propertyCode": "DV2316",
+          "title": "3 Bedrooms House with Pool",
+          "textSnippet": "🏡3 Bedrooms House for Rent in Siem Reap City, Svay Dangkum\n\nBeautiful 3-bedroom house with a private swimming pool available for rent in Sangkat Svay Dangkum, Siem Reap City. Fully furnished and featuring a private garden.\n\nProperty Details:\n• Rental Price: USD 1,000 / month\n• Layout: 3 Bedrooms, 4 Bathrooms, Living Area and Kitchen\n• Facilities: Swimming Pool, Garden, and Parking Space\n• Furnishing: Fully Furnished\n• Location: Sangkat Svay Dangkum, Siem Reap City\n\n---------------------------------------\nProperty Code: DV2316\nMore option: www.dakakunrealty.com\nTelegram Channel: [url]\n[phone]/[phone] (WhatsApp & Telegram)\n[email]\nReal Estate Agent: Yeun Sam Ath\nNr: R-21-381-01",
+          "price": 1000,
+          "currency": "USD",
+          "offerType": null,
+          "location": "Svay Dangkum",
+          "bedrooms": 3,
+          "bathrooms": 4,
+          "propertyType": "Private House"
+        },
+        "khmer24": {
+          "candidateId": "khmer24:2934",
+          "sourceType": "KHMER24",
+          "propertyCode": "DV574",
+          "title": "5-Bedroom Villa with Swimming Pool for Rent in Siem Reap City, Svay Dangkum",
+          "textSnippet": "Contact Daka Kun at +855 89 899 084 ( Whatsapp, Wechat, Line, Telegram )or mail to: [email]\nProperty ID: DV574\n\nSpacious 5-bedroom villa for rent in Siem Reap city. Features rich wooden interiors, a large pool with built-in bar seating, tropical gardens, and private parking.\n\nProperty Details:\n• Rental Price: USD 1,800 / month\n• Layout: 5 Bed | 7 Bath | Living Area & Kitchen\n• Furnishing: Fully Furnished\n• Features: Outdoor swimming pool with built-in bar stools, poolside lounge chairs, outdoor dining courtyard with umbrellas, private balconies, and parking area.\n• Location: Sangkat Svay Dangkum, Siem Reap City\n—----------------------------------------------------------------------------\nMor",
+          "price": 2500,
+          "currency": "USD",
+          "offerType": "rent",
+          "location": "Svay Dangkum",
+          "bedrooms": 5,
+          "bathrooms": 7,
+          "propertyType": "villa"
+        }
+      },
+      "algorithmOutputV1": {
+        "decision": "DIFFERENT_PROPERTY",
+        "propertyScore": 0.62,
+        "listingScore": 0.55,
+        "propertyFamilies": {
+          "IDENTIFIERS": 0,
+          "MEDIA": 0,
+          "CONTACT": 0.35,
+          "LOCATION": 0.27,
+          "STRUCTURED": 0,
+          "TEXT": 0
+        },
+        "listingFamilies": {
+          "IDENTIFIERS": 0,
+          "MEDIA": 0,
+          "CONTACT": 0.45,
+          "LOCATION": 0.05,
+          "STRUCTURED": 0.05,
+          "TEXT": 0
+        },
+        "sharedContactTypes": [
+          "EMAIL",
+          "PHONE"
+        ],
+        "sharedCodes": [],
+        "photoMatchCount": 0,
+        "photoHammingDistances": [],
+        "retrievalSignalTypes": [
+          "phash",
+          "token"
+        ],
+        "reasonTypes": [
+          "shared phone",
+          "shared messaging/email identifiers",
+          "same location",
+          "same offer type",
+          "text_jaccard=0.466",
+          "property_score=0.620",
+          "listing_score=0.550"
+        ]
+      }
+    },
+    {
+      "candidateA": "facebook_group:833",
+      "candidateB": "khmer24:2821",
+      "humanLabel": "DIFFERENT_PROPERTY",
+      "humanRationale": "Distinct explicit property codes (DV2146 vs DV2298) and differing property details.",
+      "evidence": {
+        "facebook": {
+          "candidateId": "facebook_group:833",
+          "sourceType": "FACEBOOK_GROUP",
+          "propertyCode": "DV2146",
+          "title": "2-Bedroom Home in Kandaek",
+          "textSnippet": "2-Bedroom Home for Rent in Siem Reap\n\n2-bedroom home available for rent in Siem Reap, located near Wat Laork along a smooth concrete road. Set on a 200 sqm plot, the property features a covered terrace, garden yard, and secure private parking.\n\nProperty Details:\n• Rental Price: USD 300 Per month \n• Land Area: 200 sqm (10m x 20m)\n• House Size: 7m x 12m\n• Layout: 2 Bedrooms, 2 bathrooms,living area and kitchen\n• Features: Semi-furnished, garden yard, gated entry, parking space and concrete road access\n• Location: Kandaek, Siem Reap (Near Wat Laork)\n---------------------------------------\nProperty Code: DV2146\nMore option: www.dakakunrealty.com\nTelegram Channel: [url]\n[phone]/[phone] (WhatsApp ",
+          "price": 300,
+          "currency": "USD",
+          "offerType": null,
+          "location": "Kandaek",
+          "bedrooms": 2,
+          "bathrooms": 2,
+          "propertyType": "Private House"
+        },
+        "khmer24": {
+          "candidateId": "khmer24:2821",
+          "sourceType": "KHMER24",
+          "propertyCode": "DV2298",
+          "title": "2BR Private House in Chreav",
+          "textSnippet": "Contact Daka Kun Realty at [phone]/[phone] ( WhatsApp & Telegram) or Email: [email]\nProperty ID: DV2298\n\nRental Price: USD 250 Per month \n\nPet-friendly two-story home with a mezzanine level and private balcony, offering a functional multi-level layout and standard city utility connections.\n\nProperty Details:\n• Land Size: 5m x 22m (110 sqm)\n• House Size: 4m x 11m (80 sqm)\n• Bedrooms: 2\n• Bathrooms: 3\n• Furnishing: Semi-furnished\n• Interior: Open living space, kitchen, air-conditioned bedrooms, mezzanine level, and en-suite bathroom setups\n• Outdoor: Private first-floor balcony, ground-floor parking space, and gated entryway\n• Pet Policy: Pet-friendly\n• Utilities: EDC electricity & city water ",
+          "price": 250,
+          "currency": "USD",
+          "offerType": "rent",
+          "location": "Chreav",
+          "bedrooms": 2,
+          "bathrooms": 3,
+          "propertyType": "Private House"
+        }
+      },
+      "algorithmOutputV1": {
+        "decision": "DIFFERENT_PROPERTY",
+        "propertyScore": 0.58,
+        "listingScore": 0.65,
+        "propertyFamilies": {
+          "IDENTIFIERS": 0,
+          "MEDIA": 0,
+          "CONTACT": 0.35,
+          "LOCATION": 0.08,
+          "STRUCTURED": 0.15000000000000002,
+          "TEXT": 0
+        },
+        "listingFamilies": {
+          "IDENTIFIERS": 0,
+          "MEDIA": 0,
+          "CONTACT": 0.45,
+          "LOCATION": 0,
+          "STRUCTURED": 0.2,
+          "TEXT": 0
+        },
+        "sharedContactTypes": [
+          "EMAIL",
+          "PHONE"
+        ],
+        "sharedCodes": [],
+        "photoMatchCount": 0,
+        "photoHammingDistances": [],
+        "retrievalSignalTypes": [
+          "identifier",
+          "phash",
+          "token"
+        ],
+        "reasonTypes": [
+          "shared phone",
+          "shared messaging/email identifiers",
+          "same bedrooms",
+          "same property type",
+          "same offer type",
+          "text_jaccard=0.336",
+          "property_score=0.580",
+          "listing_score=0.650"
+        ]
+      }
+    },
+    {
+      "candidateA": "facebook_group:743",
+      "candidateB": "khmer24:2890",
+      "humanLabel": "DIFFERENT_PROPERTY",
+      "humanRationale": "Distinct explicit property codes (DV693 vs DV2299) and differing property details.",
+      "evidence": {
+        "facebook": {
+          "candidateId": "facebook_group:743",
+          "sourceType": "FACEBOOK_GROUP",
+          "propertyCode": "DV693",
+          "title": "3-Bedroom Modern House in Sla Kram",
+          "textSnippet": "🏡 3-Bedroom Modern House for Rent in Siem Reap City\n\nModern 3-bedroom gated home in Siem Reap City. Fully furnished with double-height ceilings, kitchen, balcony, rooftop terrace, and secured parking yard.\n\nProperty Details:\n• Rental Price: USD 750 / month\n• House Size: 6m x 14m\n• Layout: 3 Bed | 4 Bath | Open Living Room & Modern Kitchen\n• Furnishing: Fully Furnished\n• Features: Rooftop terrace, private balcony, AC, and gated parking.\n• Location: Sangkat Sla Kram, Siem Reap City\n---------------------------------------\nProperty Code: DV693\nMore option: www.dakakunrealty.com\nTelegram Channel: [url]\n[phone]/[phone] (WhatsApp & Telegram)\n[email]\nReal Estate Agent: Yeun Sam Ath\nNr: R-21-381-01",
+          "price": 750,
+          "currency": "USD",
+          "offerType": null,
+          "location": "Sla Kram",
+          "bedrooms": 3,
+          "bathrooms": 4,
+          "propertyType": "Private House"
+        },
+        "khmer24": {
+          "candidateId": "khmer24:2890",
+          "sourceType": "KHMER24",
+          "propertyCode": "DV2299",
+          "title": "3BR House in Svay Dangkum",
+          "textSnippet": "Contact Daka Kun Realty at [phone]/[phone] ( WhatsApp & Telegram) or Email: [email]\nProperty ID: DV2299\n\nRental Price: USD​ 600​ Per month \n\nSpacious 3-bedroom home for rent in Sangkat Svay Dangkum. Set on a 482 sqm plot, it features a wooden upper story, garden gazebo, lawn, and large paved parking area.\n\nProperty Details:\n• Land Size: 15m x 35m (482 sqm)\n• Bedrooms: 3\n• Bathrooms: 3\n• Furnishing: Unfurnished\n• Interior: Tiled living space, kitchen, and wood-paneled upper level.\n• Outdoor: Wooden gazebo, lawn, large paved parking yard, and perimeter wall.\n• Pet Policy: Pet-friendly\n• Location: Sangkat Svay Dangkum, Siem Reap City\n—------------------------------------------------------------",
+          "price": 600,
+          "currency": "USD",
+          "offerType": "rent",
+          "location": "Svay Dangkum",
+          "bedrooms": 3,
+          "bathrooms": 3,
+          "propertyType": "Private House"
+        }
+      },
+      "algorithmOutputV1": {
+        "decision": "DIFFERENT_PROPERTY",
+        "propertyScore": 0.58,
+        "listingScore": 0.65,
+        "propertyFamilies": {
+          "IDENTIFIERS": 0,
+          "MEDIA": 0,
+          "CONTACT": 0.35,
+          "LOCATION": 0.08,
+          "STRUCTURED": 0.15000000000000002,
+          "TEXT": 0
+        },
+        "listingFamilies": {
+          "IDENTIFIERS": 0,
+          "MEDIA": 0,
+          "CONTACT": 0.45,
+          "LOCATION": 0,
+          "STRUCTURED": 0.2,
+          "TEXT": 0
+        },
+        "sharedContactTypes": [
+          "EMAIL",
+          "PHONE"
+        ],
+        "sharedCodes": [],
+        "photoMatchCount": 0,
+        "photoHammingDistances": [],
+        "retrievalSignalTypes": [
+          "identifier",
+          "token"
+        ],
+        "reasonTypes": [
+          "shared phone",
+          "shared messaging/email identifiers",
+          "same bedrooms",
+          "same property type",
+          "same offer type",
+          "text_jaccard=0.340",
+          "property_score=0.580",
+          "listing_score=0.650"
+        ]
+      }
+    },
+    {
+      "candidateA": "facebook_group:833",
+      "candidateB": "khmer24:2827",
+      "humanLabel": "DIFFERENT_PROPERTY",
+      "humanRationale": "Distinct explicit property codes (DV2146 vs DV1112) and differing property details.",
+      "evidence": {
+        "facebook": {
+          "candidateId": "facebook_group:833",
+          "sourceType": "FACEBOOK_GROUP",
+          "propertyCode": "DV2146",
+          "title": "2-Bedroom Home in Kandaek",
+          "textSnippet": "2-Bedroom Home for Rent in Siem Reap\n\n2-bedroom home available for rent in Siem Reap, located near Wat Laork along a smooth concrete road. Set on a 200 sqm plot, the property features a covered terrace, garden yard, and secure private parking.\n\nProperty Details:\n• Rental Price: USD 300 Per month \n• Land Area: 200 sqm (10m x 20m)\n• House Size: 7m x 12m\n• Layout: 2 Bedrooms, 2 bathrooms,living area and kitchen\n• Features: Semi-furnished, garden yard, gated entry, parking space and concrete road access\n• Location: Kandaek, Siem Reap (Near Wat Laork)\n---------------------------------------\nProperty Code: DV2146\nMore option: www.dakakunrealty.com\nTelegram Channel: [url]\n[phone]/[phone] (WhatsApp ",
+          "price": 300,
+          "currency": "USD",
+          "offerType": null,
+          "location": "Kandaek",
+          "bedrooms": 2,
+          "bathrooms": 2,
+          "propertyType": "Private House"
+        },
+        "khmer24": {
+          "candidateId": "khmer24:2827",
+          "sourceType": "KHMER24",
+          "propertyCode": "DV1112",
+          "title": "2BR Private House in Svay Dangkum",
+          "textSnippet": "Contact Daka Kun Realty at [phone]/[phone] ( WhatsApp & Telegram) or Email: [email]\nProperty ID: DV1112\n\nRental Price: USD 350 per month\n\n2-bedroom home located on a concrete road in Sangkat Svay Dangkum, Siem Reap. Set on a 10m x 20m plot, this house features a paved front courtyard, semi-furnished interiors, and convenient access.\n\nProperty Details:\n• Land Size: 10m x 20m\n• House Size: 8m x 13m\n• Bedrooms: 2\n• Bathrooms: 3\n• Furnishing: Semi-furnished\n• Interior: living room with ceiling lighting, air conditioning, and a functional kitchen area with fitted countertops\n• Outdoor: front courtyard with garden borders, high boundary wall, and secure front gate along a concrete road.\n• Location",
+          "price": 400,
+          "currency": "USD",
+          "offerType": "rent",
+          "location": "Svay Dangkum",
+          "bedrooms": 2,
+          "bathrooms": null,
+          "propertyType": "Private House"
+        }
+      },
+      "algorithmOutputV1": {
+        "decision": "DIFFERENT_PROPERTY",
+        "propertyScore": 0.58,
+        "listingScore": 0.65,
+        "propertyFamilies": {
+          "IDENTIFIERS": 0,
+          "MEDIA": 0,
+          "CONTACT": 0.35,
+          "LOCATION": 0.08,
+          "STRUCTURED": 0.15000000000000002,
+          "TEXT": 0
+        },
+        "listingFamilies": {
+          "IDENTIFIERS": 0,
+          "MEDIA": 0,
+          "CONTACT": 0.45,
+          "LOCATION": 0,
+          "STRUCTURED": 0.2,
+          "TEXT": 0
+        },
+        "sharedContactTypes": [
+          "EMAIL",
+          "PHONE"
+        ],
+        "sharedCodes": [],
+        "photoMatchCount": 0,
+        "photoHammingDistances": [],
+        "retrievalSignalTypes": [
+          "identifier",
+          "token"
+        ],
+        "reasonTypes": [
+          "shared phone",
+          "shared messaging/email identifiers",
+          "same bedrooms",
+          "same property type",
+          "same offer type",
+          "text_jaccard=0.454",
+          "property_score=0.580",
+          "listing_score=0.650"
+        ]
+      }
+    },
+    {
+      "candidateA": "facebook_group:219",
+      "candidateB": "khmer24:2733",
+      "humanLabel": "DIFFERENT_PROPERTY",
+      "humanRationale": "Distinct explicit property codes (DV2313 vs DV1870) and differing property details.",
+      "evidence": {
+        "facebook": {
+          "candidateId": "facebook_group:219",
+          "sourceType": "FACEBOOK_GROUP",
+          "propertyCode": "DV2313",
+          "title": "3-Bedroom Wooden House for Rent",
+          "textSnippet": "🏡3-Bedroom Wooden House for Rent in Siem Reap City\n\nCharming 3-bedroom wooden house with a private swimming pool available for sale in Sangkat Chreav, Siem Reap City. Offering comfortable living space and an outdoor terrace.\n\nProperty Details:\n• Rental Price : USD 1300 / month \n• Land Area: 269 sqm\n• House Size: 6m x 9m\n• Layout: 3 bedrooms, 3 bathrooms, living area and kitchen \n• Features: Fully furnished, private swimming pool, outdoor terrace, garden lawn, and private parking space\n• Located​ in​ Sangkat  Siem Reap, Siem Reap City\n---------------------------------------\nProperty Code: DV2313\nMore option: www.dakakunrealty.com\nTelegram Channel: [url]\n[phone]/[phone] (WhatsApp & Telegram)\n",
+          "price": 1300,
+          "currency": "USD",
+          "offerType": null,
+          "location": "Chreav",
+          "bedrooms": 3,
+          "bathrooms": 3,
+          "propertyType": "Private House"
+        },
+        "khmer24": {
+          "candidateId": "khmer24:2733",
+          "sourceType": "KHMER24",
+          "propertyCode": "DV1870",
+          "title": "ផ្ទះសម្រាប់លក់-ផ្លូវសូកូឡា​ (សាលាកំរើក) / House for Sale in Siem Reap City, Chocolate Rd",
+          "textSnippet": "ផ្ទះសម្រាប់លក់-ផ្លូវសូកូឡា​ (សាលាកំរើក) / House for Sale in Siem Reap City, Chocolate Rd\n***English Below*** ទំនាក់ទំនងមក Daka Kun Realty តាមរយៈលេខទូរស័ព្ទ [phone] / [phone] ( WhatsApp/Telegram )​ ឬផ្ញើសារមកកាន់អ៉ីមែល ៖ [email] លេខកូត៖​ DV1870 តម្លៃ៖ 225,000 ដុល្លារ (ចរចា) • ទំហំដី៖ 10ម x 40ម • ទំហំផ្ទះ៖ 8.5ម x 16ម • ប្រភេទប្លង់រឹង •​ 3 បន្ទប់គេង និង 3 បន្ទប់ទឹក •​ បន្ទប់ទទួលភ្ញៀវ និង ផ្ទះបាយ •​ តម្លៃមិនរួមសម្ភារៈ • សួនច្បារ និង ចំណត • ទីតាំង៖ ស្ថិតសង្កាត់សាលាកំរើក, ក្រុងសៀមរាប —------------------------------------------------------------------------ Contact Daka Kun Realty at [phone]/[phone] ( WhatsApp & Telegram) or Email: [email] Property ID: DV1870 Price: USD 225,000 (Negotiable) • Askin",
+          "price": 225000,
+          "currency": "USD",
+          "offerType": "sale",
+          "location": "Sala Kamreuk",
+          "bedrooms": 3,
+          "bathrooms": 3,
+          "propertyType": "house"
+        }
+      },
+      "algorithmOutputV1": {
+        "decision": "DIFFERENT_PROPERTY",
+        "propertyScore": 0.56,
+        "listingScore": 0.63,
+        "propertyFamilies": {
+          "IDENTIFIERS": 0,
+          "MEDIA": 0,
+          "CONTACT": 0.35,
+          "LOCATION": 0.08,
+          "STRUCTURED": 0.13,
+          "TEXT": 0
+        },
+        "listingFamilies": {
+          "IDENTIFIERS": 0,
+          "MEDIA": 0,
+          "CONTACT": 0.45,
+          "LOCATION": 0,
+          "STRUCTURED": 0.18,
+          "TEXT": 0
+        },
+        "sharedContactTypes": [
+          "EMAIL",
+          "PHONE"
+        ],
+        "sharedCodes": [],
+        "photoMatchCount": 0,
+        "photoHammingDistances": [],
+        "retrievalSignalTypes": [
+          "identifier",
+          "phash",
+          "token"
+        ],
+        "reasonTypes": [
+          "shared phone",
+          "shared messaging/email identifiers",
+          "same bedrooms",
+          "same offer type",
+          "text_jaccard=0.234",
+          "property_score=0.560",
+          "listing_score=0.630"
+        ]
+      }
+    },
+    {
+      "candidateA": "facebook_group:743",
+      "candidateB": "khmer24:2936",
+      "humanLabel": "DIFFERENT_PROPERTY",
+      "humanRationale": "Distinct explicit property codes (DV693 vs DV2033) and differing property details.",
+      "evidence": {
+        "facebook": {
+          "candidateId": "facebook_group:743",
+          "sourceType": "FACEBOOK_GROUP",
+          "propertyCode": "DV693",
+          "title": "3-Bedroom Modern House in Sla Kram",
+          "textSnippet": "🏡 3-Bedroom Modern House for Rent in Siem Reap City\n\nModern 3-bedroom gated home in Siem Reap City. Fully furnished with double-height ceilings, kitchen, balcony, rooftop terrace, and secured parking yard.\n\nProperty Details:\n• Rental Price: USD 750 / month\n• House Size: 6m x 14m\n• Layout: 3 Bed | 4 Bath | Open Living Room & Modern Kitchen\n• Furnishing: Fully Furnished\n• Features: Rooftop terrace, private balcony, AC, and gated parking.\n• Location: Sangkat Sla Kram, Siem Reap City\n---------------------------------------\nProperty Code: DV693\nMore option: www.dakakunrealty.com\nTelegram Channel: [url]\n[phone]/[phone] (WhatsApp & Telegram)\n[email]\nReal Estate Agent: Yeun Sam Ath\nNr: R-21-381-01",
+          "price": 750,
+          "currency": "USD",
+          "offerType": null,
+          "location": "Sla Kram",
+          "bedrooms": 3,
+          "bathrooms": 4,
+          "propertyType": "Private House"
+        },
+        "khmer24": {
+          "candidateId": "khmer24:2936",
+          "sourceType": "KHMER24",
+          "propertyCode": "DV2033",
+          "title": "3-Bedroom Flat House for Rent in Siem Reap City",
+          "textSnippet": "Contact Daka Kun Realty at [phone]/[phone] ( WhatsApp & Telegram) or Email: [email]\nProperty ID: DV2033\n\nSpacious 3-bedroom flat house for rent in Sangkat Svay Dangkum. Fully furnished with modern interiors, private balconies, and dedicated parking space.\n\nProperty Details:\n• Rental Price: USD 400 / month\n• Land Area: 113 sqm\n• Layout: 3 Bed | 4 Bath | Living Area & Kitchen\n• Furnishing: Fully Furnished\n• Features: Private balconies, AC, and front parking space.\n• Location: Sangkat Svay Dangkum, Siem Reap City\n—----------------------------------------------------------------------------\nMore option: www.dakakunrealty.com\nTelegram channel ---> [url]\nReal Estate Agent: Yeun Sam Ath\nNr: R-21-38",
+          "price": 400,
+          "currency": "USD",
+          "offerType": "rent",
+          "location": "Svay Dangkum",
+          "bedrooms": 3,
+          "bathrooms": 4,
+          "propertyType": "flat house"
+        }
+      },
+      "algorithmOutputV1": {
+        "decision": "DIFFERENT_PROPERTY",
+        "propertyScore": 0.56,
+        "listingScore": 0.63,
+        "propertyFamilies": {
+          "IDENTIFIERS": 0,
+          "MEDIA": 0,
+          "CONTACT": 0.35,
+          "LOCATION": 0.08,
+          "STRUCTURED": 0.13,
+          "TEXT": 0
+        },
+        "listingFamilies": {
+          "IDENTIFIERS": 0,
+          "MEDIA": 0,
+          "CONTACT": 0.45,
+          "LOCATION": 0,
+          "STRUCTURED": 0.18,
+          "TEXT": 0
+        },
+        "sharedContactTypes": [
+          "EMAIL",
+          "PHONE"
+        ],
+        "sharedCodes": [],
+        "photoMatchCount": 0,
+        "photoHammingDistances": [],
+        "retrievalSignalTypes": [
+          "identifier",
+          "phash",
+          "token"
+        ],
+        "reasonTypes": [
+          "shared phone",
+          "shared messaging/email identifiers",
+          "same bedrooms",
+          "same offer type",
+          "text_jaccard=0.494",
+          "property_score=0.560",
+          "listing_score=0.630"
+        ]
+      }
+    },
+    {
+      "candidateA": "facebook_group:796",
+      "candidateB": "khmer24:2890",
+      "humanLabel": "DIFFERENT_PROPERTY",
+      "humanRationale": "Distinct explicit property codes (DV603 vs DV2299) and differing property details.",
+      "evidence": {
+        "facebook": {
+          "candidateId": "facebook_group:796",
+          "sourceType": "FACEBOOK_GROUP",
+          "propertyCode": "DV603",
+          "title": "2-Bedroom Townhouse with Shared Pool",
+          "textSnippet": "🏡2-Bedroom Townhouse with Shared Pool for Rent in Siem Reap City\n\nCharming 2-bedroom townhouse for rent in Siem Reap City. Fully furnished with open living space, full access to a shared swimming pool, and parking space.\n\nProperty Details:\n• Rental Price: USD 350 / month\n• Layout: 2 Bed | 3 Bath | Living Room & Kitchen\n• Furnishing: Fully Furnished\n• Features: Shared swimming pool, fully equipped living and kitchen spaces, and secure parking area.\n• Location: Sangkat Srangae, Siem Reap City\n---------------------------------------\nProperty Code: DV603\nMore option: www.dakakunrealty.com\nTelegram Channel: [url]\n[phone]/[phone] (WhatsApp & Telegram)\n[email]\nReal Estate Agent: Yeun Sam Ath\nNr: R",
+          "price": 350,
+          "currency": "USD",
+          "offerType": null,
+          "location": "Srangae",
+          "bedrooms": 2,
+          "bathrooms": 3,
+          "propertyType": "Private House"
+        },
+        "khmer24": {
+          "candidateId": "khmer24:2890",
+          "sourceType": "KHMER24",
+          "propertyCode": "DV2299",
+          "title": "3BR House in Svay Dangkum",
+          "textSnippet": "Contact Daka Kun Realty at [phone]/[phone] ( WhatsApp & Telegram) or Email: [email]\nProperty ID: DV2299\n\nRental Price: USD​ 600​ Per month \n\nSpacious 3-bedroom home for rent in Sangkat Svay Dangkum. Set on a 482 sqm plot, it features a wooden upper story, garden gazebo, lawn, and large paved parking area.\n\nProperty Details:\n• Land Size: 15m x 35m (482 sqm)\n• Bedrooms: 3\n• Bathrooms: 3\n• Furnishing: Unfurnished\n• Interior: Tiled living space, kitchen, and wood-paneled upper level.\n• Outdoor: Wooden gazebo, lawn, large paved parking yard, and perimeter wall.\n• Pet Policy: Pet-friendly\n• Location: Sangkat Svay Dangkum, Siem Reap City\n—------------------------------------------------------------",
+          "price": 600,
+          "currency": "USD",
+          "offerType": "rent",
+          "location": "Svay Dangkum",
+          "bedrooms": 3,
+          "bathrooms": 3,
+          "propertyType": "Private House"
+        }
+      },
+      "algorithmOutputV1": {
+        "decision": "DIFFERENT_PROPERTY",
+        "propertyScore": 0.55,
+        "listingScore": 0.62,
+        "propertyFamilies": {
+          "IDENTIFIERS": 0,
+          "MEDIA": 0,
+          "CONTACT": 0.35,
+          "LOCATION": 0.08,
+          "STRUCTURED": 0.12000000000000001,
+          "TEXT": 0
+        },
+        "listingFamilies": {
+          "IDENTIFIERS": 0,
+          "MEDIA": 0,
+          "CONTACT": 0.45,
+          "LOCATION": 0,
+          "STRUCTURED": 0.17,
+          "TEXT": 0
+        },
+        "sharedContactTypes": [
+          "EMAIL",
+          "PHONE"
+        ],
+        "sharedCodes": [],
+        "photoMatchCount": 0,
+        "photoHammingDistances": [],
+        "retrievalSignalTypes": [
+          "identifier",
+          "token"
+        ],
+        "reasonTypes": [
+          "shared phone",
+          "shared messaging/email identifiers",
+          "same property type",
+          "same offer type",
+          "text_jaccard=0.343",
+          "property_score=0.550",
+          "listing_score=0.620"
+        ]
+      }
+    },
+    {
+      "candidateA": "facebook_group:795",
+      "candidateB": "khmer24:2764",
+      "humanLabel": "DIFFERENT_PROPERTY",
+      "humanRationale": "Distinct explicit property codes (DC959 vs DV018) and differing property details.",
+      "evidence": {
+        "facebook": {
+          "candidateId": "facebook_group:795",
+          "sourceType": "FACEBOOK_GROUP",
+          "propertyCode": "DC959",
+          "title": "Commercial Shophouse on Main Road",
+          "textSnippet": "🏦 Commercial Shophouse for Rent in Siem Reap City, on the Main Road\n\nModern commercial shop space available for rent in Sangkat Sla Kram, Siem Reap City. Measuring 10m x 30m, this open-concept property features bright interiors with glossy floor tiles, ceiling fans, recessed lighting, and a private front parking.\n\nProperty Details:\n• Rental Price: USD 600 / month\n• Building Size: 10m x 30m\n• Bedrooms: 2\n• Bathrooms: 2\n• Kitchen: 2\n• Interior: Open retail/office space, polished floor tiles, recessed LED lights, ceiling fans, arched doorway, and large glass windows.\n• Exterior: Paved front courtyard, metal roller shutters, side parking area, and perimeter fencing.\n• Location: Sangkat Sla Kram",
+          "price": 600,
+          "currency": "USD",
+          "offerType": null,
+          "location": "Sla Kram",
+          "bedrooms": 2,
+          "bathrooms": 2,
+          "propertyType": "Flat House"
+        },
+        "khmer24": {
+          "candidateId": "khmer24:2764",
+          "sourceType": "KHMER24",
+          "propertyCode": "DV018",
+          "title": "2BR Private Villa in Sala Kamreuk",
+          "textSnippet": "Contact Daka Kun Realty at [phone]/[phone] ( WhatsApp & Telegram) or Email: [email]\nProperty ID: DV018\n\nLocated in Sangkat Sala Kamreuk, Siem Reap City, this fully furnished 2-bedroom villa offers open-plan living with modern interiors and access to shared compound amenities including a swimming pool, garden, playground, and fitness gym.\n\nProperty Details:\n• Rental Price: USD 1,250 / month\n• Bedrooms: 2\n• Bathrooms: 2 \n• Furnishing: Fully furnished\n• Interior: Open living and dining area, kitchen with hood, dark tile floors, ceiling fans, and AC\n• Amenities: Shared pool, gym, garden, playground, BBQ area, generator, and free Wi-Fi.\n• Location: Sangkat Sala Kamreuk, Siem Reap City\n—----------",
+          "price": 1250,
+          "currency": "USD",
+          "offerType": "rent",
+          "location": "Sala Kamreuk",
+          "bedrooms": 2,
+          "bathrooms": null,
+          "propertyType": "Private Villa"
+        }
+      },
+      "algorithmOutputV1": {
+        "decision": "DIFFERENT_PROPERTY",
+        "propertyScore": 0.51,
+        "listingScore": 0.58,
+        "propertyFamilies": {
+          "IDENTIFIERS": 0,
+          "MEDIA": 0,
+          "CONTACT": 0.35,
+          "LOCATION": 0.08,
+          "STRUCTURED": 0.08,
+          "TEXT": 0
+        },
+        "listingFamilies": {
+          "IDENTIFIERS": 0,
+          "MEDIA": 0,
+          "CONTACT": 0.45,
+          "LOCATION": 0,
+          "STRUCTURED": 0.13,
+          "TEXT": 0
+        },
+        "sharedContactTypes": [
+          "EMAIL",
+          "PHONE"
+        ],
+        "sharedCodes": [],
+        "photoMatchCount": 0,
+        "photoHammingDistances": [],
+        "retrievalSignalTypes": [
+          "identifier",
+          "phash",
+          "token"
+        ],
+        "reasonTypes": [
+          "shared phone",
+          "shared messaging/email identifiers",
+          "same bedrooms",
+          "same offer type",
+          "text_jaccard=0.307",
+          "property_score=0.510",
+          "listing_score=0.580"
+        ]
+      }
+    },
+    {
+      "candidateA": "facebook_group:219",
+      "candidateB": "khmer24:2936",
+      "humanLabel": "DIFFERENT_PROPERTY",
+      "humanRationale": "Distinct explicit property codes (DV2313 vs DV2033) and differing property details.",
+      "evidence": {
+        "facebook": {
+          "candidateId": "facebook_group:219",
+          "sourceType": "FACEBOOK_GROUP",
+          "propertyCode": "DV2313",
+          "title": "3-Bedroom Wooden House for Rent",
+          "textSnippet": "🏡3-Bedroom Wooden House for Rent in Siem Reap City\n\nCharming 3-bedroom wooden house with a private swimming pool available for sale in Sangkat Chreav, Siem Reap City. Offering comfortable living space and an outdoor terrace.\n\nProperty Details:\n• Rental Price : USD 1300 / month \n• Land Area: 269 sqm\n• House Size: 6m x 9m\n• Layout: 3 bedrooms, 3 bathrooms, living area and kitchen \n• Features: Fully furnished, private swimming pool, outdoor terrace, garden lawn, and private parking space\n• Located​ in​ Sangkat  Siem Reap, Siem Reap City\n---------------------------------------\nProperty Code: DV2313\nMore option: www.dakakunrealty.com\nTelegram Channel: [url]\n[phone]/[phone] (WhatsApp & Telegram)\n",
+          "price": 1300,
+          "currency": "USD",
+          "offerType": null,
+          "location": "Chreav",
+          "bedrooms": 3,
+          "bathrooms": 3,
+          "propertyType": "Private House"
+        },
+        "khmer24": {
+          "candidateId": "khmer24:2936",
+          "sourceType": "KHMER24",
+          "propertyCode": "DV2033",
+          "title": "3-Bedroom Flat House for Rent in Siem Reap City",
+          "textSnippet": "Contact Daka Kun Realty at [phone]/[phone] ( WhatsApp & Telegram) or Email: [email]\nProperty ID: DV2033\n\nSpacious 3-bedroom flat house for rent in Sangkat Svay Dangkum. Fully furnished with modern interiors, private balconies, and dedicated parking space.\n\nProperty Details:\n• Rental Price: USD 400 / month\n• Land Area: 113 sqm\n• Layout: 3 Bed | 4 Bath | Living Area & Kitchen\n• Furnishing: Fully Furnished\n• Features: Private balconies, AC, and front parking space.\n• Location: Sangkat Svay Dangkum, Siem Reap City\n—----------------------------------------------------------------------------\nMore option: www.dakakunrealty.com\nTelegram channel ---> [url]\nReal Estate Agent: Yeun Sam Ath\nNr: R-21-38",
+          "price": 400,
+          "currency": "USD",
+          "offerType": "rent",
+          "location": "Svay Dangkum",
+          "bedrooms": 3,
+          "bathrooms": 4,
+          "propertyType": "flat house"
+        }
+      },
+      "algorithmOutputV1": {
+        "decision": "DIFFERENT_PROPERTY",
+        "propertyScore": 0.51,
+        "listingScore": 0.53,
+        "propertyFamilies": {
+          "IDENTIFIERS": 0,
+          "MEDIA": 0,
+          "CONTACT": 0.35,
+          "LOCATION": 0.08,
+          "STRUCTURED": 0.08,
+          "TEXT": 0
+        },
+        "listingFamilies": {
+          "IDENTIFIERS": 0,
+          "MEDIA": 0,
+          "CONTACT": 0.45,
+          "LOCATION": 0,
+          "STRUCTURED": 0.08,
+          "TEXT": 0
+        },
+        "sharedContactTypes": [
+          "EMAIL",
+          "PHONE"
+        ],
+        "sharedCodes": [],
+        "photoMatchCount": 0,
+        "photoHammingDistances": [],
+        "retrievalSignalTypes": [
+          "identifier",
+          "token"
+        ],
+        "reasonTypes": [
+          "shared phone",
+          "shared messaging/email identifiers",
+          "same bedrooms",
+          "conflicting offer types",
+          "text_jaccard=0.459",
+          "property_score=0.510",
+          "listing_score=0.530"
+        ]
+      }
+    },
+    {
+      "candidateA": "facebook_group:7",
+      "candidateB": "khmer24:2821",
+      "humanLabel": "DIFFERENT_PROPERTY",
+      "humanRationale": "Distinct explicit property codes (DV018 vs DV2298) and differing property details.",
+      "evidence": {
+        "facebook": {
+          "candidateId": "facebook_group:7",
+          "sourceType": "FACEBOOK_GROUP",
+          "propertyCode": "DV018",
+          "title": "2-Bedroom Villa in Sala Kamreuk",
+          "textSnippet": "🏡 2-Bedroom Villa for Rent in with Pool in Sala Kamreuk, Siem Reap City\n\nLocated in Sangkat Sala Kamreuk, Siem Reap City, this fully furnished 2-bedroom villa offers open-plan living with modern interiors and access to shared compound amenities including a swimming pool, garden, playground, and fitness gym.\n\nProperty Details:\n• Rental Price: USD 1,250 / month\n• Bedrooms: 2\n• Bathrooms: 2 \n• Furnishing: Fully furnished\n• Interior: Open living and dining area, kitchen with hood, dark tile floors, ceiling fans, and AC\n• Amenities: Shared pool, gym, garden, playground, BBQ area, generator, and free Wi-Fi.\n• Location: Sangkat Sala Kamreuk, Siem Reap City\n\n---------------------------------------\n",
+          "price": 1250,
+          "currency": "USD",
+          "offerType": null,
+          "location": "Sala Kamreuk",
+          "bedrooms": 2,
+          "bathrooms": 2,
+          "propertyType": "Private Villa"
+        },
+        "khmer24": {
+          "candidateId": "khmer24:2821",
+          "sourceType": "KHMER24",
+          "propertyCode": "DV2298",
+          "title": "2BR Private House in Chreav",
+          "textSnippet": "Contact Daka Kun Realty at [phone]/[phone] ( WhatsApp & Telegram) or Email: [email]\nProperty ID: DV2298\n\nRental Price: USD 250 Per month \n\nPet-friendly two-story home with a mezzanine level and private balcony, offering a functional multi-level layout and standard city utility connections.\n\nProperty Details:\n• Land Size: 5m x 22m (110 sqm)\n• House Size: 4m x 11m (80 sqm)\n• Bedrooms: 2\n• Bathrooms: 3\n• Furnishing: Semi-furnished\n• Interior: Open living space, kitchen, air-conditioned bedrooms, mezzanine level, and en-suite bathroom setups\n• Outdoor: Private first-floor balcony, ground-floor parking space, and gated entryway\n• Pet Policy: Pet-friendly\n• Utilities: EDC electricity & city water ",
+          "price": 250,
+          "currency": "USD",
+          "offerType": "rent",
+          "location": "Chreav",
+          "bedrooms": 2,
+          "bathrooms": 3,
+          "propertyType": "Private House"
+        }
+      },
+      "algorithmOutputV1": {
+        "decision": "DIFFERENT_PROPERTY",
+        "propertyScore": 0.51,
+        "listingScore": 0.58,
+        "propertyFamilies": {
+          "IDENTIFIERS": 0,
+          "MEDIA": 0,
+          "CONTACT": 0.35,
+          "LOCATION": 0.08,
+          "STRUCTURED": 0.08,
+          "TEXT": 0
+        },
+        "listingFamilies": {
+          "IDENTIFIERS": 0,
+          "MEDIA": 0,
+          "CONTACT": 0.45,
+          "LOCATION": 0,
+          "STRUCTURED": 0.13,
+          "TEXT": 0
+        },
+        "sharedContactTypes": [
+          "EMAIL",
+          "PHONE"
+        ],
+        "sharedCodes": [],
+        "photoMatchCount": 0,
+        "photoHammingDistances": [],
+        "retrievalSignalTypes": [
+          "identifier",
+          "phash",
+          "token"
+        ],
+        "reasonTypes": [
+          "shared phone",
+          "shared messaging/email identifiers",
+          "same bedrooms",
+          "same offer type",
+          "text_jaccard=0.277",
+          "property_score=0.510",
+          "listing_score=0.580"
+        ]
+      }
+    },
+    {
+      "candidateA": "facebook_group:7",
+      "candidateB": "khmer24:2827",
+      "humanLabel": "DIFFERENT_PROPERTY",
+      "humanRationale": "Distinct explicit property codes (DV018 vs DV1112) and differing property details.",
+      "evidence": {
+        "facebook": {
+          "candidateId": "facebook_group:7",
+          "sourceType": "FACEBOOK_GROUP",
+          "propertyCode": "DV018",
+          "title": "2-Bedroom Villa in Sala Kamreuk",
+          "textSnippet": "🏡 2-Bedroom Villa for Rent in with Pool in Sala Kamreuk, Siem Reap City\n\nLocated in Sangkat Sala Kamreuk, Siem Reap City, this fully furnished 2-bedroom villa offers open-plan living with modern interiors and access to shared compound amenities including a swimming pool, garden, playground, and fitness gym.\n\nProperty Details:\n• Rental Price: USD 1,250 / month\n• Bedrooms: 2\n• Bathrooms: 2 \n• Furnishing: Fully furnished\n• Interior: Open living and dining area, kitchen with hood, dark tile floors, ceiling fans, and AC\n• Amenities: Shared pool, gym, garden, playground, BBQ area, generator, and free Wi-Fi.\n• Location: Sangkat Sala Kamreuk, Siem Reap City\n\n---------------------------------------\n",
+          "price": 1250,
+          "currency": "USD",
+          "offerType": null,
+          "location": "Sala Kamreuk",
+          "bedrooms": 2,
+          "bathrooms": 2,
+          "propertyType": "Private Villa"
+        },
+        "khmer24": {
+          "candidateId": "khmer24:2827",
+          "sourceType": "KHMER24",
+          "propertyCode": "DV1112",
+          "title": "2BR Private House in Svay Dangkum",
+          "textSnippet": "Contact Daka Kun Realty at [phone]/[phone] ( WhatsApp & Telegram) or Email: [email]\nProperty ID: DV1112\n\nRental Price: USD 350 per month\n\n2-bedroom home located on a concrete road in Sangkat Svay Dangkum, Siem Reap. Set on a 10m x 20m plot, this house features a paved front courtyard, semi-furnished interiors, and convenient access.\n\nProperty Details:\n• Land Size: 10m x 20m\n• House Size: 8m x 13m\n• Bedrooms: 2\n• Bathrooms: 3\n• Furnishing: Semi-furnished\n• Interior: living room with ceiling lighting, air conditioning, and a functional kitchen area with fitted countertops\n• Outdoor: front courtyard with garden borders, high boundary wall, and secure front gate along a concrete road.\n• Location",
+          "price": 400,
+          "currency": "USD",
+          "offerType": "rent",
+          "location": "Svay Dangkum",
+          "bedrooms": 2,
+          "bathrooms": null,
+          "propertyType": "Private House"
+        }
+      },
+      "algorithmOutputV1": {
+        "decision": "DIFFERENT_PROPERTY",
+        "propertyScore": 0.51,
+        "listingScore": 0.58,
+        "propertyFamilies": {
+          "IDENTIFIERS": 0,
+          "MEDIA": 0,
+          "CONTACT": 0.35,
+          "LOCATION": 0.08,
+          "STRUCTURED": 0.08,
+          "TEXT": 0
+        },
+        "listingFamilies": {
+          "IDENTIFIERS": 0,
+          "MEDIA": 0,
+          "CONTACT": 0.45,
+          "LOCATION": 0,
+          "STRUCTURED": 0.13,
+          "TEXT": 0
+        },
+        "sharedContactTypes": [
+          "EMAIL",
+          "PHONE"
+        ],
+        "sharedCodes": [],
+        "photoMatchCount": 0,
+        "photoHammingDistances": [],
+        "retrievalSignalTypes": [
+          "identifier",
+          "token"
+        ],
+        "reasonTypes": [
+          "shared phone",
+          "shared messaging/email identifiers",
+          "same bedrooms",
+          "same offer type",
+          "text_jaccard=0.345",
+          "property_score=0.510",
+          "listing_score=0.580"
+        ]
+      }
+    },
+    {
+      "candidateA": "facebook_group:743",
+      "candidateB": "khmer24:2733",
+      "humanLabel": "DIFFERENT_PROPERTY",
+      "humanRationale": "Distinct explicit property codes (DV693 vs DV1870) and differing property details.",
+      "evidence": {
+        "facebook": {
+          "candidateId": "facebook_group:743",
+          "sourceType": "FACEBOOK_GROUP",
+          "propertyCode": "DV693",
+          "title": "3-Bedroom Modern House in Sla Kram",
+          "textSnippet": "🏡 3-Bedroom Modern House for Rent in Siem Reap City\n\nModern 3-bedroom gated home in Siem Reap City. Fully furnished with double-height ceilings, kitchen, balcony, rooftop terrace, and secured parking yard.\n\nProperty Details:\n• Rental Price: USD 750 / month\n• House Size: 6m x 14m\n• Layout: 3 Bed | 4 Bath | Open Living Room & Modern Kitchen\n• Furnishing: Fully Furnished\n• Features: Rooftop terrace, private balcony, AC, and gated parking.\n• Location: Sangkat Sla Kram, Siem Reap City\n---------------------------------------\nProperty Code: DV693\nMore option: www.dakakunrealty.com\nTelegram Channel: [url]\n[phone]/[phone] (WhatsApp & Telegram)\n[email]\nReal Estate Agent: Yeun Sam Ath\nNr: R-21-381-01",
+          "price": 750,
+          "currency": "USD",
+          "offerType": null,
+          "location": "Sla Kram",
+          "bedrooms": 3,
+          "bathrooms": 4,
+          "propertyType": "Private House"
+        },
+        "khmer24": {
+          "candidateId": "khmer24:2733",
+          "sourceType": "KHMER24",
+          "propertyCode": "DV1870",
+          "title": "ផ្ទះសម្រាប់លក់-ផ្លូវសូកូឡា​ (សាលាកំរើក) / House for Sale in Siem Reap City, Chocolate Rd",
+          "textSnippet": "ផ្ទះសម្រាប់លក់-ផ្លូវសូកូឡា​ (សាលាកំរើក) / House for Sale in Siem Reap City, Chocolate Rd\n***English Below*** ទំនាក់ទំនងមក Daka Kun Realty តាមរយៈលេខទូរស័ព្ទ [phone] / [phone] ( WhatsApp/Telegram )​ ឬផ្ញើសារមកកាន់អ៉ីមែល ៖ [email] លេខកូត៖​ DV1870 តម្លៃ៖ 225,000 ដុល្លារ (ចរចា) • ទំហំដី៖ 10ម x 40ម • ទំហំផ្ទះ៖ 8.5ម x 16ម • ប្រភេទប្លង់រឹង •​ 3 បន្ទប់គេង និង 3 បន្ទប់ទឹក •​ បន្ទប់ទទួលភ្ញៀវ និង ផ្ទះបាយ •​ តម្លៃមិនរួមសម្ភារៈ • សួនច្បារ និង ចំណត • ទីតាំង៖ ស្ថិតសង្កាត់សាលាកំរើក, ក្រុងសៀមរាប —------------------------------------------------------------------------ Contact Daka Kun Realty at [phone]/[phone] ( WhatsApp & Telegram) or Email: [email] Property ID: DV1870 Price: USD 225,000 (Negotiable) • Askin",
+          "price": 225000,
+          "currency": "USD",
+          "offerType": "sale",
+          "location": "Sala Kamreuk",
+          "bedrooms": 3,
+          "bathrooms": 3,
+          "propertyType": "house"
+        }
+      },
+      "algorithmOutputV1": {
+        "decision": "DIFFERENT_PROPERTY",
+        "propertyScore": 0.51,
+        "listingScore": 0.53,
+        "propertyFamilies": {
+          "IDENTIFIERS": 0,
+          "MEDIA": 0,
+          "CONTACT": 0.35,
+          "LOCATION": 0.08,
+          "STRUCTURED": 0.08,
+          "TEXT": 0
+        },
+        "listingFamilies": {
+          "IDENTIFIERS": 0,
+          "MEDIA": 0,
+          "CONTACT": 0.45,
+          "LOCATION": 0,
+          "STRUCTURED": 0.08,
+          "TEXT": 0
+        },
+        "sharedContactTypes": [
+          "EMAIL",
+          "PHONE"
+        ],
+        "sharedCodes": [],
+        "photoMatchCount": 0,
+        "photoHammingDistances": [],
+        "retrievalSignalTypes": [
+          "identifier",
+          "token"
+        ],
+        "reasonTypes": [
+          "shared phone",
+          "shared messaging/email identifiers",
+          "same bedrooms",
+          "conflicting offer types",
+          "text_jaccard=0.186",
+          "property_score=0.510",
+          "listing_score=0.530"
+        ]
+      }
+    },
+    {
+      "candidateA": "facebook_group:795",
+      "candidateB": "khmer24:2821",
+      "humanLabel": "DIFFERENT_PROPERTY",
+      "humanRationale": "Distinct explicit property codes (DC959 vs DV2298) and differing property details.",
+      "evidence": {
+        "facebook": {
+          "candidateId": "facebook_group:795",
+          "sourceType": "FACEBOOK_GROUP",
+          "propertyCode": "DC959",
+          "title": "Commercial Shophouse on Main Road",
+          "textSnippet": "🏦 Commercial Shophouse for Rent in Siem Reap City, on the Main Road\n\nModern commercial shop space available for rent in Sangkat Sla Kram, Siem Reap City. Measuring 10m x 30m, this open-concept property features bright interiors with glossy floor tiles, ceiling fans, recessed lighting, and a private front parking.\n\nProperty Details:\n• Rental Price: USD 600 / month\n• Building Size: 10m x 30m\n• Bedrooms: 2\n• Bathrooms: 2\n• Kitchen: 2\n• Interior: Open retail/office space, polished floor tiles, recessed LED lights, ceiling fans, arched doorway, and large glass windows.\n• Exterior: Paved front courtyard, metal roller shutters, side parking area, and perimeter fencing.\n• Location: Sangkat Sla Kram",
+          "price": 600,
+          "currency": "USD",
+          "offerType": null,
+          "location": "Sla Kram",
+          "bedrooms": 2,
+          "bathrooms": 2,
+          "propertyType": "Flat House"
+        },
+        "khmer24": {
+          "candidateId": "khmer24:2821",
+          "sourceType": "KHMER24",
+          "propertyCode": "DV2298",
+          "title": "2BR Private House in Chreav",
+          "textSnippet": "Contact Daka Kun Realty at [phone]/[phone] ( WhatsApp & Telegram) or Email: [email]\nProperty ID: DV2298\n\nRental Price: USD 250 Per month \n\nPet-friendly two-story home with a mezzanine level and private balcony, offering a functional multi-level layout and standard city utility connections.\n\nProperty Details:\n• Land Size: 5m x 22m (110 sqm)\n• House Size: 4m x 11m (80 sqm)\n• Bedrooms: 2\n• Bathrooms: 3\n• Furnishing: Semi-furnished\n• Interior: Open living space, kitchen, air-conditioned bedrooms, mezzanine level, and en-suite bathroom setups\n• Outdoor: Private first-floor balcony, ground-floor parking space, and gated entryway\n• Pet Policy: Pet-friendly\n• Utilities: EDC electricity & city water ",
+          "price": 250,
+          "currency": "USD",
+          "offerType": "rent",
+          "location": "Chreav",
+          "bedrooms": 2,
+          "bathrooms": 3,
+          "propertyType": "Private House"
+        }
+      },
+      "algorithmOutputV1": {
+        "decision": "DIFFERENT_PROPERTY",
+        "propertyScore": 0.51,
+        "listingScore": 0.58,
+        "propertyFamilies": {
+          "IDENTIFIERS": 0,
+          "MEDIA": 0,
+          "CONTACT": 0.35,
+          "LOCATION": 0.08,
+          "STRUCTURED": 0.08,
+          "TEXT": 0
+        },
+        "listingFamilies": {
+          "IDENTIFIERS": 0,
+          "MEDIA": 0,
+          "CONTACT": 0.45,
+          "LOCATION": 0,
+          "STRUCTURED": 0.13,
+          "TEXT": 0
+        },
+        "sharedContactTypes": [
+          "EMAIL",
+          "PHONE"
+        ],
+        "sharedCodes": [],
+        "photoMatchCount": 0,
+        "photoHammingDistances": [],
+        "retrievalSignalTypes": [
+          "identifier",
+          "token"
+        ],
+        "reasonTypes": [
+          "shared phone",
+          "shared messaging/email identifiers",
+          "same bedrooms",
+          "same offer type",
+          "text_jaccard=0.262",
+          "property_score=0.510",
+          "listing_score=0.580"
+        ]
+      }
+    },
+    {
+      "candidateA": "facebook_group:795",
+      "candidateB": "khmer24:2827",
+      "humanLabel": "DIFFERENT_PROPERTY",
+      "humanRationale": "Distinct explicit property codes (DC959 vs DV1112) and differing property details.",
+      "evidence": {
+        "facebook": {
+          "candidateId": "facebook_group:795",
+          "sourceType": "FACEBOOK_GROUP",
+          "propertyCode": "DC959",
+          "title": "Commercial Shophouse on Main Road",
+          "textSnippet": "🏦 Commercial Shophouse for Rent in Siem Reap City, on the Main Road\n\nModern commercial shop space available for rent in Sangkat Sla Kram, Siem Reap City. Measuring 10m x 30m, this open-concept property features bright interiors with glossy floor tiles, ceiling fans, recessed lighting, and a private front parking.\n\nProperty Details:\n• Rental Price: USD 600 / month\n• Building Size: 10m x 30m\n• Bedrooms: 2\n• Bathrooms: 2\n• Kitchen: 2\n• Interior: Open retail/office space, polished floor tiles, recessed LED lights, ceiling fans, arched doorway, and large glass windows.\n• Exterior: Paved front courtyard, metal roller shutters, side parking area, and perimeter fencing.\n• Location: Sangkat Sla Kram",
+          "price": 600,
+          "currency": "USD",
+          "offerType": null,
+          "location": "Sla Kram",
+          "bedrooms": 2,
+          "bathrooms": 2,
+          "propertyType": "Flat House"
+        },
+        "khmer24": {
+          "candidateId": "khmer24:2827",
+          "sourceType": "KHMER24",
+          "propertyCode": "DV1112",
+          "title": "2BR Private House in Svay Dangkum",
+          "textSnippet": "Contact Daka Kun Realty at [phone]/[phone] ( WhatsApp & Telegram) or Email: [email]\nProperty ID: DV1112\n\nRental Price: USD 350 per month\n\n2-bedroom home located on a concrete road in Sangkat Svay Dangkum, Siem Reap. Set on a 10m x 20m plot, this house features a paved front courtyard, semi-furnished interiors, and convenient access.\n\nProperty Details:\n• Land Size: 10m x 20m\n• House Size: 8m x 13m\n• Bedrooms: 2\n• Bathrooms: 3\n• Furnishing: Semi-furnished\n• Interior: living room with ceiling lighting, air conditioning, and a functional kitchen area with fitted countertops\n• Outdoor: front courtyard with garden borders, high boundary wall, and secure front gate along a concrete road.\n• Location",
+          "price": 400,
+          "currency": "USD",
+          "offerType": "rent",
+          "location": "Svay Dangkum",
+          "bedrooms": 2,
+          "bathrooms": null,
+          "propertyType": "Private House"
+        }
+      },
+      "algorithmOutputV1": {
+        "decision": "DIFFERENT_PROPERTY",
+        "propertyScore": 0.51,
+        "listingScore": 0.58,
+        "propertyFamilies": {
+          "IDENTIFIERS": 0,
+          "MEDIA": 0,
+          "CONTACT": 0.35,
+          "LOCATION": 0.08,
+          "STRUCTURED": 0.08,
+          "TEXT": 0
+        },
+        "listingFamilies": {
+          "IDENTIFIERS": 0,
+          "MEDIA": 0,
+          "CONTACT": 0.45,
+          "LOCATION": 0,
+          "STRUCTURED": 0.13,
+          "TEXT": 0
+        },
+        "sharedContactTypes": [
+          "EMAIL",
+          "PHONE"
+        ],
+        "sharedCodes": [],
+        "photoMatchCount": 0,
+        "photoHammingDistances": [],
+        "retrievalSignalTypes": [
+          "identifier",
+          "token"
+        ],
+        "reasonTypes": [
+          "shared phone",
+          "shared messaging/email identifiers",
+          "same bedrooms",
+          "same offer type",
+          "text_jaccard=0.344",
+          "property_score=0.510",
+          "listing_score=0.580"
+        ]
+      }
+    },
+    {
+      "candidateA": "facebook_group:796",
+      "candidateB": "khmer24:2764",
+      "humanLabel": "DIFFERENT_PROPERTY",
+      "humanRationale": "Distinct explicit property codes (DV603 vs DV018) and differing property details.",
+      "evidence": {
+        "facebook": {
+          "candidateId": "facebook_group:796",
+          "sourceType": "FACEBOOK_GROUP",
+          "propertyCode": "DV603",
+          "title": "2-Bedroom Townhouse with Shared Pool",
+          "textSnippet": "🏡2-Bedroom Townhouse with Shared Pool for Rent in Siem Reap City\n\nCharming 2-bedroom townhouse for rent in Siem Reap City. Fully furnished with open living space, full access to a shared swimming pool, and parking space.\n\nProperty Details:\n• Rental Price: USD 350 / month\n• Layout: 2 Bed | 3 Bath | Living Room & Kitchen\n• Furnishing: Fully Furnished\n• Features: Shared swimming pool, fully equipped living and kitchen spaces, and secure parking area.\n• Location: Sangkat Srangae, Siem Reap City\n---------------------------------------\nProperty Code: DV603\nMore option: www.dakakunrealty.com\nTelegram Channel: [url]\n[phone]/[phone] (WhatsApp & Telegram)\n[email]\nReal Estate Agent: Yeun Sam Ath\nNr: R",
+          "price": 350,
+          "currency": "USD",
+          "offerType": null,
+          "location": "Srangae",
+          "bedrooms": 2,
+          "bathrooms": 3,
+          "propertyType": "Private House"
+        },
+        "khmer24": {
+          "candidateId": "khmer24:2764",
+          "sourceType": "KHMER24",
+          "propertyCode": "DV018",
+          "title": "2BR Private Villa in Sala Kamreuk",
+          "textSnippet": "Contact Daka Kun Realty at [phone]/[phone] ( WhatsApp & Telegram) or Email: [email]\nProperty ID: DV018\n\nLocated in Sangkat Sala Kamreuk, Siem Reap City, this fully furnished 2-bedroom villa offers open-plan living with modern interiors and access to shared compound amenities including a swimming pool, garden, playground, and fitness gym.\n\nProperty Details:\n• Rental Price: USD 1,250 / month\n• Bedrooms: 2\n• Bathrooms: 2 \n• Furnishing: Fully furnished\n• Interior: Open living and dining area, kitchen with hood, dark tile floors, ceiling fans, and AC\n• Amenities: Shared pool, gym, garden, playground, BBQ area, generator, and free Wi-Fi.\n• Location: Sangkat Sala Kamreuk, Siem Reap City\n—----------",
+          "price": 1250,
+          "currency": "USD",
+          "offerType": "rent",
+          "location": "Sala Kamreuk",
+          "bedrooms": 2,
+          "bathrooms": null,
+          "propertyType": "Private Villa"
+        }
+      },
+      "algorithmOutputV1": {
+        "decision": "DIFFERENT_PROPERTY",
+        "propertyScore": 0.51,
+        "listingScore": 0.58,
+        "propertyFamilies": {
+          "IDENTIFIERS": 0,
+          "MEDIA": 0,
+          "CONTACT": 0.35,
+          "LOCATION": 0.08,
+          "STRUCTURED": 0.08,
+          "TEXT": 0
+        },
+        "listingFamilies": {
+          "IDENTIFIERS": 0,
+          "MEDIA": 0,
+          "CONTACT": 0.45,
+          "LOCATION": 0,
+          "STRUCTURED": 0.13,
+          "TEXT": 0
+        },
+        "sharedContactTypes": [
+          "EMAIL",
+          "PHONE"
+        ],
+        "sharedCodes": [],
+        "photoMatchCount": 0,
+        "photoHammingDistances": [],
+        "retrievalSignalTypes": [
+          "identifier",
+          "phash",
+          "token"
+        ],
+        "reasonTypes": [
+          "shared phone",
+          "shared messaging/email identifiers",
+          "same bedrooms",
+          "same offer type",
+          "text_jaccard=0.398",
+          "property_score=0.510",
+          "listing_score=0.580"
+        ]
+      }
+    },
+    {
+      "candidateA": "facebook_group:400",
+      "candidateB": "khmer24:2809",
+      "humanLabel": "UNKNOWN",
+      "humanRationale": "Generic one-bedroom apartment facts and similar asking prices, but no property code, shared contact, or matching photo to establish identity.",
+      "evidence": {
+        "facebook": {
+          "candidateId": "facebook_group:400",
+          "sourceType": "FACEBOOK_GROUP",
+          "propertyCode": null,
+          "title": "Exquisite 1-bedroom apartment in Svay Dangkum",
+          "textSnippet": "អាផាតមិន ០១ បន្ទប់គេងសម្រាប់ជួលនៅក្នុងសង្កាត់ស្វាយដង្គំ ក្រុងសៀមរាប\nCentral 01 – Bedroom Apartment for Rent in Siem Reap – Svay Dangkum (POOL)\n----------------------------\n📓 Original ID Number: SR – 00811KNA\n💰 Rental Price: $450/Month (Negotiable) \n🔸 Deposit Required: 01 Month\n🔸 Rental Period: 06 Months \n🔸 Distance from old Market:  03 Minutes (Drive)\n🔸 Unit Size: 45 SQM\n🔸 Fully Furnished \n🔸 Elevator & Parking\n----------------------------\nUtilities: \n🔅 Electricity Price: 1,000 KHR/KWh \n🔅 Water Supply: $5/Month (Pax)\n🔅 Internet: Included \n🔅 Garbage Collection: Included \n----------------------------\nFor more information, please drop a message, an email or call us at:\n📞 Tel: [phone",
+          "price": 350,
+          "currency": "USD",
+          "offerType": null,
+          "location": "Svay Dangkum",
+          "bedrooms": 1,
+          "bathrooms": 1,
+          "propertyType": "Apartment"
+        },
+        "khmer24": {
+          "candidateId": "khmer24:2809",
+          "sourceType": "KHMER24",
+          "propertyCode": null,
+          "title": "1BR Apartment in Svay Dangkum",
+          "textSnippet": "✅    1 Bedroom, Living Room and Kitchen, 1 Balcony, 1 Bathroom (with Buthtub)\n✅    Swimming pool on the Roof, Steam room, Elevator, Parking, CCTV system\n✅    Svay Dangkum, 5 minutes Walk to Pub Street (0,2 km)\n✅    Fully Furnished and Equipped (Washing Machine, Smart TV, Air conditioner, Fridge, Stove, Kitchen Hood, Kettle, Dishes)\n✅    Wi-Fi and Cleaning are Included in the Rent\n✅    Contract from 6 months\n✅    450$ per month\n\nFeel Free to Contact:\n📞  +855 969 34 34 40 (WhatsApp, Telegram)\nOlga\n1BR Apartment in Svay Dangkum\n✅ 1 Bedroom, Living Room and Kitchen, 1 Balcony, 1 Bathroom (with Buthtub) ✅ Swimming pool on the Roof, Steam room, Elevator, Parking, CCTV system ✅ Svay Dangkum, 5 min",
+          "price": 450,
+          "currency": "USD",
+          "offerType": "rent",
+          "location": "Svay Dangkum",
+          "bedrooms": 1,
+          "bathrooms": 1,
+          "propertyType": "Apartment"
+        }
+      },
+      "algorithmOutputV1": {
+        "decision": "DIFFERENT_PROPERTY",
+        "propertyScore": 0.52,
+        "listingScore": 0.5,
+        "propertyFamilies": {
+          "IDENTIFIERS": 0,
+          "MEDIA": 0,
+          "CONTACT": 0,
+          "LOCATION": 0.27,
+          "STRUCTURED": 0.25,
+          "TEXT": 0
+        },
+        "listingFamilies": {
+          "IDENTIFIERS": 0,
+          "MEDIA": 0,
+          "CONTACT": 0,
+          "LOCATION": 0.05,
+          "STRUCTURED": 0.45,
+          "TEXT": 0
+        },
+        "sharedContactTypes": [],
+        "sharedCodes": [],
+        "photoMatchCount": 0,
+        "photoHammingDistances": [],
+        "retrievalSignalTypes": [
+          "phash",
+          "price",
+          "structured",
+          "token"
+        ],
+        "reasonTypes": [
+          "same location",
+          "same bedrooms",
+          "same property type",
+          "same asking price within 5%",
+          "same lease/deposit/utility terms",
+          "same offer type",
+          "text_jaccard=0.129",
+          "property_score=0.520",
+          "listing_score=0.500"
+        ]
+      }
+    }
+  ]
+}
