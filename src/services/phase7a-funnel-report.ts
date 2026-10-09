@@ -2,7 +2,8 @@ import type { DatabaseSync } from 'node:sqlite';
 
 export type FunnelPeriod = '24h' | '3d' | '7d';
 
-export const DEFAULT_INTERNAL_TELEGRAM_IDS = [8441221953, 299321244] as const;
+/** Admin/manual smoke account; pass --exclude-telegram-id for any other run-specific test account. */
+export const DEFAULT_INTERNAL_TELEGRAM_IDS = [299321244] as const;
 
 interface UsageEventRow {
   id: number;
