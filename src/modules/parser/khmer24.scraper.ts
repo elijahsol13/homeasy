@@ -16,10 +16,18 @@ import fs from 'fs';
 import type { Browser, BrowserContext, Page } from 'playwright';
 import type { RawListing } from './schemas';
 import { runMigrations } from '../../database/migrate';
+import { env } from '../../config/env';
+import { assertLegacyPropertiesUnchanged, installLegacyPropertiesWriteGuard, snapshotLegacyProperties } from '../../database/legacy-write-guard';
 import type { AppContainer } from '../../container';
 import { createContainer } from '../../container';
 import type { PropertyCategory } from '../../config/settings';
-import { extractListingsBatchWithLLM, categoryFromPropertyType, isExcessiveKhmer, type LLMExtractedListing } from './extractor';
+import { Khmer24LiveAdapter, type LiveListingEnvelope } from './live-source-adapters';
+import {
+  extractListingsBatchWithLLM,
+  categoryFromPropertyType,
+  isExcessiveKhmer,
+  type LLMExtractedListing,
+} from './extractor';
 import { isNonRealEstateSpam } from './spam-detector';
 import { findCanonicalLocation } from '../../config/locations';
 import { launchCamoufox, type CamoufoxBrowser } from './camoufox-server';
@@ -513,7 +521,10 @@ export async function enrichListingsWithLLM(listings: RawListing[]): Promise<Raw
       `  🚀 [AI Batch ${Math.floor(i / LLM_BATCH_SIZE) + 1}/${Math.ceil(candidates.length / LLM_BATCH_SIZE)}] Rewriting ${chunk.length} listings with Gemini...`,
     );
     try {
-      const batchResult = await extractListingsBatchWithLLM(batchInput, KHMER24_EXTRACTION_HINTS);
+      const batchResult = await extractListingsBatchWithLLM(
+        batchInput,
+        KHMER24_EXTRACTION_HINTS,
+      );
       for (const [id, llm] of batchResult) {
         llmResults.set(Number(id), llm);
       }
@@ -538,9 +549,14 @@ export async function enrichListingsWithLLM(listings: RawListing[]): Promise<Raw
       console.log(`  ⏩ [Skipped - Not Residential Real Estate] "${(listing.title ?? '').slice(0, 40)}"`);
       return;
     }
-    const reviewStatus: 'approved' | 'pending' = llm.is_real_estate === true ? 'approved' : 'pending';
+    const canonicalFacts = llm.canonical_facts;
+    const reviewStatus: 'approved' | 'pending' = llm.is_real_estate === true &&
+      (!canonicalFacts || (canonicalFacts.price === null && listing.price != null) ||
+        (canonicalFacts.price !== null && canonicalFacts.currency !== null)) ? 'approved' : 'pending';
     const reviewReason = reviewStatus === 'pending'
-      ? llm.admission_reason || 'LLM admission decision missing or uncertain'
+      ? (canonicalFacts && (canonicalFacts.price === null && listing.price == null || canonicalFacts.price !== null && canonicalFacts.currency === null)
+        ? 'Monthly rent or currency unknown'
+        : llm.admission_reason || 'LLM admission decision missing or uncertain')
       : undefined;
     if (isExcessiveKhmer(llm.description_en)) {
       console.log(`  ⏩ [Skipped - Low Translation Quality] "${(listing.title ?? '').slice(0, 40)}"`);
@@ -579,29 +595,33 @@ export async function enrichListingsWithLLM(listings: RawListing[]): Promise<Raw
       ...listing,
       title: llm.title_en?.trim() || listing.title,
       description: llm.description_en || listing.description,
-      // Khmer24's own JSON-LD price/photos/phone are already reliable — never
-      // override them; only accept the LLM price when scraping yielded none.
-      price: listing.price ?? llm.price ?? undefined,
+      // Explicit rent in post text wins over conflicting platform metadata.
+      // Retain structured platform price only when the canonical text has none.
+      price: canonicalFacts?.price != null && canonicalFacts.currency ? canonicalFacts.price : listing.price ?? llm.price ?? undefined,
+      currency: canonicalFacts?.price != null && canonicalFacts.currency ? canonicalFacts.currency : listing.currency,
       // (llm.category === 'land' already handled above.)
       category,
       city,
       bedrooms: llm.bedrooms ?? listing.bedrooms,
       bathrooms: llm.bathrooms ?? listing.bathrooms,
       deposit: llm.deposit ?? listing.deposit,
-      min_lease: llm.min_lease ?? listing.min_lease,
-      has_pool: llm.has_pool ?? listing.has_pool,
+      min_lease: canonicalFacts ? canonicalFacts.min_lease_months ?? undefined : llm.min_lease ?? listing.min_lease,
+      has_pool: canonicalFacts ? canonicalFacts.has_pool : llm.has_pool ?? listing.has_pool,
       location,
       maps_url: listing.maps_url || llm.maps_url || undefined,
       property_type: propertyType,
-      electricity: llm.electricity ?? listing.electricity,
-      water: llm.water ?? listing.water,
-      cleaning: llm.cleaning ?? listing.cleaning,
-      restrictions: (llm.restrictions && llm.restrictions.length > 0) ? llm.restrictions : listing.restrictions,
-      pet_friendly: llm.pet_friendly ?? listing.pet_friendly,
+      electricity: canonicalFacts ? llm.electricity ?? undefined : llm.electricity ?? listing.electricity,
+      water: canonicalFacts ? llm.water ?? undefined : llm.water ?? listing.water,
+      cleaning: canonicalFacts ? llm.cleaning ?? undefined : llm.cleaning ?? listing.cleaning,
+      restrictions: canonicalFacts ? llm.restrictions : (llm.restrictions && llm.restrictions.length > 0) ? llm.restrictions : listing.restrictions,
+      pet_friendly: canonicalFacts ? llm.pet_friendly : llm.pet_friendly ?? listing.pet_friendly,
       marketing_landmarks: (llm.marketing_landmarks && llm.marketing_landmarks.length > 0) ? llm.marketing_landmarks : listing.marketing_landmarks,
       amenities: (llm.discovered_amenities && llm.discovered_amenities.length > 0) ? llm.discovered_amenities : listing.amenities,
       review_status: reviewStatus,
       review_reason: reviewReason,
+      is_real_estate: llm.is_real_estate,
+      deposit_months: llm.canonical_facts?.deposit_months ?? listing.deposit_months,
+      listing_facts_json: llm.canonical_facts ? JSON.stringify(llm.canonical_facts) : listing.listing_facts_json,
     });
   });
 
@@ -755,6 +775,7 @@ export interface RunKhmer24Options {
   targetIndex?: number;
   dumpRaw?: string;
   dbPath?: string;
+  shadowOnly?: boolean;
 }
 
 export async function runKhmer24Scraper(
@@ -772,6 +793,9 @@ export async function runKhmer24Scraper(
 
   const container = containerInstance ?? createContainer(options.dbPath ? { dbPath: options.dbPath } : undefined);
   runMigrations(container.db);
+  const shadowOnly = options.shadowOnly === true || env.SHADOW_INGESTION;
+  const legacySnapshot = shadowOnly ? snapshotLegacyProperties(container.db) : undefined;
+  if (shadowOnly) installLegacyPropertiesWriteGuard(container.db);
 
   const targets = options.targetIndex !== undefined
     ? KHMER24_TARGETS.filter((_, i) => i === options.targetIndex)
@@ -808,6 +832,48 @@ export async function runKhmer24Scraper(
           continue;
         }
 
+        if (shadowOnly) {
+          const envelopes: LiveListingEnvelope[] = rawListings.map((listing) => ({
+            listing, sourceName: 'Khmer24 Siem Reap', sourceId: 'siem-reap', sourceUrl: 'https://www.khmer24.com/en',
+          }));
+          const baseAdapter = new Khmer24LiveAdapter(async function* () { yield* envelopes; });
+          const states = new Map<string, { contentChanged:boolean; classification:LiveListingEnvelope['classification'] }>();
+          const contentChanged:LiveListingEnvelope[]=[];
+          for(const envelope of envelopes){
+            const normalized = baseAdapter.normalize(envelope);
+            const sourceId = container.sourceIngestionRepo.findSourceId(container.sourceIngestionRepo.makeSourceKey(normalized.sourceIdentity));
+            const existing=sourceId===undefined?undefined:container.sourceIngestionRepo.findSourceItemState(sourceId,normalized.externalId);
+            const textChanged=!existing||existing.contentHash!==(normalized.contentHash??null)||existing.classification==='UNCLASSIFIED'||existing.classification===null;
+            const classification=existing?.classification;
+            const priorClass=['HOUSING_SUPPLY','HOUSING_DEMAND','HOUSING_ADJACENT','IRRELEVANT','UNCLASSIFIED'].includes(classification??'')
+              ? classification as LiveListingEnvelope['classification'] : undefined;
+            const url=envelope.listing.source_url??envelope.listing.url??'';
+            states.set(url,{contentChanged:textChanged,classification:priorClass});
+            if(textChanged)contentChanged.push(envelope);
+          }
+          const changedListings = options.noEnrich || !contentChanged.length
+            ? contentChanged.map((envelope) => envelope.listing)
+            : await enrichListingsWithLLM(contentChanged.map((envelope) => envelope.listing));
+          const enrichedByUrl = new Map(changedListings.map((listing) => [listing.source_url ?? listing.url ?? '', listing]));
+          const shadowEnvelopes = envelopes.map((envelope) => {
+            const url=envelope.listing.source_url??envelope.listing.url??'';
+            const state=states.get(url);
+            const enriched=enrichedByUrl.get(url);
+            const classification=state?.contentChanged
+              ? options.noEnrich ? 'UNCLASSIFIED' : enriched ? 'HOUSING_SUPPLY' : 'IRRELEVANT'
+              : state?.classification ?? 'UNCLASSIFIED';
+            return {...envelope,classification,listing:enriched??envelope.listing};
+          });
+          const shadowAdapter = new Khmer24LiveAdapter(async function* () { yield* shadowEnvelopes; });
+          const result = await container.ingestionService.ingestBatch(shadowAdapter, {
+            runType: 'DISCOVERY', ingestionMethod: 'KHMER24_SCRAPER', parserVersion: 'live-shadow-v1',
+          });
+          totalInserted += result.newSourceItems;
+          totalDuplicates += result.unchangedSourceItems;
+          totalErrors += result.errors.length;
+          console.log(`  🌘 Shadow ingestion [${target.name}]: received=${result.inputItems}, new=${result.newSourceItems}, changed=${result.updatedSourceItems}, unchanged=${result.unchangedSourceItems}, errors=${result.errors.length}`);
+          continue;
+        }
         const listings = options.noEnrich ? rawListings : await enrichListingsWithLLM(rawListings);
 
         for (const listing of listings) {
@@ -848,6 +914,7 @@ export async function runKhmer24Scraper(
   } finally {
     if (browserHolder.camoufox) await browserHolder.camoufox.close().catch(() => {});
     await container.notifierService.flushNotificationQueue().catch((err) => console.error('[Notifier] Flush error:', err));
+    if (legacySnapshot) assertLegacyPropertiesUnchanged(container.db, legacySnapshot);
   }
 
   console.log('\n═══════════════════════════════════════════════════════════════');
@@ -877,6 +944,8 @@ if (require.main === module) {
       if (!isNaN(n)) options.targetIndex = n;
     } else if (arg === '--no-enrich') {
       options.noEnrich = true;
+    } else if (arg === '--shadow') {
+      options.shadowOnly = true;
     } else if (arg === '--freshness') {
       freshness = true;
     } else if (arg === '--dry-run') {
@@ -890,7 +959,7 @@ if (require.main === module) {
       options.dbPath = arg.replace('--db-path=', '');
       freshnessOptions.dbPath = options.dbPath;
     } else if (arg === '--help' || arg === '-h') {
-      console.log('Usage: ts-node src/modules/parser/khmer24.scraper.ts [--target=N] [--limit-listings=N] [--no-enrich] [--dump-raw=path.json] [--db-path=path.db] [--freshness] [--dry-run] [--freshness-limit=N]');
+      console.log('Usage: ts-node src/modules/parser/khmer24.scraper.ts [--target=N] [--limit-listings=N] [--no-enrich] [--shadow] [--dump-raw=path.json] [--db-path=path.db] [--freshness] [--dry-run] [--freshness-limit=N]');
       process.exit(0);
     }
   }

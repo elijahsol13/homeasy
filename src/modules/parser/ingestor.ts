@@ -30,6 +30,11 @@ import type { MatcherService } from '../matcher/matcher';
 import type { AlertService } from '../../services/alert.service';
 import type { CityKey, PropertyCategory } from '../../config/settings';
 import type { z } from 'zod';
+import { SourceIngestionRepository } from '../../database/repositories/source-ingestion.repo';
+import type { IngestionBatchResult, SourceAdapter, SourceRunContext } from './ingestion-contracts';
+import { extractDeterministicMetadata } from './deterministic-metadata';
+import type { RepostClusteringService } from './repost-clustering';
+import type { CanonicalShadowService } from './canonical-dedupe';
 
 type RawListing = z.infer<typeof RawListingSchema>;
 
@@ -103,6 +108,7 @@ export function normalizeRawToClean(
     .join(' ');
 
   const warnings: string[] = [];
+  const hasCanonicalFacts = typeof raw.listing_facts_json === 'string' && raw.listing_facts_json.length > 0;
   let cleanReviewStatus: 'approved' | 'pending' = raw.review_status ?? 'approved';
   let cleanReviewReason: string | null = raw.review_reason ?? null;
 
@@ -151,7 +157,7 @@ export function normalizeRawToClean(
     }
   }
 
-  if (amount === null) {
+  if (amount === null && !hasCanonicalFacts) {
     const extracted = extractPrice(extractionText);
     if (extracted) {
       amount = extracted.rawAmount;
@@ -160,7 +166,7 @@ export function normalizeRawToClean(
     }
   }
 
-  if (amount === null && raw.price_hint !== undefined && raw.price_hint > 0) {
+  if (amount === null && !hasCanonicalFacts && raw.price_hint !== undefined && raw.price_hint > 0) {
     amount = raw.price_hint;
     declaredCurrency = raw.price_hint_currency ?? 'USD';
   }
@@ -183,6 +189,8 @@ export function normalizeRawToClean(
     // price, not an actual Thai baht value. Treat it as KHR.
     if (hasThbMarker && !hasDollarSign && amount >= 1_000) {
       finalCur = 'KHR';
+    } else if (hasCanonicalFacts && (declaredCurrency === 'USD' || declaredCurrency === 'KHR')) {
+      finalCur = declaredCurrency;
     } else if (type === 'rent') {
       finalCur = amount >= 50_000 && !hasDollarSign ? 'KHR' : 'USD';
       // $10k+/mo rent is virtually always a mis-tagged sale or a currency error.
@@ -206,7 +214,7 @@ export function normalizeRawToClean(
   const normalizedRawCategory = rawCategory && validCategories.includes(rawCategory)
     ? (rawCategory as PropertyCategory)
     : null;
-  const extractedCat = extractCategory(combinedText);
+  const extractedCat = hasCanonicalFacts ? null : extractCategory(combinedText);
   let category: PropertyCategory | null = normalizedRawCategory ?? extractedCat;
   if (extractedCat === 'hotel') {
     category = 'hotel';
@@ -225,11 +233,11 @@ export function normalizeRawToClean(
   let bedrooms: number | null = null;
   if (raw.bedrooms !== undefined && raw.bedrooms !== null) {
     const n = parseInt(String(raw.bedrooms), 10);
-    bedrooms = isNaN(n) ? extractBedrooms(combinedText) : n;
+    bedrooms = isNaN(n) ? (hasCanonicalFacts ? null : extractBedrooms(combinedText)) : n;
   } else {
-    bedrooms = extractBedrooms(combinedText);
+    bedrooms = hasCanonicalFacts ? null : extractBedrooms(combinedText);
   }
-  if (bedrooms === null && (category === 'room' || category === 'hotel')) {
+  if (!hasCanonicalFacts && bedrooms === null && (category === 'room' || category === 'hotel')) {
     bedrooms = 1;
   }
 
@@ -237,9 +245,9 @@ export function normalizeRawToClean(
   let bathrooms: number | null = null;
   if (raw.bathrooms !== undefined && raw.bathrooms !== null) {
     const n = parseInt(String(raw.bathrooms), 10);
-    bathrooms = isNaN(n) ? extractBathrooms(combinedText) : n;
+    bathrooms = isNaN(n) ? (hasCanonicalFacts ? null : extractBathrooms(combinedText)) : n;
   } else {
-    bathrooms = extractBathrooms(combinedText);
+    bathrooms = hasCanonicalFacts ? null : extractBathrooms(combinedText);
   }
 
   // ── Location & city ────────────────────────────────────────────────────────
@@ -259,7 +267,7 @@ export function normalizeRawToClean(
   // If well-known landmarks in the text all point to a different city than the
   // scraped page assumed, trust the landmarks (e.g. "near Pochentong Airport" on
   // a Siem Reap browse page).
-  const inferredCity = inferCityFromLandmarks(combinedText);
+  const inferredCity = hasCanonicalFacts ? null : inferCityFromLandmarks(combinedText);
   if (inferredCity && inferredCity !== city) {
     city = inferredCity;
     warnings.push(`city_inferred_from_landmark:${inferredCity}`);
@@ -284,7 +292,7 @@ export function normalizeRawToClean(
   // group are both single-city, assigned at scrape time), restrict the district search to
   // that city only. Otherwise post text mentioning the OTHER city for marketing/comparison
   // purposes (e.g. "cheaper than BKK1") can silently flip the listing into the wrong city tab.
-  const extracted = extractLocation(locationSearch, detectedCity ?? undefined);
+  const extracted = hasCanonicalFacts ? null : extractLocation(locationSearch, detectedCity ?? undefined);
 
   if (extracted) {
     location = extracted.location;
@@ -312,7 +320,7 @@ export function normalizeRawToClean(
   // If the location is still empty or just the generic city name, try to map a
   // known physical landmark mention to its canonical sangkat.
   const genericCityName = /^(siem\s*reap|phnom\s*penh|sihanoukville|kampot)$/i;
-  if ((!location || genericCityName.test(location.trim())) && city === 'siem_reap') {
+  if (!hasCanonicalFacts && (!location || genericCityName.test(location.trim())) && city === 'siem_reap') {
     const inferred = inferLocationFromLandmark(combinedText, city);
     if (inferred) {
       location = inferred.canonicalName;
@@ -346,7 +354,7 @@ export function normalizeRawToClean(
   }
   // Deposit expressed as "N months" must be kept separate from a dollar amount and
   // only converted when the monthly rent is known. Never treat `deposit_months: 1` as $1.
-  if (deposit === null && raw.deposit_months !== undefined && raw.deposit_months !== null) {
+  if (!hasCanonicalFacts && deposit === null && raw.deposit_months !== undefined && raw.deposit_months !== null) {
     const months = parseInt(String(raw.deposit_months), 10);
     if (!isNaN(months) && months > 0 && months <= 12) {
       if (priceCents > 0) {
@@ -356,7 +364,7 @@ export function normalizeRawToClean(
       }
     }
   }
-  if (deposit === null) {
+  if (deposit === null && !hasCanonicalFacts) {
     deposit = extractDeposit(combinedText, priceCents);
   }
 
@@ -365,7 +373,7 @@ export function normalizeRawToClean(
     const n = parseInt(String(raw.min_lease), 10);
     minLease = isNaN(n) ? null : n;
   } else {
-    minLease = extractMinLease(combinedText);
+    minLease = hasCanonicalFacts ? null : extractMinLease(combinedText);
   }
 
   // When the LLM is uncertain (returns null) or a weak fallback model misclassifies
@@ -392,7 +400,7 @@ export function normalizeRawToClean(
       ? true
       : raw.has_pool === false || raw.has_pool === 0 || raw.has_pool === '0' || raw.has_pool === 'false'
         ? false
-        : extractHasPool(combinedText);
+        : hasCanonicalFacts ? null : extractHasPool(combinedText);
 
   // Direct contact: phone, telegram, whatsapp with disambiguation and domestic mask
   const contacts = extractDirectContacts(combinedText, {
@@ -406,12 +414,12 @@ export function normalizeRawToClean(
 
   // ── Utilities, Restrictions, Landmarks & Pet-Friendly ──────────────────────
   // Use LLM-passed values first, fall back to regex heuristics
-  const electricity = raw.electricity ?? extractElectricity(combinedText);
-  const water = raw.water ?? extractWater(combinedText);
-  const cleaning = raw.cleaning ?? extractCleaning(combinedText);
+  const electricity = raw.electricity ?? (hasCanonicalFacts ? null : extractElectricity(combinedText));
+  const water = raw.water ?? (hasCanonicalFacts ? null : extractWater(combinedText));
+  const cleaning = raw.cleaning ?? (hasCanonicalFacts ? null : extractCleaning(combinedText));
   const restrictions = (raw.restrictions && raw.restrictions.length > 0)
     ? raw.restrictions
-    : extractRestrictions(combinedText);
+    : hasCanonicalFacts ? [] : extractRestrictions(combinedText);
   const hasPetRestriction = restrictions.includes('🚫 No Pets');
   const rawPetFriendly: boolean | null =
     raw.pet_friendly === true || raw.pet_friendly === 1 || raw.pet_friendly === '1' || raw.pet_friendly === 'true'
@@ -423,10 +431,10 @@ export function normalizeRawToClean(
     ? rawPetFriendly
     : hasPetRestriction
       ? false
-      : /\b(?:pet friendly|pets allowed)\b/i.test(combinedText)
+      : !hasCanonicalFacts && /\b(?:pet friendly|pets allowed)\b/i.test(combinedText)
         ? true
         : null;
-  const landmarkEntries = findLandmarksInText(combinedText, city);
+  const landmarkEntries = hasCanonicalFacts ? [] : findLandmarksInText(combinedText, city);
   // Physical landmarks only — marketing claims ("5 min to Pub Street") are kept
   // separate in marketing_landmarks and never feed location/matching logic.
   const landmarks = landmarkEntries.map((l) => l.canonicalName);
@@ -493,8 +501,9 @@ export function normalizeRawToClean(
     latitude,
     longitude,
     property_type: raw.property_type ?? null,
-    amenities: Array.from(new Set([...(raw.amenities ?? []), ...extractAmenities(combinedText)])),
+    amenities: Array.from(new Set([...(raw.amenities ?? []), ...(hasCanonicalFacts ? [] : extractAmenities(combinedText))])),
     raw_text: raw.raw_text ?? rawText,
+    listing_facts_json: raw.listing_facts_json ?? null,
     parse_warnings: cleanReviewStatus === 'pending' ? [...warnings, 'review_pending'] : warnings,
     review_status: cleanReviewStatus,
     review_reason: cleanReviewReason,
@@ -508,7 +517,206 @@ export class IngestionService {
     private readonly propertiesRepo: PropertiesRepository,
     private readonly matcherService: MatcherService,
     private readonly alertService?: AlertService,
+    private readonly sourceIngestionRepo?: SourceIngestionRepository,
+    private readonly repostClusteringService?: RepostClusteringService,
+    private readonly canonicalShadowService?: CanonicalShadowService,
   ) {}
+
+  /** Shadow raw ingestion path. It never calls LLMs and never writes legacy properties. */
+  async ingestBatch<T>(adapter: SourceAdapter<T>, context: SourceRunContext): Promise<IngestionBatchResult> {
+    if (!this.sourceIngestionRepo) throw new Error('SourceIngestionRepository is required for unified ingestion');
+    const repo = this.sourceIngestionRepo;
+    const result: IngestionBatchResult = {
+      inputItems: 0, processedItems: 0, newSources: 0, newSourceItems: 0,
+      updatedSourceItems: 0, unchangedSourceItems: 0, newVersions: 0,
+      errors: [], classificationCounts: {}, identifierCounts: {}, providerCounts: {}, items: [],
+      incrementalRepostItems: 0, incrementalRepostClustersCreated: 0, incrementalRepostClustersUpdated: 0,
+      incrementalCanonicalItems: 0, occurrencesAttached: 0, canonicalBindingsUpdated: 0,
+      repurposedBindingsClosed: 0, needsGlobalCanonicalMatch: 0, canonicalInconsistencies: 0,
+      globalCanonicalRuns: 0, globalCanonicalProperties: 0, globalCanonicalListings: 0,
+      dryRun: Boolean(context.dryRun),
+    };
+    const runId = context.dryRun ? undefined : repo.createRun(context.runType);
+    if (runId !== undefined) result.runId = runId;
+    const sourceIds = new Map<string, { id: number; inserted: boolean }>();
+    const newSourceKeys = new Set<string>();
+    const dryRunItems = new Map<string, string | null>();
+    const sourceCounts = new Map<string, { input: number; success: number; failed: number }>();
+    const globalCanonicalIds = new Set<number>();
+    const observedAt = context.observedAt ?? new Date().toISOString();
+
+    for await (const raw of adapter.fetchNewItems(context)) {
+      result.inputItems++;
+      let externalId: string | undefined;
+      let sourceKey = '';
+      try {
+        let item = adapter.normalize(raw);
+        externalId = item.externalId;
+        sourceKey = repo.makeSourceKey(item.sourceIdentity);
+        let didProcessChangedItem = false;
+        const priorSourceId = repo.findSourceId(sourceKey);
+        const priorState = priorSourceId === undefined ? undefined : repo.findSourceItemState(priorSourceId, item.externalId);
+        const sourceContentChanged = !priorState || priorState.contentHash !== (item.contentHash ?? null);
+        const sourceMediaChanged = !priorState || priorState.mediaHash !== (item.mediaHash ?? null);
+        if (adapter.processNewOrChanged && !context.dryRun) {
+          const sourceRegistryId = priorSourceId;
+          const existing = priorState;
+          const contentChanged = !existing || existing.contentHash !== (item.contentHash ?? null);
+          const mediaChanged = !existing || existing.mediaHash !== (item.mediaHash ?? null);
+          const needsRetry = Boolean(existing && (existing.classification === 'UNCLASSIFIED' || existing.classification == null));
+          if (existing && !contentChanged && mediaChanged) {
+            let previous: unknown = {};
+            try { previous = JSON.parse(existing.rawPayloadJson || '{}'); } catch { /* keep incoming payload */ }
+            if (previous && typeof previous === 'object' && item.raw && typeof item.raw === 'object') {
+              item = { ...item, raw: { ...(previous as Record<string, unknown>), ...(item.raw as Record<string, unknown>) } as T };
+            }
+          } else if (contentChanged || needsRetry) {
+            const status = !existing ? 'new' : needsRetry && !contentChanged ? 'retry' : 'changed';
+            item = await adapter.processNewOrChanged(raw, item, { status, contentChanged, mediaChanged, run: context });
+            didProcessChangedItem = true;
+          }
+        }
+        const identifiers = extractDeterministicMetadata(item.rawText ?? '', {
+          phoneNumbers: item.deterministicIdentifiers?.filter((entry) => entry.type === 'PHONE').map((entry) => entry.rawValue ?? '').filter(Boolean),
+          mapsUrls: item.deterministicIdentifiers?.filter((entry) => entry.type === 'MAPS_URL').map((entry) => entry.rawValue ?? '').filter(Boolean),
+          telegramLinks: item.deterministicIdentifiers?.filter((entry) => entry.type === 'TELEGRAM').map((entry) => entry.rawValue ?? '').filter(Boolean),
+        });
+        const classification = item.classification ?? 'UNCLASSIFIED';
+        result.classificationCounts[classification] = (result.classificationCounts[classification] ?? 0) + 1;
+        for (const identifier of identifiers) {
+          result.identifierCounts[identifier.type] = (result.identifierCounts[identifier.type] ?? 0) + 1;
+        }
+        const existingSourceId = repo.findSourceId(sourceKey);
+        const source = sourceIds.get(sourceKey) ?? {
+          id: existingSourceId ?? 0,
+          inserted: existingSourceId === undefined,
+        };
+        const sourceItemInput = {
+          sourceType: item.sourceIdentity.sourceType,
+          externalId: item.externalId,
+          canonicalUrl: item.canonicalUrl,
+          sourceUrl: item.sourceUrl,
+          groupId: item.groupId,
+          groupName: item.groupName,
+          authorExternalId: item.authorExternalId,
+          authorName: item.authorName,
+          authorUrl: item.authorUrl,
+          rawText: item.rawText,
+          rawPayload: item.raw,
+          contentHash: item.contentHash,
+          mediaHash: item.mediaHash,
+          publishedAt: item.publishedAt,
+          classification,
+          parserVersion: context.parserVersion,
+          processingRunId: runId,
+        };
+
+        if (context.dryRun) {
+          sourceIds.set(sourceKey, source);
+          const itemKey = `${sourceKey}\u0000${item.externalId}`;
+          const incomingHash = item.contentHash ?? null;
+          const priorDryRunHash = dryRunItems.get(itemKey);
+          const preview = priorDryRunHash !== undefined
+            ? (priorDryRunHash === incomingHash ? 'unchanged' : 'updated')
+            : repo.previewSourceItem(source.id, item.externalId, incomingHash, item.mediaHash);
+          dryRunItems.set(itemKey, incomingHash);
+          if (preview === 'new') result.newSourceItems++;
+          else if (preview === 'updated') result.updatedSourceItems++;
+          else result.unchangedSourceItems++;
+          if (preview !== 'unchanged' && !adapter.processNewOrChanged) for (const aiResult of item.aiResults ?? []) {
+            const label = `${aiResult.provider ?? 'unknown'}/${aiResult.model ?? 'unknown'}`;
+            result.providerCounts[label] = (result.providerCounts[label] ?? 0) + 1;
+          }
+          result.newVersions += Number(preview !== 'unchanged');
+          result.items.push({ externalId: item.externalId, sourceKey, status: preview });
+          if (source.inserted) newSourceKeys.add(sourceKey);
+          continue;
+        }
+
+        const outcome = repo.transaction(() => {
+          const resolvedSource = repo.upsertSourceDetailed(item.sourceIdentity);
+          sourceIds.set(sourceKey, resolvedSource);
+          const upsert = repo.upsertSourceItemDetailed(resolvedSource.id, sourceItemInput, observedAt);
+          repo.replaceIdentifiers(upsert.id, identifiers);
+          repo.recordNaturalRediscovery(upsert.id, observedAt);
+          if (sourceContentChanged && item.rawText) repo.recordExplicitAvailabilityEdit(upsert.id, item.rawText, observedAt);
+          if (upsert.newVersion || didProcessChangedItem) for (const aiResult of item.aiResults ?? []) {
+            const label = `${aiResult.provider ?? 'unknown'}/${aiResult.model ?? 'unknown'}`;
+            result.providerCounts[label] = (result.providerCounts[label] ?? 0) + 1;
+            if (runId !== undefined) repo.recordAiResult(runId, { sourceItemId: upsert.id, ...aiResult });
+          }
+          return { upsert, source: resolvedSource };
+        });
+        sourceIds.set(sourceKey, outcome.source);
+        const eligibleForRepost = classification === 'HOUSING_SUPPLY' || classification === 'HOUSING_DEMAND';
+        const hadRepostAssignment = repo.hasRepostAssignment(outcome.upsert.id);
+        if (this.repostClusteringService && ((sourceContentChanged && (eligibleForRepost || hadRepostAssignment))
+          || (eligibleForRepost && !hadRepostAssignment))) {
+          const repost = this.repostClusteringService.runIncremental('repost-v1', [outcome.upsert.id]);
+          result.incrementalRepostItems++;
+          result.incrementalRepostClustersCreated += repost.clustersCreated;
+          result.incrementalRepostClustersUpdated += repost.clustersUpdated;
+        }
+        const hasCurrentBinding = repo.hasCurrentCanonicalBinding(outcome.upsert.id,item.contentHash??null,item.mediaHash??null);
+        if (this.canonicalShadowService && (sourceContentChanged || sourceMediaChanged || (eligibleForRepost && !hasCurrentBinding))) {
+          const canonical = this.canonicalShadowService.reconcileBoundSourceItems([outcome.upsert.id], observedAt);
+          result.incrementalCanonicalItems += canonical.processed;
+          result.occurrencesAttached += canonical.occurrencesAttached;
+          result.canonicalBindingsUpdated += canonical.bindingsUpdated;
+          result.repurposedBindingsClosed += canonical.repurposed;
+          result.needsGlobalCanonicalMatch += canonical.needsGlobalMatch;
+          result.canonicalInconsistencies += canonical.inconsistencies.length;
+          if (canonical.needsGlobalMatch > 0 && canonical.inconsistencies.length === 0) globalCanonicalIds.add(outcome.upsert.id);
+        }
+        if (outcome.source.inserted) newSourceKeys.add(sourceKey);
+        const counts = sourceCounts.get(sourceKey) ?? { input: 0, success: 0, failed: 0 };
+        counts.input++;
+        counts.success++;
+        sourceCounts.set(sourceKey, counts);
+        result.processedItems++;
+        result.newVersions += Number(outcome.upsert.newVersion);
+        if (outcome.upsert.inserted) result.newSourceItems++;
+        else if (outcome.upsert.updated) result.updatedSourceItems++;
+        else result.unchangedSourceItems++;
+        result.items.push({ externalId: item.externalId, sourceKey,
+          status: outcome.upsert.inserted ? 'new' : outcome.upsert.updated ? 'updated' : 'unchanged' });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        result.errors.push({ externalId, message });
+        if (sourceKey) {
+          const counts = sourceCounts.get(sourceKey) ?? { input: 0, success: 0, failed: 0 };
+          counts.input++;
+          counts.failed++;
+          sourceCounts.set(sourceKey, counts);
+        }
+        result.items.push({ externalId: externalId ?? 'unknown', sourceKey, status: 'error' });
+      }
+    }
+
+    if (this.canonicalShadowService && globalCanonicalIds.size > 0) {
+      const canonical = this.canonicalShadowService.run({ dryRun: false });
+      result.globalCanonicalRuns++;
+      result.globalCanonicalProperties = canonical.canonicalProperties;
+      result.globalCanonicalListings = canonical.canonicalListings;
+    }
+    result.newSources = newSourceKeys.size;
+    if (runId !== undefined) {
+      for (const [sourceKey, source] of sourceIds) {
+        const counts = sourceCounts.get(sourceKey) ?? { input: 0, success: 0, failed: 0 };
+        repo.addRunSourceCounts(runId, source.id, context.ingestionMethod, counts);
+      }
+      repo.finishRun(runId, { input: result.inputItems, processed: result.processedItems,
+        success: result.processedItems, failed: result.errors.length });
+      const liveProvider = context.runType === 'DISCOVERY'
+        ? context.ingestionMethod === 'BRIGHTDATA' ? 'BRIGHTDATA'
+          : context.ingestionMethod === 'KHMER24_SCRAPER' ? 'KHMER24' : null
+        : null;
+      if (liveProvider) repo.recordProviderUsage({ provider: liveProvider, operation: 'DISCOVERY',
+        requestedItems: result.inputItems, returnedItems: result.processedItems, failedItems: result.errors.length,
+        records: result.inputItems, processingRunId: runId });
+    }
+    return result;
+  }
 
   /**
    * Main ingest pipeline:
@@ -586,6 +794,7 @@ export class IngestionService {
         marketing_landmarks: clean.marketing_landmarks,
         description: clean.description,
         raw_text: clean.raw_text ?? undefined,
+        listing_facts_json: clean.listing_facts_json,
         parse_warnings: clean.parse_warnings,
       });
       console.log(`  ✨ [Smart Merge] Re-scraped source matched listing #${existingBySource.id} — merged updates`);
@@ -616,6 +825,7 @@ export class IngestionService {
           marketing_landmarks: clean.marketing_landmarks,
           description: clean.description,
           raw_text: clean.raw_text ?? undefined,
+          listing_facts_json: clean.listing_facts_json,
           parse_warnings: clean.parse_warnings,
         });
         console.log(`  ✨ [Smart Merge] Bumped & enriched canonical listing #${dedupResult.duplicateOfId}`);
@@ -653,6 +863,7 @@ export class IngestionService {
         marketing_landmarks: clean.marketing_landmarks,
         description: clean.description,
         raw_text: clean.raw_text ?? undefined,
+        listing_facts_json: clean.listing_facts_json,
         parse_warnings: clean.parse_warnings,
       });
       console.log(`  ✨ [Smart Merge] Bumped & enriched canonical listing #${existingByHash.id}`);

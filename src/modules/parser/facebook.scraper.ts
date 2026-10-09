@@ -275,9 +275,13 @@ export async function parseFacebookPostText(
 
   // 1. Try LLM extraction (use precomputed from batch or call single LLM)
   const llm = precomputedLlm !== undefined ? precomputedLlm : await extractListingWithLLM(text);
-  const reviewStatus: 'approved' | 'pending' = llm?.is_real_estate === true ? 'approved' : 'pending';
+  const canonicalFacts = llm?.canonical_facts;
+  const reviewStatus: 'approved' | 'pending' = llm?.is_real_estate === true &&
+    (!canonicalFacts || (canonicalFacts.price !== null && canonicalFacts.currency !== null)) ? 'approved' : 'pending';
   const reviewReason = reviewStatus === 'pending'
-    ? llm?.admission_reason || 'LLM admission decision missing or uncertain'
+    ? (canonicalFacts && (canonicalFacts.price === null || canonicalFacts.currency === null)
+      ? 'Monthly rent or currency unknown'
+      : llm?.admission_reason || 'LLM admission decision missing or uncertain')
     : undefined;
 
   // Ingestion Gateway Filter:
@@ -305,23 +309,23 @@ export async function parseFacebookPostText(
   // 2. Extract values combining LLM results with heuristic fallbacks
   const priceResult = extractPrice(text);
   const priceInDollars =
-    llm?.price != null ? llm.price : priceResult ? priceResult.amountCents / 100 : undefined;
+    llm?.price != null ? llm.price : canonicalFacts ? undefined : priceResult ? priceResult.amountCents / 100 : undefined;
   const currency = llm?.currency ?? priceResult?.currency ?? 'USD';
 
   const bedrooms =
     llm?.bedrooms !== undefined && llm.bedrooms !== null
       ? llm.bedrooms
-      : extractBedrooms(text) ?? undefined;
+      : canonicalFacts ? undefined : extractBedrooms(text) ?? undefined;
   const bathrooms =
     llm?.bathrooms !== undefined && llm.bathrooms !== null
       ? llm.bathrooms
-      : extractBathrooms(text) ?? undefined;
+      : canonicalFacts ? undefined : extractBathrooms(text) ?? undefined;
 
   let category: PropertyCategory = target.defaultCategory ?? 'house';
   if (llm?.category && ['apartment', 'house', 'room', 'hotel'].includes(llm.category)) {
     category = llm.category as PropertyCategory;
   } else {
-    const heuristicCat = extractCategory(text);
+    const heuristicCat = canonicalFacts ? null : extractCategory(text);
     if (heuristicCat) category = heuristicCat;
   }
 
@@ -330,15 +334,16 @@ export async function parseFacebookPostText(
   // field or the group's default category. Whenever we know the property_type,
   // derive `category` from it so self-contained studios/condos/apartments never
   // end up bucketed as "room" (and vice-versa).
-  const propertyType = llm?.property_type ?? extractPropertyType(text, category) ?? undefined;
+  const propertyType = llm?.property_type ?? (canonicalFacts ? undefined : extractPropertyType(text, category)) ?? undefined;
   const derivedCategory = categoryFromPropertyType(propertyType);
   if (derivedCategory) category = derivedCategory;
 
-  const hasPool = llm?.has_pool != null ? llm.has_pool : extractHasPool(text);
-  const minLease = llm?.min_lease ?? extractMinLease(text) ?? undefined;
+  const hasPool = llm?.has_pool != null ? llm.has_pool : canonicalFacts ? null : extractHasPool(text);
+  const minLease = llm?.min_lease ?? (canonicalFacts ? undefined : extractMinLease(text)) ?? undefined;
   const depositCents = extractDeposit(text, priceResult?.amountCents);
   const depositInDollars =
     llm?.deposit_amount != null ? llm.deposit_amount
+    : canonicalFacts ? undefined
     : llm?.deposit_months != null && priceInDollars != null
       ? llm.deposit_months * priceInDollars
       : depositCents ? depositCents / 100 : undefined;
@@ -348,7 +353,7 @@ export async function parseFacebookPostText(
   // RESTRICTED to that city — it does a dumb substring search over the whole
   // text and would happily match a marketing comparison like "cheaper than
   // BKK1" or "closer than Phnom Penh", flipping the city on a false signal.
-  const locationResult = extractLocation(text, target.city);
+  const locationResult = canonicalFacts ? null : extractLocation(text, target.city);
   const location = llm?.location || locationResult?.location || undefined;
   let city = target.city;
 
@@ -409,7 +414,7 @@ export async function parseFacebookPostText(
     price: priceInDollars,
     currency,
     type,
-    category,
+    category: canonicalFacts ? llm?.category ?? undefined : category,
     bedrooms,
     bathrooms,
     deposit: depositInDollars,
@@ -440,6 +445,9 @@ export async function parseFacebookPostText(
     commerce_location: commerce?.locationText || undefined,
     review_status: reviewStatus,
     review_reason: reviewReason,
+    is_real_estate: llm?.is_real_estate,
+    deposit_months: canonicalFacts?.deposit_months ?? undefined,
+    listing_facts_json: canonicalFacts ? JSON.stringify(canonicalFacts) : undefined,
   };
 }
 
@@ -983,6 +991,27 @@ export async function scrapeFacebookGroup(
     // permalink fetch (fetchPostTextAnonymous), which Facebook login-walls.
     // One scrolled page load yields complete posts straight from GraphQL.
     const intercepted = await collectGroupFeedPosts(context, target, maxScrolls);
+
+    // Free freshness signal: a post still present in the group feed proves the
+    // source is alive — mark it verified so the permalink re-check queue and
+    // the freshness sweep don't waste navigations on it. Absence from the feed
+    // is NOT treated as death (only ~1 page is scrolled per cycle).
+    let feedVerified = 0;
+    for (const post of intercepted) {
+        const idMatch = (post.postUrl || '').match(/(?:posts|permalink)\/(\d+)/);
+        const cleaned = cleanFacebookUrl(post.postUrl);
+        const existing =
+            (idMatch ? container.propertiesRepo.findByPostId(idMatch[1]!) : undefined) ??
+            (cleaned ? container.propertiesRepo.findBySourceUrl(cleaned) : undefined);
+        if (existing && existing.is_active === 1) {
+            container.propertiesRepo.markVerified(existing.id);
+            feedVerified++;
+        }
+    }
+    if (feedVerified > 0) {
+        console.log(`   ✅ ${feedVerified} stored listings re-confirmed alive via feed presence.`);
+    }
+
     const fresh = intercepted.filter(
         (p) => !state.recentPostIds.includes(p.id ?? p.postUrl ?? ''),
     );
@@ -1268,6 +1297,167 @@ export async function reparseFacebookViaGroupFeed(
   return { totalChecked, totalUpdated, totalInserted, errors };
 }
 
+// ─── Facebook Freshness Sweep ────────────────────────────────────────────────
+// Re-checks stored Facebook posts via an authenticated Camoufox session and
+// deactivates ones whose permalink is gone. Needed because the anonymous
+// permalink worker (fb-worker.ts) cannot see inside private/login-gated
+// groups — those posts would stay "alive" forever in the smart verify queue.
+// Conservative by design: only explicit tombstone markers deactivate a
+// listing; anything ambiguous stays active.
+
+const FB_DEAD_MARKERS = [
+    /this content isn'?t available/i,
+    /the link you followed may (be broken|have expired)/i,
+    /this page isn'?t available/i,
+    /page not found/i,
+    /content isn'?t available right now/i,
+];
+
+export interface FbFreshnessSweepOptions {
+    dryRun?: boolean;
+    limit?: number;
+}
+
+export async function runFacebookFreshnessSweep(
+    containerInstance?: AppContainer,
+    options: FbFreshnessSweepOptions = {},
+): Promise<{ checked: number; alive: number; dead: number; unknown: number; errors: number }> {
+    const container = containerInstance ?? createContainer();
+    runMigrations(container.db);
+
+    console.log('═══════════════════════════════════════════════════════════════');
+    console.log(`🧹 Facebook Freshness Sweep — authenticated permalink re-check${options.dryRun ? ' (DRY RUN)' : ''}`);
+    console.log('═══════════════════════════════════════════════════════════════');
+
+    const safetyState = loadFacebookSafetyState();
+    if (safetyState.status === 'blocked') {
+        console.warn(`⛔ Facebook automation is safety-locked: ${safetyState.reason ?? 'manual login required'}`);
+        return { checked: 0, alive: 0, dead: 0, unknown: 0, errors: 0 };
+    }
+    if (!fs.existsSync(FB_SESSION_PATH)) {
+        console.error('❌ Cannot run Facebook freshness sweep without active data/fb_session.json.');
+        return { checked: 0, alive: 0, dead: 0, unknown: 0, errors: 1 };
+    }
+
+    // Only check listings that are actually due by the smart-queue cadence
+    // (fresh ≤7d → 12h · mid ≤30d → 72h · old >30d → 7d).
+    const due = container.propertiesRepo
+        .findDueForVerification(options.limit ?? 50)
+        .filter((p) => (p.original_url || p.source_url || '').includes('facebook.com'));
+    const targets = options.limit ? due.slice(0, options.limit) : due;
+    console.log(`📦 ${targets.length} Facebook listings due for verification.`);
+    if (targets.length === 0) {
+        return { checked: 0, alive: 0, dead: 0, unknown: 0, errors: 0 };
+    }
+
+    const useProxy = process.argv.includes('--proxy') || env.FB_PROXY_ENABLED;
+    const proxyResult = parseProxyConfig(useProxy ? env.FB_PROXY : undefined);
+    if (useProxy && !proxyResult) throw new Error('Facebook proxy was explicitly enabled but FB_PROXY is missing or invalid.');
+    console.log(proxyResult ? `🌐 Proxy enabled: ${proxyResult.masked}` : '🏠 Direct connection enabled.');
+
+    let checked = 0;
+    let alive = 0;
+    let dead = 0;
+    let unknown = 0;
+    let errors = 0;
+    let sessionSafe = true;
+
+    const releaseLock = acquireFacebookRuntimeLock('scrape');
+    let camoufox: CamoufoxBrowser;
+    let context: BrowserContext;
+    try {
+        camoufox = await launchCamoufox({
+            headless: true,
+            proxyUrl: useProxy ? env.FB_PROXY : undefined,
+        });
+        try {
+            context = await camoufox.browser.newContext({ storageState: FB_SESSION_PATH });
+        } catch (error) {
+            await camoufox.close().catch(() => {});
+            throw error;
+        }
+    } catch (error) {
+        releaseLock();
+        throw error;
+    }
+
+    try {
+        const accountId = await getAuthenticatedFacebookAccountId(context);
+        if (!accountId) {
+            throw new FacebookSessionExpiredError('Facebook session is missing required authenticated cookies');
+        }
+
+        for (const prop of targets) {
+            const rawUrl = prop.original_url || prop.source_url;
+            if (!rawUrl) {
+                container.propertiesRepo.markVerified(prop.id);
+                continue;
+            }
+            const url = cleanFacebookUrl(rawUrl);
+            const page = await context.newPage();
+            try {
+                await attachTrafficGuard(page);
+                await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 45_000 });
+                await sleepRandom(1500, 3000);
+
+                const challenge = await detectFacebookChallenge(page);
+                if (challenge) {
+                    throw new FacebookSessionExpiredError(`${challenge}: ${page.url()}`);
+                }
+
+                const bodyText = await page.locator('body').innerText({ timeout: 5000 }).catch(() => '');
+                checked++;
+
+                if (FB_DEAD_MARKERS.some((re) => re.test(bodyText))) {
+                    dead++;
+                    console.log(`  🪦 #${prop.id} "${prop.title.slice(0, 45)}" — post tombstone`);
+                    if (!options.dryRun) container.propertiesRepo.deactivateProperty(prop.id);
+                } else if (bodyText.trim().length > 200) {
+                    alive++;
+                    container.propertiesRepo.markVerified(prop.id);
+                } else {
+                    unknown++;
+                    console.log(`  ❓ #${prop.id} "${prop.title.slice(0, 45)}" — inconclusive page, kept active`);
+                }
+            } catch (err) {
+                if (err instanceof FacebookSessionExpiredError) throw err;
+                errors++;
+                console.warn(`  ⚠️ #${prop.id} check failed: ${err instanceof Error ? err.message : err}`);
+            } finally {
+                await page.close().catch(() => {});
+            }
+
+            await sleepRandom(8000, 18000);
+        }
+    } catch (error) {
+        if (error instanceof FacebookSessionExpiredError) {
+            sessionSafe = false;
+            blockFacebookAutomation({ reason: error.message, detectedUrl: context.pages().at(-1)?.url() });
+        }
+        throw error;
+    } finally {
+        if (sessionSafe) await context.storageState({ path: FB_SESSION_PATH }).catch(() => {});
+        await context.close().catch(() => {});
+        await camoufox.close().catch(() => {});
+        releaseLock();
+    }
+
+    console.log('\n📊 Facebook freshness summary:');
+    console.log(`   Checked  : ${checked}`);
+    console.log(`   ✅ Alive   : ${alive}`);
+    console.log(`   🪦 Dead    : ${dead}${options.dryRun ? ' (dry run — nothing deactivated)' : ' → deactivated'}`);
+    console.log(`   ❓ Unknown : ${unknown}`);
+    console.log(`   ⚠️ Errors  : ${errors}`);
+
+    if (!options.dryRun && (dead > 0 || errors > 0)) {
+        await container.alertService.info(
+            `🧹 <b>Facebook Freshness Sweep:</b> ${checked} checked — ${dead} dead deactivated, ${alive} alive, ${unknown} inconclusive, ${errors} errors.`,
+        );
+    }
+
+    return { checked, alive, dead, unknown, errors };
+}
+
 // ─── Main Runner ──────────────────────────────────────────────────────────────
 
 export async function runFacebookScraper(
@@ -1463,12 +1653,22 @@ export async function runFacebookScraper(
 
 if (require.main === module) {
   const smokeMode = process.argv.includes('--smoke');
+  const freshnessMode = process.argv.includes('--freshness');
   const groupArg = process.argv.find((arg) => arg.startsWith('--group='));
   const groupIndex = Math.max(0, Number.parseInt(groupArg?.split('=')[1] ?? '0', 10) || 0);
   const options = smokeMode
     ? { targets: FB_GROUP_TARGETS[groupIndex] ? [FB_GROUP_TARGETS[groupIndex]] : [FB_GROUP_TARGETS[0]!], maxScrollsPerGroup: 1 }
     : undefined;
-  runFacebookScraper(undefined, options)
+  const runner = freshnessMode
+    ? runFacebookFreshnessSweep(undefined, {
+        dryRun: process.argv.includes('--dry-run'),
+        limit: Number.parseInt(
+          process.argv.find((a) => a.startsWith('--freshness-limit='))?.split('=')[1] ?? '',
+          10,
+        ) || undefined,
+      }).then(() => undefined)
+    : runFacebookScraper(undefined, options);
+  runner
     .then(() => process.exit(0))
     .catch((err) => {
       console.error('💥 Fatal:', err);
