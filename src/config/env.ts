@@ -21,15 +21,27 @@ const EnvSchema = z.object({
         .map(Number),
     ),
 
-  OPENAI_API_KEY: z.string().optional(),
   GEMINI_API_KEY: z.string().optional(),
   DATABASE_PATH: z.string().default('./data/homeasy.db'),
+  SHADOW_INGESTION: z.enum(['true', 'false']).default('false').transform((value) => value === 'true'),
+  LISTING_READ_PATH: z.enum(['legacy', 'canonical']).default('legacy'),
+  LISTING_READ_SHADOW: z.enum(['true', 'false']).default('false').transform((value) => value === 'true'),
+  /** Comma-separated Telegram IDs served canonical reads while global path remains legacy. */
+  CANONICAL_READ_CANARY_TELEGRAM_IDS: z.string().default('').transform((value) =>
+    value.split(',').map((id) => id.trim()).filter(Boolean),
+  ).pipe(z.array(z.coerce.number().int().positive().safe())),
   NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
   LOG_LEVEL: z.enum(['debug', 'info', 'warn', 'error']).default('info'),
   API_PORT: z.coerce.number().default(3000),
   API_HOST: z.string().default('0.0.0.0'),
   API_PUBLIC_URL: z.string().optional(),
+  /** Public base URL used when minting /r/<slug> tracking links. Falls back to API_PUBLIC_URL. */
+  TRACKING_PUBLIC_URL: z.string().optional(),
   WEBAPP_URL: z.string().optional(),
+  /** Full Telegram deep-link base, e.g. "https://t.me/<bot>/<app>". Used by the /r/ tracking gateway. */
+  TELEGRAM_MINIAPP_URL: z.string().optional(),
+  /** Bot username without @, used as a fallback deep-link base if TELEGRAM_MINIAPP_URL is not set. */
+  TELEGRAM_BOT_USERNAME: z.string().optional(),
   FB_PROXY: z.string().optional(),
   FB_PROXY_ENABLED: z
     .enum(['true', 'false'])
@@ -37,6 +49,17 @@ const EnvSchema = z.object({
     .transform((value) => value === 'true'),
   POSTHOG_API_KEY: z.string().optional(),
   POSTHOG_HOST: z.string().default('https://eu.i.posthog.com'),
+  BRIGHTDATA_API_KEY: z.string().optional(),
+  GROQ_API_KEY: z.string().optional(),
+  CLOUDFLARE_API_KEY: z.string().optional(),
+  CLOUDFLARE_ACCOUNT_ID: z.string().optional(),
+  CLOUDFLARE_ACC_ID: z.string().optional(),
+  /**
+   * Telegram update delivery mode. 'polling' is the default and recommended for
+   * home/mini-PC deployments because it depends only on outbound connectivity.
+   * 'webhook' lets the API receive updates at TELEGRAM_WEBHOOK_URL.
+   */
+  BOT_DELIVERY_MODE: z.enum(['polling', 'webhook']).default('polling'),
   TELEGRAM_WEBHOOK_URL: z.string().optional(),
   TELEGRAM_WEBHOOK_SECRET: z.string().optional(),
   SCRAPER_CYCLE_PAUSE_MINUTES: z.coerce.number().default(110),

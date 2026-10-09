@@ -5,6 +5,8 @@ import { runMigrations } from '../src/database/migrate';
 import { validateTelegramInitData } from '../src/modules/api/auth';
 import { env } from '../src/config/env';
 import { buildApiServer } from '../src/modules/api/server';
+import { SourceIngestionRepository } from '../src/database/repositories/source-ingestion.repo';
+import { CanonicalShadowService } from '../src/modules/parser/canonical-dedupe';
 import type { FastifyInstance } from 'fastify';
 
 /**
@@ -273,6 +275,89 @@ describe('Telegram Mini App (TMA) Backend API', () => {
   // ─── 4. Single Property Detail Endpoint ───────────────────────────────────────
 
   describe('GET /api/v1/properties/:id', () => {
+    it('uses canonical list, map, detail, and favorites for an allowlisted user only', async () => {
+      const priorPath = env.LISTING_READ_PATH;
+      const priorCanaries = env.CANONICAL_READ_CANARY_TELEGRAM_IDS;
+      const canaryId = 1122334455;
+      try {
+        const sourceRepo = new SourceIngestionRepository(db);
+        const source = sourceRepo.upsertSource({ sourceType: 'FACEBOOK_GROUP', externalSourceId: 'api-canary-fixture', name: 'API canary fixture' });
+        const itemId = sourceRepo.upsertSourceItemDetailed(source, {
+          sourceType: 'FACEBOOK_GROUP', externalId: 'api-canary-approved', rawText: 'Apartment for rent in Wat Bo $300/month. WhatsApp +85512345678',
+          sourceUrl: 'https://facebook.com/groups/api-fixture/posts/canary', contentHash: 'api-canary-approved', classification: 'HOUSING_SUPPLY',
+          rawPayload: { listingExtraction: { title_en: 'Canary apartment in Wat Bo', description_en: 'Apartment for rent in Wat Bo, Siem Reap', price: 300, currency: 'USD', category: 'apartment', property_type: 'Apartment', bedrooms: 1, city: 'siem_reap', sangkat: 'Wat Bo', offer_type: 'rent', latitude: 13.36, longitude: 103.86 }, photos: [] },
+        }).id;
+        new CanonicalShadowService(db).run({ dryRun: false });
+        const listing = db.prepare(`SELECT l.id,l.public_ref FROM canonical_listings l JOIN canonical_listing_source_occurrences o ON o.listing_id=l.id
+          WHERE o.source_item_id=? AND o.is_current=1`).get(itemId) as { id: number; public_ref: string };
+        db.prepare("UPDATE canonical_listing_moderation SET review_status='approved' WHERE listing_id=?").run(listing.id);
+        env.LISTING_READ_PATH = 'legacy';
+        env.CANONICAL_READ_CANARY_TELEGRAM_IDS = [canaryId];
+
+        const headers = { 'X-Dev-Telegram-Id': String(canaryId) };
+        const canaryList = await app.inject({ method: 'GET', url: '/api/v1/properties?query=Canary', headers });
+        if (canaryList.statusCode !== 200) throw new Error(canaryList.body);
+        expect(canaryList.statusCode).toBe(200);
+        expect(canaryList.json().items.some((item: { publicRef: string }) => item.publicRef === listing.public_ref)).toBe(true);
+
+        const map = await app.inject({ method: 'GET', url: '/api/v1/properties/map', headers });
+        expect(map.json().markers.some((marker: { publicRef?: string }) => marker.publicRef === listing.public_ref)).toBe(true);
+
+        const detail = await app.inject({ method: 'GET', url: `/api/v1/properties/${listing.public_ref}`, headers });
+        expect(detail.statusCode).toBe(200);
+        expect(detail.json().publicRef).toBe(listing.public_ref);
+
+        const toggle = await app.inject({ method: 'POST', url: '/api/v1/favorites/toggle', headers, payload: { publicRef: listing.public_ref } });
+        expect(toggle.statusCode).toBe(200);
+        const favorites = await app.inject({ method: 'GET', url: '/api/v1/favorites', headers });
+        expect(favorites.json().items.some((item: { publicRef: string }) => item.publicRef === listing.public_ref)).toBe(true);
+
+        db.prepare("UPDATE canonical_listing_moderation SET review_status='pending' WHERE listing_id=?").run(listing.id);
+        const hiddenList = await app.inject({ method: 'GET', url: '/api/v1/properties?query=Canary', headers });
+        expect(hiddenList.json().items.some((item: { publicRef: string }) => item.publicRef === listing.public_ref)).toBe(false);
+        const hiddenMap = await app.inject({ method: 'GET', url: '/api/v1/properties/map', headers });
+        expect(hiddenMap.json().markers.some((marker: { publicRef?: string }) => marker.publicRef === listing.public_ref)).toBe(false);
+        const hiddenFavorite = await app.inject({ method: 'POST', url: '/api/v1/favorites/toggle', headers, payload: { publicRef: listing.public_ref } });
+        expect(hiddenFavorite.statusCode).toBe(404);
+        const tracking = container.trackedLinksRepo.createLink({ listingPublicRef: listing.public_ref });
+        const hiddenTracking = await app.inject({ method: 'POST', url: `/api/v1/links/${tracking.slug}/opened`, headers });
+        expect(hiddenTracking.statusCode).toBe(404);
+
+        const nonCanaryList = await app.inject({ method: 'GET', url: '/api/v1/properties?query=Canary', headers: { 'X-Dev-Telegram-Id': '9988776655' } });
+        expect(nonCanaryList.json().items.some((item: { publicRef?: string }) => item.publicRef === listing.public_ref)).toBe(false);
+        const nonCanaryRefDetail = await app.inject({ method: 'GET', url: `/api/v1/properties/${listing.public_ref}`, headers: { 'X-Dev-Telegram-Id': '9988776655' } });
+        expect(nonCanaryRefDetail.statusCode).toBe(404);
+      } finally {
+        env.LISTING_READ_PATH = priorPath;
+        env.CANONICAL_READ_CANARY_TELEGRAM_IDS = priorCanaries;
+      }
+    });
+
+    it('does not expose pending or rejected canonical listings by public reference', async () => {
+      const priorReadPath = env.LISTING_READ_PATH;
+      try {
+        const sourceRepo = new SourceIngestionRepository(db);
+        const source = sourceRepo.upsertSource({ sourceType: 'FACEBOOK_GROUP', externalSourceId: 'api-moderation-fixture', name: 'API moderation fixture' });
+        const itemId = sourceRepo.upsertSourceItemDetailed(source, {
+          sourceType: 'FACEBOOK_GROUP', externalId: 'api-moderation-pending', rawText: 'Apartment for rent in Wat Bo $300/month',
+          sourceUrl: 'https://facebook.com/groups/api-fixture/posts/pending', contentHash: 'api-moderation-fixture', classification: 'HOUSING_SUPPLY',
+          rawPayload: { listingExtraction: { title_en: 'Test apartment in Wat Bo', description_en: 'For rent in Wat Bo', price: 300, currency: 'USD', category: 'apartment', property_type: 'Apartment', bedrooms: 1, city: 'siem_reap', sangkat: 'Wat Bo', offer_type: 'rent' }, photos: [] },
+        }).id;
+        new CanonicalShadowService(db).run({ dryRun: false });
+        const listing = db.prepare(`SELECT l.id,l.public_ref FROM canonical_listings l JOIN canonical_listing_source_occurrences o ON o.listing_id=l.id
+          WHERE o.source_item_id=? AND o.is_current=1`).get(itemId) as { id: number; public_ref: string };
+        env.LISTING_READ_PATH = 'canonical';
+
+        const pending = await app.inject({ method: 'GET', url: `/api/v1/properties/${listing.public_ref}` });
+        expect(pending.statusCode).toBe(404);
+        db.prepare("UPDATE canonical_listing_moderation SET review_status='rejected' WHERE listing_id=?").run(listing.id);
+        const rejected = await app.inject({ method: 'GET', url: `/api/v1/properties/${listing.public_ref}` });
+        expect(rejected.statusCode).toBe(404);
+      } finally {
+        env.LISTING_READ_PATH = priorReadPath;
+      }
+    });
+
     it('returns property detail by ID', async () => {
       const res = await app.inject({
         method: 'GET',

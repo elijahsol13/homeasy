@@ -9,6 +9,8 @@ import { filtersRoutes } from './routes/filters.routes';
 import { favoritesRoutes } from './routes/favorites.routes';
 import { meRoutes } from './routes/me.routes';
 import { webhookRoutes } from './routes/webhook.routes';
+import { trackingRoutes } from './routes/tracking.routes';
+import { createBot } from '../bot/bot';
 
 export interface BuildServerOptions {
   container: AppContainer;
@@ -69,6 +71,10 @@ export async function buildApiServer(options: BuildServerOptions): Promise<Fasti
   await app.register(filtersRoutes, { container });
   await app.register(favoritesRoutes, { container });
   await app.register(meRoutes, { container });
+  await app.register(trackingRoutes, { container });
+
+  // Webhook route is always registered so it exists for health/diagnostics, but
+  // Telegram is only told to use it when BOT_DELIVERY_MODE=webhook.
   await app.register(webhookRoutes, { container });
 
   // Custom 404 handler
@@ -108,9 +114,46 @@ export async function startApiServer(container: AppContainer): Promise<FastifyIn
     console.log(`🚀 HomEasy Telegram Mini App API running at ${address}`);
     console.log(`   Health check: ${address}/health`);
     console.log(`   Catalog:      ${address}/api/v1/properties`);
+    console.log(`   Delivery mode: ${env.BOT_DELIVERY_MODE}`);
+
+    if (env.BOT_DELIVERY_MODE === 'webhook') {
+      await configureTelegramWebhook();
+    } else {
+      console.log('   Telegram updates handled by polling bot process.');
+    }
+
     return app;
   } catch (err) {
     app.log.error(err);
+    process.exit(1);
+  }
+}
+
+async function configureTelegramWebhook(): Promise<void> {
+  if (!env.TELEGRAM_WEBHOOK_URL) {
+    console.error('❌ BOT_DELIVERY_MODE=webhook but TELEGRAM_WEBHOOK_URL is not set');
+    process.exit(1);
+  }
+
+  // Create a lightweight bot instance just to call setWebhook.
+  const bot = createBot({} as AppContainer);
+  try {
+    const info = await bot.api.getWebhookInfo();
+    if (info.url === env.TELEGRAM_WEBHOOK_URL) {
+      console.log(`✅ Telegram webhook already set to: ${info.url}`);
+      return;
+    }
+    const other: Parameters<typeof bot.api.setWebhook>[1] = {
+      allowed_updates: ['message', 'callback_query', 'inline_query', 'my_chat_member'],
+      drop_pending_updates: false,
+    };
+    if (env.TELEGRAM_WEBHOOK_SECRET) {
+      other.secret_token = env.TELEGRAM_WEBHOOK_SECRET;
+    }
+    await bot.api.setWebhook(env.TELEGRAM_WEBHOOK_URL, other);
+    console.log(`✅ Telegram webhook set to: ${env.TELEGRAM_WEBHOOK_URL}`);
+  } catch (err) {
+    console.error('❌ Failed to configure Telegram webhook:', err);
     process.exit(1);
   }
 }

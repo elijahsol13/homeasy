@@ -63,6 +63,16 @@ describe('Cambodia Locations & Smart Google Maps Link Generator', () => {
       expect(decoded).toContain('Sangkat Sala Kamreuk, Krong Siem Reap, Cambodia');
     });
 
+    it('maps Phsa Kraom residence to the approximate Svay Dangkum district', () => {
+      expect(findCanonicalLocation('Phsa Kraom Residence', 'siem_reap')?.canonicalName).toBe('Svay Dangkum');
+      expect(findCanonicalLocation('Phsar Kraoum Market', 'siem_reap')?.canonicalName).toBe('Svay Dangkum');
+    });
+
+    it('recognizes a full address naming Sangkat Srangae', () => {
+      expect(findCanonicalLocation('Location: Sangkat Srangae, Siem Reap City', 'siem_reap')?.canonicalName)
+        .toBe('Srangae');
+    });
+
     it('prepends Sangkat on unknown Siem Reap location fallback', () => {
       const url = formatGoogleMapsUrl('Green Village', 'siem_reap');
       const decoded = decodeURIComponent(url);
@@ -205,4 +215,3 @@ describe('Cambodia Locations & Smart Google Maps Link Generator', () => {
     });
   });
 });
-
