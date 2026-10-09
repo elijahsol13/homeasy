@@ -3,4 +3,6 @@ credentials-file: /etc/cloudflared/7d65861e-355d-45ce-8adf-498432aa148f.json
 ingress:
   - hostname: api.rustycat.cc
     service: http://api:3000
+  - hostname: go.rustycat.cc
+    service: http://api:3000
   - service: http_status:404
