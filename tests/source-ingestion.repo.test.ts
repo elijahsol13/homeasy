@@ -17,7 +17,7 @@ describe('SourceIngestionRepository', () => {
   it('applies the full migration set idempotently without touching legacy properties', () => {
     runMigrations(db);
     const versions = db.prepare('SELECT MAX(version) AS version FROM schema_migrations').get() as { version: number };
-    expect(versions.version).toBe(50);
+    expect(versions.version).toBe(51);
     const legacy = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='properties'").get();
     expect(legacy).toBeDefined();
     const canonical = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='canonical_listings'").get();

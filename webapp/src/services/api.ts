@@ -241,3 +241,46 @@ export async function toggleFavorite(identity: number | string): Promise<{ isFav
 
   return res.json();
 }
+
+export interface InterestFlowResponse {
+  ok: true;
+  publicRef: string;
+  interestId: string;
+  requestId: string;
+  offerId: string;
+  contactGrantId: string;
+  interestCreated: boolean;
+  contactGrantCreated: boolean;
+}
+
+export async function recordListingView(publicRef: string): Promise<void> {
+  const res = await fetch(`${API_BASE}/listings/${encodeURIComponent(publicRef)}/view`, {
+    method: 'POST',
+    headers: getAuthHeaders(),
+    body: '{}',
+  });
+  if (!res.ok) {
+    throw new Error(`Failed to record listing view: ${res.statusText}`);
+  }
+}
+
+/**
+ * Shadow-mode conversion capture. It intentionally runs independently from the
+ * Telegram bridge so an analytics or API failure never prevents contact.
+ */
+export async function recordTelegramContactDispatched(
+  publicRef: string,
+  searchContext: FilterState,
+): Promise<InterestFlowResponse> {
+  const res = await fetch(`${API_BASE}/listings/${encodeURIComponent(publicRef)}/interest`, {
+    method: 'POST',
+    headers: getAuthHeaders(),
+    body: JSON.stringify({ searchContext, contactChannel: 'telegram' }),
+  });
+
+  if (!res.ok) {
+    throw new Error(`Failed to record listing interest: ${res.statusText}`);
+  }
+
+  return res.json();
+}

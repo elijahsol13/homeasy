@@ -9,6 +9,22 @@ import { toPropertyDTO, toMapMarkerDTO, toSangkatClusterDTO } from '../dto';
 import { env } from '../../../config/env';
 import { isCanonicalReadCanary, listingReadPathForUser } from '../listing-read-path';
 
+function recordListingView(
+  container: AppContainer,
+  request: { telegramUser?: { id: number; username?: string } },
+  publicRef: string | null | undefined,
+  servedPath: 'legacy' | 'canonical',
+): void {
+  if (!request.telegramUser || !publicRef) return;
+  const user = container.usersRepo.upsertUser(request.telegramUser.id, request.telegramUser.username ?? null);
+  container.analyticsRepo.trackEvent({
+    userId: user.id,
+    telegramId: user.telegram_id,
+    eventType: 'listing_view',
+    metadata: { listing_public_ref: publicRef, served_path: servedPath },
+  });
+}
+
 export const propertiesRoutes: FastifyPluginAsync<{ container: AppContainer }> = async (fastify, opts) => {
   const { container } = opts;
 
@@ -351,6 +367,7 @@ export const propertiesRoutes: FastifyPluginAsync<{ container: AppContainer }> =
         const user=request.telegramUser?container.usersRepo.findByTelegramId(request.telegramUser.id):undefined;
         const isFavorite=user?container.favoritesRepo.isCanonicalFavorite(user.id,identity!.listingId):false;
         if (canary) request.log.info({ event: 'canonical_canary_detail_opened', publicRef: id, resolved: true });
+        recordListingView(container, request, identity!.publicRef, readPath);
         return reply.send(toPropertyDTO(canonicalProperty,isFavorite));
       }
       const propId = parseInt(id, 10);
@@ -393,6 +410,7 @@ export const propertiesRoutes: FastifyPluginAsync<{ container: AppContainer }> =
 
       if (canary) request.log.info({ event: 'canonical_canary_detail_opened', servedPath: readPath, legacyId: propId, publicRef: property.public_listing_ref, resolved: true, aliasResolved: Boolean(legacyAlias) });
 
+      recordListingView(container, request, property.public_listing_ref, readPath);
       return reply.send(toPropertyDTO(property, isFavorite));
     },
   );

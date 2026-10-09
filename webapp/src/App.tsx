@@ -12,6 +12,8 @@ import {
   fetchFavorites,
   fetchMe,
   reviewProperty,
+  recordListingView,
+  recordTelegramContactDispatched,
   toggleFavorite,
   trackMiniAppOpen,
   type TrackingAttribution,
@@ -256,6 +258,21 @@ export const App: React.FC = () => {
     }
   };
 
+  // Shadow-mode Phase 7A: start the first-party lead flow before handing control
+  // to Telegram. This best-effort request never blocks contact dispatch.
+  const handleTelegramContactDispatched = useCallback((property: PropertyDTO) => {
+    if (!property.publicRef) return;
+    void recordTelegramContactDispatched(property.publicRef, filters)
+      .catch((err) => console.error('[Interest] Failed to record Telegram contact:', err));
+  }, [filters]);
+
+  const handleSelectProperty = useCallback((property: PropertyDTO) => {
+    setSelectedProperty(property);
+    if (!property.publicRef) return;
+    void recordListingView(property.publicRef)
+      .catch((err) => console.error('[Interest] Failed to record listing view:', err));
+  }, []);
+
   return (
     <div className="min-h-screen bg-zinc-50 dark:bg-zinc-950 text-zinc-900 dark:text-zinc-100 flex flex-col font-sans transition-colors">
       {/* Tracked-link request context banner (only when opened from a tracked request link) */}
@@ -359,8 +376,9 @@ export const App: React.FC = () => {
                   <PropertyCard
                     key={property.id}
                     property={property}
-                    onSelect={setSelectedProperty}
+                    onSelect={handleSelectProperty}
                     onToggleFavorite={handleToggleFavorite}
+                    onTelegramContactDispatched={handleTelegramContactDispatched}
                   />
                 ))}
 
@@ -393,7 +411,7 @@ export const App: React.FC = () => {
         {activeTab === 'map' && (
           <MapView
             city={filters.city}
-            onSelectProperty={setSelectedProperty}
+            onSelectProperty={handleSelectProperty}
             focusRequest={mapFocusRequest}
             onFocusHandled={() => setMapFocusRequest(null)}
             onBackToProperty={mapReturnProperty ? () => setSelectedProperty(mapReturnProperty) : undefined}
@@ -439,8 +457,9 @@ export const App: React.FC = () => {
                   <PropertyCard
                     key={property.id}
                     property={property}
-                    onSelect={setSelectedProperty}
+                    onSelect={handleSelectProperty}
                     onToggleFavorite={handleToggleFavorite}
+                    onTelegramContactDispatched={handleTelegramContactDispatched}
                   />
                 ))}
               </div>
@@ -455,6 +474,7 @@ export const App: React.FC = () => {
         onClose={() => setSelectedProperty(null)}
         onToggleFavorite={handleToggleFavorite}
         onShowOnMap={handleShowOnMap}
+        onTelegramContactDispatched={handleTelegramContactDispatched}
         isAdmin={isAdmin}
         onReview={handleReview}
       />
