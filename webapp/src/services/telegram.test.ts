@@ -4,11 +4,12 @@ vi.mock('posthog-js', () => ({
   default: { capture: vi.fn(), identify: vi.fn() },
 }));
 
-import { openExternalUrl, getTelegramInitData } from './telegram';
-import { onPhoneActionClick, openTelegramContact, phoneActionHref, testTelegramBridge } from './contact-actions';
+import { getTelegramInitData, getTelegramStartParam, openExternalUrl } from './telegram';
+import { onPhoneActionClick, openTelegramContact, phoneActionHref } from './contact-actions';
 
 interface FakeTelegramWebApp {
   initData: string;
+  initDataUnsafe?: { start_param?: string };
   openLink: ReturnType<typeof vi.fn>;
   openTelegramLink: ReturnType<typeof vi.fn>;
 }
@@ -113,33 +114,6 @@ describe('phone contact actions', () => {
   });
 });
 
-describe('Telegram bridge diagnostic', () => {
-  it('calls only openTelegramLink and has no fallback', () => {
-    const tg = { initData: 'x', openLink: vi.fn(), openTelegramLink: vi.fn() };
-    const openSpy = vi.spyOn(window, 'open').mockReturnValue({ opener: null } as Window);
-    setTelegramWebApp(tg);
-
-    expect(testTelegramBridge('https://t.me/+85512345678')).toEqual({ status: 'dispatched' });
-    expect(tg.openTelegramLink).toHaveBeenCalledWith('https://t.me/+85512345678');
-    expect(tg.openLink).not.toHaveBeenCalled();
-    expect(openSpy).not.toHaveBeenCalled();
-    openSpy.mockRestore();
-  });
-
-  it('reports a synchronous bridge error without falling back', () => {
-    const tg = { initData: 'x', openLink: vi.fn(), openTelegramLink: vi.fn(() => { throw new Error('bridge failed'); }) };
-    const openSpy = vi.spyOn(window, 'open').mockReturnValue({ opener: null } as Window);
-    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
-    setTelegramWebApp(tg);
-
-    expect(testTelegramBridge('https://t.me/+85512345678')).toEqual({ status: 'error', message: 'bridge failed' });
-    expect(tg.openLink).not.toHaveBeenCalled();
-    expect(openSpy).not.toHaveBeenCalled();
-    openSpy.mockRestore();
-    warnSpy.mockRestore();
-  });
-});
-
 describe('getTelegramInitData', () => {
   afterEach(() => {
     setTelegramWebApp();
@@ -153,5 +127,25 @@ describe('getTelegramInitData', () => {
 
   it('returns empty string outside Telegram', () => {
     expect(getTelegramInitData()).toBe('');
+  });
+});
+
+describe('getTelegramStartParam', () => {
+  afterEach(() => {
+    setTelegramWebApp();
+  });
+
+  it('returns start_param from initDataUnsafe', () => {
+    setTelegramWebApp({ initData: 'x', initDataUnsafe: { start_param: 'Ab7K2' } });
+    expect(getTelegramStartParam()).toBe('Ab7K2');
+  });
+
+  it('returns undefined when no start_param exists', () => {
+    setTelegramWebApp({ initData: 'x', initDataUnsafe: {} });
+    expect(getTelegramStartParam()).toBeUndefined();
+  });
+
+  it('returns undefined outside Telegram', () => {
+    expect(getTelegramStartParam()).toBeUndefined();
   });
 });
