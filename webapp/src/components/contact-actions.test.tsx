@@ -9,8 +9,6 @@ import { PropertyCard } from './PropertyCard';
 import { PropertyDetailModal } from './PropertyDetailModal';
 import {
   formatCambodianTelegramPhone,
-  getContactDiagnostics,
-  isContactDiagnosticCanary,
   normalizePhoneToE164,
   phoneActionHref,
   phoneActionHrefFromDto,
@@ -226,40 +224,5 @@ describe('legacy DTO phone normalization', () => {
       telegramActionHrefFromDto('https://t.me/+85589586258', '096 815 2427', '089 586 258'),
     ).toBe('https://t.me/+855089586258');
     expect(phoneActionHrefFromDto('tel:0968152427', '096 815 2427')).toBe('tel:+855968152427');
-  });
-});
-
-describe('contact diagnostics canary', () => {
-  afterEach(() => {
-    delete (window as unknown as { Telegram?: unknown }).Telegram;
-  });
-
-  it('exposes contact diagnostics only to the designated Telegram user', () => {
-    (window as unknown as { Telegram: { WebApp: unknown } }).Telegram = {
-      WebApp: {
-        initDataUnsafe: { user: { id: 299321244 } },
-        platform: 'tdesktop',
-        version: '8.0',
-        openTelegramLink: vi.fn(),
-      },
-    };
-
-    expect(isContactDiagnosticCanary()).toBe(true);
-    expect(getContactDiagnostics('089 899 265', 'https://t.me/+85589899265', 'tel:089899265')).toMatchObject({
-      normalizedE164: '+85589899265',
-      generatedTelegramUrl: 'https://t.me/+855089899265',
-      generatedTelHref: 'tel:+85589899265',
-      webAppPlatform: 'tdesktop',
-      webAppVersion: '8.0',
-      hasOpenTelegramLink: true,
-    });
-  });
-
-  it('does not expose diagnostics to other Telegram users', () => {
-    (window as unknown as { Telegram: { WebApp: unknown } }).Telegram = {
-      WebApp: { initDataUnsafe: { user: { id: 8441221953 } } },
-    };
-
-    expect(isContactDiagnosticCanary()).toBe(false);
   });
 });

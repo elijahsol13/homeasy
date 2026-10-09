@@ -14,6 +14,21 @@ export function isTelegramWebApp(): boolean {
   return typeof window !== 'undefined' && Boolean(window.Telegram?.WebApp?.initData);
 }
 
+export function getTelegramStartParam(): string | undefined {
+  try {
+    const sdk = WebApp.initDataUnsafe?.start_param;
+    if (sdk) return sdk;
+  } catch {
+    // fall through to native bridge
+  }
+  try {
+    const native = window.Telegram?.WebApp as { initDataUnsafe?: { start_param?: string } } | undefined;
+    return native?.initDataUnsafe?.start_param ?? undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 export function initTelegramWebApp(): void {
   try {
     if (typeof window !== 'undefined' && window.Telegram?.WebApp) {
@@ -108,7 +123,6 @@ export function openExternalUrl(url: string | null | undefined, e?: React.Synthe
     targetUrl = 'https://' + targetUrl;
   }
 
-  // 1. Try Telegram WebApp openTelegramLink for t.me links
   if (targetUrl.startsWith('https://t.me/')) {
     openTelegramContact(targetUrl, e);
     return;
