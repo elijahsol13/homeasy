@@ -14,7 +14,7 @@ describe('Phase 7A funnel report', () => {
       INSERT INTO users VALUES (1,111), (2,8441221953), (3,299321244);
       INSERT INTO canonical_listings VALUES (1,'lst_one','First listing'), (2,'lst_two','Second listing'), (3,'lst_controlled','Controlled listing'), (4,'lst_admin','Admin listing');
       INSERT INTO listing_interests VALUES
-        ('int_one',1,1,'{"city":"siem_reap","type":"rent","sort":"newest"}','2026-10-08T12:02:00.000Z'),
+        ('int_one',1,1,'{"city":"siem_reap","type":"rent","sort":"newest","locations":[]}','2026-10-08T12:02:00.000Z'),
         ('int_two',1,2,'{"city":"siem_reap","locations":["Wat Bo"]}','2026-10-08T12:04:00.000Z'),
         ('int_controlled',2,3,'{}','2026-10-08T12:05:00.000Z'),
         ('int_admin',3,4,'{}','2026-10-08T12:06:00.000Z');
