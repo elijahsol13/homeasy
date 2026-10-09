@@ -28,6 +28,7 @@
     "reparse": "ts-node scripts/reparse-listings.ts",
     "tracking:mint": "ts-node scripts/tracking-mint.ts",
     "tracking:inspect": "ts-node scripts/tracking-inspect.ts",
+    "analytics:phase7a-funnel": "ts-node scripts/phase7a-funnel-report.ts",
     "webhook:info": "ts-node scripts/manage-webhook.ts info",
     "webhook:set": "ts-node scripts/manage-webhook.ts set",
     "webhook:delete": "ts-node scripts/manage-webhook.ts delete",
