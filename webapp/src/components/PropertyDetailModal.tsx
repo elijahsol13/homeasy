@@ -4,7 +4,6 @@ import {
   Heart,
   MapPin,
   Send,
-  Phone,
   Waves,
   Zap,
   Droplets,
@@ -18,12 +17,7 @@ import {
 } from 'lucide-react';
 import type { PropertyDTO } from '../types';
 import { triggerHaptic, openExternalUrl } from '../services/telegram';
-import {
-  onPhoneActionClick,
-  openTelegramContact,
-  phoneActionHrefFromDto,
-  telegramActionHrefFromDto,
-} from '../services/contact-actions';
+import { openTelegramContact, telegramActionHrefFromDto } from '../services/contact-actions';
 import posthog from 'posthog-js';
 import { formatPropertyTypeLabel } from '../formatters';
 
@@ -91,7 +85,6 @@ export const PropertyDetailModal: React.FC<PropertyDetailModalProps> = ({
     property.contact.phone,
     property.contact.telegram,
   );
-  const phoneHref = phoneActionHrefFromDto(property.contact.phoneLink, property.contact.phone);
   const photos = property.photos && property.photos.length > 0 ? property.photos : [];
 
   const effectiveMapsUrl =
@@ -651,29 +644,6 @@ export const PropertyDetailModal: React.FC<PropertyDetailModalProps> = ({
               aria-label="WhatsApp"
             >
               <MessageCircle className="w-5 h-5" />
-            </a>
-          )}
-
-          {phoneHref && (
-            <a
-              href={phoneHref}
-              onClick={(e) => {
-                onPhoneActionClick(e);
-                triggerHaptic('light');
-                try {
-                  posthog.capture('contact_lead_clicked', {
-                    propertyId: property.id,
-                    listingRef: property.publicRef ?? null,
-                    channel: 'phone',
-                  });
-                } catch {
-                  // ignore
-                }
-              }}
-              className="p-3 bg-emerald-500 hover:bg-emerald-600 text-white rounded-xl shadow-md active:scale-95 transition-all flex items-center justify-center"
-              aria-label="Call"
-            >
-              <Phone className="w-5 h-5" />
             </a>
           )}
 
