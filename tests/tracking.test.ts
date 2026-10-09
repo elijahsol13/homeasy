@@ -147,6 +147,9 @@ describe('Tracking gateway /r/:slug', () => {
   });
 
   it('records miniapp_opened event when Mini App reports a tracked link open', async () => {
+    const previousMiniAppUrl = env.TELEGRAM_MINIAPP_URL;
+    env.TELEGRAM_MINIAPP_URL = 'https://t.me/HomeasyTestBot/app';
+    try {
     const create = await app.inject({
       method: 'POST',
       url: '/api/v1/links',
@@ -162,6 +165,7 @@ describe('Tracking gateway /r/:slug', () => {
       },
     });
     const { slug } = create.json();
+    expect(create.statusCode).toBe(200);
 
     const opened = await app.inject({
       method: 'POST',
@@ -185,6 +189,9 @@ describe('Tracking gateway /r/:slug', () => {
     const meta = JSON.parse(event.metadata);
     expect(meta.slug).toBe(slug);
     expect(meta.campaign).toBe('demand-outreach');
+    } finally {
+      env.TELEGRAM_MINIAPP_URL = previousMiniAppUrl;
+    }
   });
 
   it('returns 404 for opened event on unknown slug', async () => {
