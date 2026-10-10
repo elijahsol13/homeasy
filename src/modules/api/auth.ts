@@ -26,12 +26,13 @@ export interface ValidatedInitData {
  */
 export function validateTelegramInitData(
   initDataRaw: string,
-  botToken: string = env.BOT_TOKEN,
+  botToken: string | undefined = env.BOT_TOKEN,
   maxAgeSeconds = 86400, // 24 hours
 ): { isValid: boolean; data?: ValidatedInitData; error?: string } {
   if (!initDataRaw || typeof initDataRaw !== 'string') {
     return { isValid: false, error: 'Empty initData provided' };
   }
+  if (!botToken) return { isValid: false, error: 'Telegram authentication is not configured' };
 
   try {
     let cleanInitData = initDataRaw;

@@ -77,6 +77,19 @@ export class SourceIngestionRepository {
     }
   }
 
+  async transactionAsync<T>(work: () => Promise<T>): Promise<T> {
+    this.db.exec('SAVEPOINT source_ingestion_atomic_batch');
+    try {
+      const result = await work();
+      this.db.exec('RELEASE source_ingestion_atomic_batch');
+      return result;
+    } catch (error) {
+      this.db.exec('ROLLBACK TO source_ingestion_atomic_batch');
+      this.db.exec('RELEASE source_ingestion_atomic_batch');
+      throw error;
+    }
+  }
+
   makeSourceKey(identity: Pick<SourceIdentityInput, 'sourceType' | 'externalSourceId'>): string {
     return `${identity.sourceType.toLowerCase()}:${identity.externalSourceId}`;
   }
@@ -276,6 +289,16 @@ export class SourceIngestionRepository {
     } | undefined;
 
     const changed = Boolean(existing && (existing.content_hash !== item.contentHash || existing.media_hash !== (item.mediaHash ?? null)));
+    if (existing && !changed) {
+      // A discovery re-read is not a new source version. Keep the last accepted
+      // payload/parser facts intact: a transport/parser-only difference must
+      // not silently replace richer canonical extraction data.
+      this.db.prepare(`UPDATE source_items SET last_seen_at=?,
+        processing_run_id=COALESCE(?,processing_run_id),
+        updated_at=strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE id=?`)
+        .run(observedAt, item.processingRunId ?? null, existing.id);
+      return { id: existing.id, inserted: false, updated: false, unchanged: true, newVersion: false };
+    }
     if (existing && changed) {
       this.db.prepare(`
         INSERT OR IGNORE INTO source_item_versions
