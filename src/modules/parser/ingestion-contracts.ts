@@ -1,5 +1,6 @@
 import type { IngestionMethod, SourceType } from '../../database/repositories/source-ingestion.repo';
 import type { SourceIdentifierInput } from '../../database/repositories/source-ingestion.repo';
+import type { ScopedMutationDiagnosticReport } from './canonical-dedupe';
 
 export interface SourceIdentity {
   sourceType: SourceType;
@@ -47,6 +48,10 @@ export interface SourceRunContext {
   dryRun?: boolean;
   observedAt?: string;
   parserVersion?: string;
+  /** Internal mode for already-acquired bounded batches: buffer first, then transact DB writes. */
+  atomicDbStage?: boolean;
+  /** Internal recursion marker: this batch is already running inside its DB savepoint. */
+  atomicDbStageActive?: boolean;
 }
 
 export interface SourceAdapter<T = unknown> {
@@ -87,6 +92,36 @@ export interface IngestionBatchResult {
   globalCanonicalRuns: number;
   globalCanonicalProperties: number;
   globalCanonicalListings: number;
+  scopedCanonicalRuns: number;
+  mutationReport: {
+    directWrites: {
+      sourceItemsCreated: number;
+      sourceItemsChanged: number;
+      unchangedObservations: number;
+      versionsCreated: number;
+      identifierSetsReplaced: number;
+    };
+    reconciliationWrites: {
+      globalCandidatesRead: number;
+      candidatePairsScored: number;
+      relatedCandidates: number;
+      decisionsWritten: number;
+      canonicalPropertiesCreated: number;
+      canonicalListingsCreated: number;
+      sourceOccurrencesCreated: number;
+      aliasesCreated: number;
+      mediaAssetsCreated: number;
+      mediaAssociationsCreated: number;
+    };
+    existingCanonicalObjectsMutated: Array<{
+      kind: 'canonical_property' | 'canonical_listing';
+      id: number;
+      sourceItemIds: number[];
+      reason: string;
+    }>;
+    unexpectedGlobalWrites: number;
+    diagnostics: ScopedMutationDiagnosticReport | null;
+  };
   items: Array<{ externalId: string; sourceKey: string; status: 'new' | 'updated' | 'unchanged' | 'error' }>;
   dryRun: boolean;
 }

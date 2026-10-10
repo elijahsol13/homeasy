@@ -41,6 +41,7 @@ export interface CanonicalKhmer24DiscoveryReport {
   feedTargets: number;
   fetched: number;
   ingestion?: Awaited<ReturnType<IngestionService['ingestBatch']>>;
+  mutationReport?: Awaited<ReturnType<IngestionService['ingestBatch']>>['mutationReport'];
 }
 
 /**
@@ -103,8 +104,12 @@ export class CanonicalKhmer24DiscoveryRunner {
         ingestionMethod: 'KHMER24_SCRAPER',
         parserVersion: 'canonical-khmer24-camoufox-v1',
         observedAt: options.observedAt,
+        atomicDbStage: true,
       });
-      return { disabled: false, requestedItemCap: maxItems, feedTargets: targetCount, fetched: listings.length, ingestion };
+      return {
+        disabled: false, requestedItemCap: maxItems, feedTargets: targetCount, fetched: listings.length,
+        ingestion, mutationReport: ingestion.mutationReport,
+      };
     } finally {
       if (camoufox) await camoufox.close().catch(() => {});
       assertLegacyPropertiesUnchanged(this.db, legacyBefore);

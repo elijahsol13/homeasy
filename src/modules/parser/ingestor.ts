@@ -526,6 +526,19 @@ export class IngestionService {
   async ingestBatch<T>(adapter: SourceAdapter<T>, context: SourceRunContext): Promise<IngestionBatchResult> {
     if (!this.sourceIngestionRepo) throw new Error('SourceIngestionRepository is required for unified ingestion');
     const repo = this.sourceIngestionRepo;
+    if (context.atomicDbStage && !context.atomicDbStageActive) {
+      if (adapter.processNewOrChanged) {
+        throw new Error('atomicDbStage requires an adapter without external processing hooks');
+      }
+      const prepared: T[] = [];
+      for await (const raw of adapter.fetchNewItems(context)) prepared.push(raw);
+      const bufferedAdapter: SourceAdapter<T> = {
+        sourceType: adapter.sourceType,
+        async *fetchNewItems() { yield* prepared; },
+        normalize(raw) { return adapter.normalize(raw); },
+      };
+      return repo.transactionAsync(() => this.ingestBatch(bufferedAdapter, { ...context, atomicDbStageActive: true }));
+    }
     const result: IngestionBatchResult = {
       inputItems: 0, processedItems: 0, newSources: 0, newSourceItems: 0,
       updatedSourceItems: 0, unchangedSourceItems: 0, newVersions: 0,
@@ -533,7 +546,14 @@ export class IngestionService {
       incrementalRepostItems: 0, incrementalRepostClustersCreated: 0, incrementalRepostClustersUpdated: 0,
       incrementalCanonicalItems: 0, occurrencesAttached: 0, canonicalBindingsUpdated: 0,
       repurposedBindingsClosed: 0, needsGlobalCanonicalMatch: 0, canonicalInconsistencies: 0,
-      globalCanonicalRuns: 0, globalCanonicalProperties: 0, globalCanonicalListings: 0,
+      globalCanonicalRuns: 0, globalCanonicalProperties: 0, globalCanonicalListings: 0, scopedCanonicalRuns: 0,
+      mutationReport: {
+        directWrites: { sourceItemsCreated: 0, sourceItemsChanged: 0, unchangedObservations: 0, versionsCreated: 0, identifierSetsReplaced: 0 },
+        reconciliationWrites: { globalCandidatesRead: 0, candidatePairsScored: 0, relatedCandidates: 0, decisionsWritten: 0,
+          canonicalPropertiesCreated: 0, canonicalListingsCreated: 0, sourceOccurrencesCreated: 0, aliasesCreated: 0,
+          mediaAssetsCreated: 0, mediaAssociationsCreated: 0 },
+        existingCanonicalObjectsMutated: [], unexpectedGlobalWrites: 0, diagnostics: null,
+      },
       dryRun: Boolean(context.dryRun),
     };
     const runId = context.dryRun ? undefined : repo.createRun(context.runType);
@@ -542,7 +562,7 @@ export class IngestionService {
     const newSourceKeys = new Set<string>();
     const dryRunItems = new Map<string, string | null>();
     const sourceCounts = new Map<string, { input: number; success: number; failed: number }>();
-    const globalCanonicalIds = new Set<number>();
+    const canonicalSourceItemIds = new Set<number>();
     const observedAt = context.observedAt ?? new Date().toISOString();
 
     for await (const raw of adapter.fetchNewItems(context)) {
@@ -637,7 +657,10 @@ export class IngestionService {
           const resolvedSource = repo.upsertSourceDetailed(item.sourceIdentity);
           sourceIds.set(sourceKey, resolvedSource);
           const upsert = repo.upsertSourceItemDetailed(resolvedSource.id, sourceItemInput, observedAt);
-          repo.replaceIdentifiers(upsert.id, identifiers);
+          if (!upsert.unchanged) {
+            repo.replaceIdentifiers(upsert.id, identifiers);
+            result.mutationReport.directWrites.identifierSetsReplaced++;
+          }
           repo.recordNaturalRediscovery(upsert.id, observedAt);
           if (sourceContentChanged && item.rawText) repo.recordExplicitAvailabilityEdit(upsert.id, item.rawText, observedAt);
           if (upsert.newVersion || didProcessChangedItem) for (const aiResult of item.aiResults ?? []) {
@@ -648,6 +671,10 @@ export class IngestionService {
           return { upsert, source: resolvedSource };
         });
         sourceIds.set(sourceKey, outcome.source);
+        result.mutationReport.directWrites.sourceItemsCreated += Number(outcome.upsert.inserted);
+        result.mutationReport.directWrites.sourceItemsChanged += Number(outcome.upsert.updated);
+        result.mutationReport.directWrites.unchangedObservations += Number(outcome.upsert.unchanged);
+        result.mutationReport.directWrites.versionsCreated += Number(outcome.upsert.newVersion);
         const eligibleForRepost = classification === 'HOUSING_SUPPLY' || classification === 'HOUSING_DEMAND';
         const hadRepostAssignment = repo.hasRepostAssignment(outcome.upsert.id);
         if (this.repostClusteringService && ((sourceContentChanged && (eligibleForRepost || hadRepostAssignment))
@@ -659,14 +686,7 @@ export class IngestionService {
         }
         const hasCurrentBinding = repo.hasCurrentCanonicalBinding(outcome.upsert.id,item.contentHash??null,item.mediaHash??null);
         if (this.canonicalShadowService && (sourceContentChanged || sourceMediaChanged || (eligibleForRepost && !hasCurrentBinding))) {
-          const canonical = this.canonicalShadowService.reconcileBoundSourceItems([outcome.upsert.id], observedAt);
-          result.incrementalCanonicalItems += canonical.processed;
-          result.occurrencesAttached += canonical.occurrencesAttached;
-          result.canonicalBindingsUpdated += canonical.bindingsUpdated;
-          result.repurposedBindingsClosed += canonical.repurposed;
-          result.needsGlobalCanonicalMatch += canonical.needsGlobalMatch;
-          result.canonicalInconsistencies += canonical.inconsistencies.length;
-          if (canonical.needsGlobalMatch > 0 && canonical.inconsistencies.length === 0) globalCanonicalIds.add(outcome.upsert.id);
+          canonicalSourceItemIds.add(outcome.upsert.id);
         }
         if (outcome.source.inserted) newSourceKeys.add(sourceKey);
         const counts = sourceCounts.get(sourceKey) ?? { input: 0, success: 0, failed: 0 };
@@ -693,11 +713,24 @@ export class IngestionService {
       }
     }
 
-    if (this.canonicalShadowService && globalCanonicalIds.size > 0) {
-      const canonical = this.canonicalShadowService.run({ dryRun: false });
-      result.globalCanonicalRuns++;
-      result.globalCanonicalProperties = canonical.canonicalProperties;
-      result.globalCanonicalListings = canonical.canonicalListings;
+    if (this.canonicalShadowService && canonicalSourceItemIds.size > 0) {
+      const canonical = this.canonicalShadowService.reconcileSourceItemsScoped([...canonicalSourceItemIds], observedAt);
+      result.scopedCanonicalRuns++;
+      result.incrementalCanonicalItems += canonical.processed;
+      result.occurrencesAttached += canonical.occurrencesAttached;
+      result.canonicalBindingsUpdated += canonical.bindingsUpdated;
+      result.repurposedBindingsClosed += canonical.repurposed;
+      result.needsGlobalCanonicalMatch += canonical.needsGlobalMatch;
+      result.canonicalInconsistencies += canonical.inconsistencies.length;
+      for (const key of Object.keys(result.mutationReport.reconciliationWrites) as Array<keyof typeof result.mutationReport.reconciliationWrites>) {
+        result.mutationReport.reconciliationWrites[key] += canonical.mutationReport[key];
+      }
+      result.mutationReport.existingCanonicalObjectsMutated.push(...canonical.mutationReport.existingCanonicalObjectsMutated);
+      result.mutationReport.unexpectedGlobalWrites += canonical.mutationReport.unexpectedGlobalWrites;
+      result.mutationReport.diagnostics = canonical.mutationReport.diagnostics;
+    }
+    if (context.atomicDbStageActive && result.errors.length > 0) {
+      throw new Error(`Atomic discovery DB stage rejected ${result.errors.length} failed item(s)`);
     }
     result.newSources = newSourceKeys.size;
     if (runId !== undefined) {
