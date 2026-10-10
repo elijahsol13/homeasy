@@ -34,6 +34,7 @@ import { launchCamoufox, type CamoufoxBrowser } from './camoufox-server';
 import { attachTrafficGuard } from './traffic-guard';
 import {
   Khmer24HttpFallbackError,
+  classifyKhmer24PageLiveness,
   fetchKhmer24Html,
   parseKhmer24DetailHtml as parseKhmer24HttpDetail,
   parseKhmer24FeedHtml,
@@ -654,24 +655,7 @@ export function toHighResImageUrl(url: string): string {
 // ─── Freshness Sweep ──────────────────────────────────────────────────────────
 // Re-checks stored Khmer24 ads and deactivates ones whose source page is gone.
 
-const K24_DEAD_MARKERS = [
-  /this ad is no longer available/i,
-  /ad has been removed/i,
-  /ad has expired/i,
-  /listing has expired/i,
-  /no longer available/i,
-  /page not found/i,
-  /oops!.*not found/i,
-];
-
-export function classifyKhmer24PageLiveness(html: string): 'alive' | 'dead' | 'unknown' {
-  if (!html) return 'unknown';
-  const head = html.slice(0, 200_000);
-  if (/"@type"\s*:\s*"Product"/.test(head)) return 'alive';
-  if (K24_DEAD_MARKERS.some((re) => re.test(head))) return 'dead';
-  if (html.includes('-adid-') || html.includes('__NUXT_DATA__')) return 'unknown';
-  return 'dead';
-}
+export { classifyKhmer24PageLiveness } from './khmer24-http';
 
 export interface FreshnessSweepOptions {
   dryRun?: boolean;
