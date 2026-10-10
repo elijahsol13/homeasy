@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "description": "Cambodia Real Estate Aggregator & Notification Telegram Bot (Siem Reap / Phnom Penh)",
   "main": "dist/index.js",
-    "scripts": {
+  "scripts": {
     "build": "tsc",
     "typecheck": "tsc --noEmit",
     "dev": "nodemon",
@@ -44,11 +44,18 @@
     "ingestion:canonical-golden": "ts-node scripts/canonical-golden-evaluate.ts",
     "ingestion:phase6a-parity": "ts-node scripts/phase6a-read-parity.ts",
     "freshness:dry-run": "ts-node scripts/freshness-dry-run.ts",
+    "freshness:khmer24:dry-run": "ts-node scripts/canonical-khmer24-freshness-dry-run.ts",
     "ingestion:backfill-fb-media": "ts-node scripts/backfill-facebook-media.ts",
     "media:hash-facebook-sample": "ts-node scripts/hash-facebook-media.ts",
     "test:listing-extraction": "ts-node scripts/listing-extraction-regression.ts",
     "test:demand-extraction": "ts-node scripts/demand-extraction-regression.ts",
-    "test": "jest"
+    "test": "jest",
+    "freshness:khmer24:scheduler": "ts-node scripts/canonical-khmer24-freshness-scheduler.ts",
+    "ingestion:khmer24:canonical": "ts-node scripts/canonical-khmer24-discovery.ts",
+    "audit:phase6b:legacy-digest": "ts-node scripts/phase6b-legacy-digest-audit.ts",
+    "audit:phase6b:commercial": "ts-node scripts/canonical-commercial-eligibility-audit.ts",
+    "plan:khmer24:canonical-discovery": "ts-node scripts/canonical-khmer24-discovery-plan.ts",
+    "preview:phase6b:commercial-moderation": "ts-node scripts/phase6b-commercial-moderation-preview.ts"
   },
   "dependencies": {
     "@fastify/cors": "^11.3.0",

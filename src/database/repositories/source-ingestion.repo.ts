@@ -133,9 +133,15 @@ export class SourceIngestionRepository {
       input.failedItems, input.records, input.estimatedCost ?? null, input.actualCost ?? null, input.processingRunId ?? null);
   }
 
-  /** Discovery is natural freshness evidence; availability confirmation remains untouched. */
+  /**
+   * Discovery is natural freshness evidence. It also cancels any pending
+   * terminal-page confirmation for that occurrence: a source seen again after
+   * the first REMOVED result must never be deactivated from stale evidence.
+   */
   recordNaturalRediscovery(sourceItemId: number, observedAt: string): void {
     this.db.prepare(`UPDATE canonical_listing_source_occurrences SET last_seen_at=?,
+      consecutive_terminal_checks=0,terminal_check_last_seen_at=NULL,
+      terminal_check_confirm_after_at=NULL,next_check_at=NULL,
       updated_at=strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE source_item_id=? AND is_current=1`).run(observedAt, sourceItemId);
     this.db.prepare(`UPDATE canonical_listings SET last_seen_at=MAX(last_seen_at,?),
       updated_at=strftime('%Y-%m-%dT%H:%M:%SZ','now')

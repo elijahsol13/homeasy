@@ -67,6 +67,18 @@ export class CanonicalListingRepository {
     return this.db.prepare(`EXPLAIN QUERY PLAN SELECT l.id ${this.fromSql()} ${whereSql}`).all(...params) as Array<Record<string, unknown>>;
   }
 
+  /**
+   * Returns the exact set of canonical listings that the public catalog can
+   * expose for the supplied filters. Operational jobs use this rather than
+   * duplicating the publication SQL in a second subsystem.
+   */
+  listPublicListingIds(options: PropertyFilterOptions = {}): number[] {
+    const { whereSql, params } = this.buildWhere(options);
+    const rows = this.db.prepare(`SELECT l.id ${this.fromSql()} ${whereSql} ORDER BY l.id ASC`)
+      .all(...params) as Array<{ id: number }>;
+    return rows.map((row) => row.id);
+  }
+
   getPropertyById(id: number, includeModerated = false): Property | undefined {
     const row = this.db.prepare(`SELECT ${this.projectionSql(true)} ${this.fromSql()}
       WHERE l.id=? AND l.status='active' AND COALESCE(l.availability_status,'unknown') NOT IN ('rented','removed')

@@ -15,36 +15,181 @@ export class Khmer24HttpFallbackError extends Error {
   }
 }
 
-const MAX_HTML_BYTES = 5 * 1024 * 1024;
+export interface Khmer24FetchDiagnostic {
+  category: 'DNS' | 'CONNECT_TIMEOUT' | 'REQUEST_TIMEOUT' | 'CONNECTION_REFUSED' | 'CONNECTION_RESET' | 'TLS' | 'HTTP' | 'ABORTED' | 'RUNTIME';
+  error: { name?: string; message?: string };
+  cause?: {
+    name?: string;
+    message?: string;
+    code?: string;
+    errno?: string | number;
+    syscall?: string;
+    hostname?: string;
+  };
+  http?: { status: number; finalUrl: string };
+}
 
-export async function fetchKhmer24Html(url: string): Promise<string> {
+export class Khmer24HttpResponseError extends Khmer24HttpFallbackError {
+  readonly diagnostic: Khmer24FetchDiagnostic;
+
+  constructor(status: number, finalUrl: string) {
+    super(`Khmer24 returned HTTP ${status}`);
+    this.name = 'Khmer24HttpResponseError';
+    this.diagnostic = {
+      category: 'HTTP',
+      error: { name: this.name, message: this.message },
+      http: { status, finalUrl },
+    };
+  }
+}
+
+export class Khmer24HttpTransportError extends Khmer24HttpFallbackError {
+  readonly diagnostic: Khmer24FetchDiagnostic;
+
+  constructor(diagnostic: Khmer24FetchDiagnostic) {
+    super(formatKhmer24FetchDiagnostic(diagnostic));
+    this.name = 'Khmer24HttpTransportError';
+    this.diagnostic = diagnostic;
+  }
+}
+
+export interface Khmer24HtmlResponse {
+  html: string;
+  status: number;
+  finalUrl: string;
+}
+
+const MAX_HTML_BYTES = 5 * 1024 * 1024;
+export const KHMER24_HTTP_TIMEOUT_MS = 20_000;
+const K24_DEAD_MARKERS = [
+  /this ad is no longer available/i,
+  /ad has been removed/i,
+  /ad has expired/i,
+  /listing has expired/i,
+  /no longer available/i,
+  /page not found/i,
+  /oops!.*not found/i,
+];
+const K24_CHALLENGE_MARKER = /just a moment|attention required|cf-chl-|cloudflare/i;
+
+type ErrorFields = Record<string, unknown>;
+
+function errorFields(value: unknown): ErrorFields {
+  return value !== null && typeof value === 'object' ? value as ErrorFields : {};
+}
+
+function optionalString(value: unknown): string | undefined {
+  return typeof value === 'string' && value.length > 0 ? value : undefined;
+}
+
+function optionalErrno(value: unknown): string | number | undefined {
+  return typeof value === 'string' || typeof value === 'number' ? value : undefined;
+}
+
+/**
+ * Redacts fetch failures to the small, safe set needed for operational
+ * diagnosis. It deliberately excludes request headers, response bodies, and
+ * arbitrary error properties that could contain credentials.
+ */
+export function describeKhmer24FetchFailure(error: unknown): Khmer24FetchDiagnostic {
+  if (error instanceof Khmer24HttpResponseError || error instanceof Khmer24HttpTransportError) return error.diagnostic;
+
+  const outer = errorFields(error);
+  const cause = errorFields(outer.cause);
+  const code = optionalString(cause.code) ?? optionalString(outer.code);
+  const name = optionalString(outer.name) ?? 'Error';
+  const message = optionalString(outer.message) ?? String(error);
+  const causeName = optionalString(cause.name);
+  const causeMessage = optionalString(cause.message);
+  let category: Khmer24FetchDiagnostic['category'] = 'RUNTIME';
+  if (code === 'ENOTFOUND' || code === 'EAI_AGAIN') category = 'DNS';
+  else if (code === 'ETIMEDOUT' || code === 'UND_ERR_CONNECT_TIMEOUT') category = 'CONNECT_TIMEOUT';
+  else if (code === 'ECONNREFUSED') category = 'CONNECTION_REFUSED';
+  else if (code === 'ECONNRESET') category = 'CONNECTION_RESET';
+  else if (name === 'AbortError') category = 'ABORTED';
+  else if (/tls|ssl|certificate|cert_/i.test(`${code ?? ''} ${name} ${message} ${causeName ?? ''} ${causeMessage ?? ''}`)) category = 'TLS';
+  const diagnostic: Khmer24FetchDiagnostic = {
+    category,
+    error: { name, message },
+  };
+  if (Object.keys(cause).length > 0) {
+    diagnostic.cause = {
+      name: causeName,
+      message: causeMessage,
+      code,
+      errno: optionalErrno(cause.errno) ?? optionalErrno(outer.errno),
+      syscall: optionalString(cause.syscall) ?? optionalString(outer.syscall),
+      hostname: optionalString(cause.hostname) ?? optionalString(outer.hostname),
+    };
+  }
+  return diagnostic;
+}
+
+export function formatKhmer24FetchDiagnostic(diagnostic: Khmer24FetchDiagnostic): string {
+  if (diagnostic.http) return `HTTP ${diagnostic.http.status} from ${diagnostic.http.finalUrl}`;
+  const cause = diagnostic.cause;
+  const code = cause?.code ? ` [${cause.code}]` : '';
+  const detail = cause?.message ?? diagnostic.error.message ?? 'unknown error';
+  return `${diagnostic.category}: ${detail}${code}`;
+}
+
+export function isKhmer24ChallengePage(html: string, title = ''): boolean {
+  return K24_CHALLENGE_MARKER.test(`${title}\n${html.slice(0, 20_000)}`);
+}
+
+export async function fetchKhmer24HtmlResponse(url: string): Promise<Khmer24HtmlResponse> {
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 20_000);
+  const timer = setTimeout(() => controller.abort(), KHMER24_HTTP_TIMEOUT_MS);
   try {
-    const response = await fetch(url, {
-      headers: {
-        Accept: 'text/html,application/xhtml+xml',
-        'Accept-Language': 'en-US,en;q=0.9',
-        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:152.0) Gecko/20100101 Firefox/152.0',
-      },
-      redirect: 'follow',
-      signal: controller.signal,
-    });
-    if (response.status === 403 || response.status === 429) {
-      throw new Khmer24HttpFallbackError(`Khmer24 returned HTTP ${response.status}`);
+    let response: Response;
+    try {
+      response = await fetch(url, {
+        headers: {
+          Accept: 'text/html,application/xhtml+xml',
+          'Accept-Language': 'en-US,en;q=0.9',
+          'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:152.0) Gecko/20100101 Firefox/152.0',
+        },
+        redirect: 'follow',
+        signal: controller.signal,
+      });
+    } catch (error) {
+      if (controller.signal.aborted) {
+        throw new Khmer24HttpTransportError({
+          category: 'REQUEST_TIMEOUT',
+          error: { name: 'TimeoutError', message: `Khmer24 request timed out after ${KHMER24_HTTP_TIMEOUT_MS}ms` },
+        });
+      }
+      throw new Khmer24HttpTransportError(describeKhmer24FetchFailure(error));
     }
-    if (!response.ok) throw new Error(`Khmer24 returned HTTP ${response.status}`);
+    if (response.status === 403 || response.status === 429) {
+      throw new Khmer24HttpResponseError(response.status, response.url);
+    }
+    if (!response.ok) throw new Khmer24HttpResponseError(response.status, response.url);
     const declaredLength = Number(response.headers.get('content-length') ?? 0);
     if (declaredLength > MAX_HTML_BYTES) throw new Error('Khmer24 HTML response exceeds size limit');
     const html = await response.text();
     if (Buffer.byteLength(html) > MAX_HTML_BYTES) throw new Error('Khmer24 HTML response exceeds size limit');
-    if (/just a moment|attention required|cf-chl-|cloudflare/i.test(html.slice(0, 20_000))) {
+    if (isKhmer24ChallengePage(html)) {
       throw new Khmer24HttpFallbackError('Khmer24 challenge page detected');
     }
-    return html;
+    return { html, status: response.status, finalUrl: response.url };
   } finally {
     clearTimeout(timer);
   }
+}
+
+export async function fetchKhmer24Html(url: string): Promise<string> {
+  return (await fetchKhmer24HtmlResponse(url)).html;
+}
+
+/** Classifies already-fetched text only; it never issues a request. */
+export function classifyKhmer24PageLiveness(html: string): 'alive' | 'dead' | 'unknown' {
+  if (!html) return 'unknown';
+  const head = html.slice(0, 200_000);
+  if (/"@type"\s*:\s*"Product"/.test(head)) return 'alive';
+  if (K24_DEAD_MARKERS.some((expression) => expression.test(head))) return 'dead';
+  if (html.includes('-adid-') || html.includes('__NUXT_DATA__')) return 'unknown';
+  return 'unknown';
 }
 
 export function parseKhmer24FeedHtml(html: string, maxLinks = 15): string[] {

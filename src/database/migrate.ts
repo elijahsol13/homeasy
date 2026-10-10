@@ -1029,6 +1029,20 @@ CREATE TABLE IF NOT EXISTS contact_grants (
 );
 CREATE INDEX IF NOT EXISTS idx_contact_grants_user_granted ON contact_grants(user_id, granted_at DESC);
 `,
+
+  // ── v52: canonical Khmer24 terminal-observation state ───────────────────────
+  // A source page that looks terminal is evidence, not an immediate listing
+  // removal. These fields retain the confirmation state per source occurrence.
+  `
+ALTER TABLE canonical_listing_source_occurrences
+  ADD COLUMN consecutive_terminal_checks INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE canonical_listing_source_occurrences
+  ADD COLUMN terminal_check_last_seen_at TEXT;
+ALTER TABLE canonical_listing_source_occurrences
+  ADD COLUMN terminal_check_confirm_after_at TEXT;
+CREATE INDEX IF NOT EXISTS idx_canonical_occ_terminal_confirmation
+  ON canonical_listing_source_occurrences(terminal_check_confirm_after_at);
+`,
 ];
 
 /**
@@ -1068,6 +1082,47 @@ function beginExclusiveWithRetry(db: DatabaseSync, maxWaitMs = 60_000): void {
   );
 }
 
+/**
+ * v52 bridge for observations recorded before terminal confirmation state
+ * existed. It deliberately creates only a first REMOVED observation. The
+ * migration never closes an occurrence or changes listing availability.
+ */
+export function backfillKhmer24TerminalConfirmations(db: DatabaseSync): number {
+  const result = db.prepare(`
+    UPDATE canonical_listing_source_occurrences AS o
+    SET consecutive_terminal_checks=1,
+      terminal_check_last_seen_at=o.last_seen_at,
+      terminal_check_confirm_after_at=(
+        SELECT strftime('%Y-%m-%dT%H:%M:%fZ', julianday(ac.checked_at) + 0.25)
+        FROM availability_checks ac WHERE ac.source_occurrence_id=o.id
+        ORDER BY ac.id DESC LIMIT 1
+      ),
+      next_check_at=(
+        SELECT strftime('%Y-%m-%dT%H:%M:%fZ', julianday(ac.checked_at) + 0.25)
+        FROM availability_checks ac WHERE ac.source_occurrence_id=o.id
+        ORDER BY ac.id DESC LIMIT 1
+      )
+    WHERE o.is_current=1
+      AND o.last_seen_at < (
+        SELECT ac.checked_at FROM availability_checks ac
+        WHERE ac.source_occurrence_id=o.id ORDER BY ac.id DESC LIMIT 1
+      )
+      AND 'REMOVED'=(
+        SELECT ac.result FROM availability_checks ac
+        WHERE ac.source_occurrence_id=o.id ORDER BY ac.id DESC LIMIT 1
+      )
+      AND 'SOURCE_RECHECK'=(
+        SELECT ac.check_type FROM availability_checks ac
+        WHERE ac.source_occurrence_id=o.id ORDER BY ac.id DESC LIMIT 1
+      )
+      AND 'KHMER24'=(
+        SELECT ac.provider FROM availability_checks ac
+        WHERE ac.source_occurrence_id=o.id ORDER BY ac.id DESC LIMIT 1
+      )
+  `).run();
+  return Number(result.changes);
+}
+
 export function runMigrations(db: DatabaseSync): void {
 
   // Bootstrap migration tracker (idempotent, safe to run before the lock)
@@ -1104,6 +1159,11 @@ export function runMigrations(db: DatabaseSync): void {
         db.exec(sql);
         insertMigration.run(version);
         console.log(`  ✅ Applied migration v${version}`);
+
+        if (version === 52) {
+          const pending = backfillKhmer24TerminalConfirmations(db);
+          console.log(`  🕒 Initialized ${pending} Khmer24 terminal confirmation(s)`);
+        }
 
         if (version === 14) {
           try {
