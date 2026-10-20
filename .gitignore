@@ -11,6 +11,8 @@ dist/
 deploy.sh
 
 # Temporary / sensitive data files
+# Runtime data, customer information and snapshots must never enter public Git.
+/data/
 data/*.db-wal
 data/*.db-shm
 data/fb_session.json
