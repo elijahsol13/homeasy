@@ -8,6 +8,9 @@ import { formatBedroomsLabel } from '../keyboards/filter.keyboard';
 import { buildPriceRangeLabel } from './filters.handler';
 import type { NLSearchCriteria } from '../../../services/nl-search.service';
 import type { CityKey, PropertyCategory } from '../../../config/settings';
+import { findCanonicalLocation, locationSearchNames } from '../../../config/locations';
+import { listingReadPathForUser } from '../../api/listing-read-path';
+import type { PropertyFilterOptions } from '../../../database/repositories/properties.repo';
 
 // ─── Rate Limiter ─────────────────────────────────────────────────────────────
 // Max 4 queries / min, max 20 queries / day per Telegram user
@@ -51,21 +54,25 @@ function checkRateLimit(telegramId: number): { allowed: boolean; message?: strin
 
 // ─── Render AI Result Card ───────────────────────────────────────────────────
 
-function renderCriteriaMessage(criteria: NLSearchCriteria, matchingCount: number): { text: string; keyboard: InlineKeyboard } {
+export function renderCriteriaMessage(criteria: NLSearchCriteria, matchingCount: number): { text: string; keyboard: InlineKeyboard } {
   const cityLabel = '🌴 Siem Reap';
   const typeLabel = '🏠 Monthly Rent';
   const categoryLabel = criteria.category ? ` (${criteria.category})` : '';
 
-  const minCents = criteria.min_price ? criteria.min_price * 100 : null;
-  const maxCents = criteria.max_price ? criteria.max_price * 100 : null;
-  const budgetStr = buildPriceRangeLabel(minCents, maxCents);
+  const budgetStr = buildPriceRangeLabel(criteria.min_price ?? null, criteria.max_price ?? null);
 
   const bedsStr = criteria.bedrooms && criteria.bedrooms.length > 0 ? formatBedroomsLabel(criteria.bedrooms) : 'Any';
 
   let extraLines = '';
   if (criteria.requires_pool) extraLines += '\n• <b>Swimming Pool:</b> 🏊 Required';
   if (criteria.pet_friendly) extraLines += '\n• <b>Pets:</b> 🐾 Pet-friendly';
-  if (criteria.location) extraLines += `\n• <b>District:</b> 📍 ${criteria.location}`;
+  if (criteria.location) {
+    const area = findCanonicalLocation(criteria.location, criteria.city || 'siem_reap');
+    const expandedLabel = area && area.canonicalName.toLowerCase() !== criteria.location.trim().toLowerCase()
+      ? `${criteria.location} (searching ${area.canonicalName} area)`
+      : criteria.location;
+    extraLines += `\n• <b>District:</b> 📍 ${expandedLabel}`;
+  }
   if (criteria.primary_landmark) extraLines += `\n• <b>Landmark:</b> 🚩 ${criteria.primary_landmark}`;
   if (criteria.min_lease_preferred) extraLines += `\n• <b>Lease Term:</b> from ${criteria.min_lease_preferred} month(s)`;
 
@@ -78,7 +85,7 @@ function renderCriteriaMessage(criteria: NLSearchCriteria, matchingCount: number
     `🎯 <b>Search Criteria Understood:</b>\n\n` +
     `• <b>City:</b> ${cityLabel}\n` +
     `• <b>Type:</b> ${typeLabel}${categoryLabel}\n` +
-    `• <b>Budget:</b> ${budgetStr}\n` +
+    `• <b>Budget:</b> ${budgetStr} (USD/month)\n` +
     `• <b>Bedrooms:</b> ${bedsStr}` +
     extraLines +
     unindexedLine +
@@ -94,6 +101,37 @@ function renderCriteriaMessage(criteria: NLSearchCriteria, matchingCount: number
     .text('🔄 New Search', 'cb:ai:reset');
 
   return { text, keyboard: kb };
+}
+
+/** One query path for the estimate, first page and subsequent pages. Prices in
+ * FilterDraft are USD dollars; repository queries expect USD cents. */
+export function searchNLListings(
+  container: AppContainer,
+  telegramId: number | undefined,
+  draft: FilterDraft,
+  limit: number,
+  offset = 0,
+) {
+  const city = draft.city || 'siem_reap';
+  const options: PropertyFilterOptions = {
+    city,
+    type: draft.type || 'rent',
+    category: draft.category ?? undefined,
+    minPrice: draft.min_price != null ? draft.min_price * 100 : undefined,
+    maxPrice: draft.max_price != null ? draft.max_price * 100 : undefined,
+    bedrooms: draft.bedrooms ?? undefined,
+    hasPool: draft.requires_pool || undefined,
+    petFriendly: draft.pet_friendly || undefined,
+    locations: draft.locations?.length
+      ? [...new Set(draft.locations.flatMap((loc) => locationSearchNames(loc, city)))]
+      : undefined,
+    primaryLandmark: draft.primary_landmark ?? undefined,
+    limit,
+    offset,
+  };
+  return listingReadPathForUser(telegramId) === 'canonical'
+    ? container.canonicalListingRepo.searchProperties(options)
+    : container.propertiesRepo.searchProperties(options);
 }
 
 // ─── Factory ──────────────────────────────────────────────────────────────────
@@ -251,23 +289,7 @@ export function createNLSearchHandler(container: AppContainer): Composer<MyConte
 
     await ctx.answerCallbackQuery();
 
-    const minPriceCents = draft.min_price ? draft.min_price * 100 : undefined;
-    const maxPriceCents = draft.max_price ? draft.max_price * 100 : undefined;
-
-    const results = container.propertiesRepo.searchProperties({
-      city: draft.city || 'siem_reap',
-      type: draft.type || 'rent',
-      category: draft.category ?? undefined,
-      minPrice: minPriceCents,
-      maxPrice: maxPriceCents,
-      bedrooms: draft.bedrooms ?? undefined,
-      hasPool: draft.requires_pool || undefined,
-      petFriendly: draft.pet_friendly || undefined,
-      locations: draft.locations?.length ? draft.locations : undefined,
-      primaryLandmark: draft.primary_landmark ?? undefined,
-      limit: 3,
-      offset: 0,
-    });
+    const results = searchNLListings(container, from.id, draft, 3);
 
     if (results.items.length === 0) {
       await ctx.reply('😔 No matching listings found right now. Save this alert to get notified the moment a property is listed!');
@@ -312,27 +334,15 @@ export function createNLSearchHandler(container: AppContainer): Composer<MyConte
     if (!from) return;
 
     const offset = parseInt(ctx.match[1]!, 10);
-    const draft = getOrRecoverDraft(ctx) || { city: 'siem_reap', type: 'rent', locations: [] };
+    const draft = getOrRecoverDraft(ctx);
+    if (!draft?.city || !draft.type) {
+      await ctx.answerCallbackQuery('Session expired. Please submit a new query.');
+      return;
+    }
 
     await ctx.answerCallbackQuery();
 
-    const minPriceCents = draft.min_price ? draft.min_price * 100 : undefined;
-    const maxPriceCents = draft.max_price ? draft.max_price * 100 : undefined;
-
-    const results = container.propertiesRepo.searchProperties({
-      city: draft.city || 'siem_reap',
-      type: draft.type || 'rent',
-      category: draft.category ?? undefined,
-      minPrice: minPriceCents,
-      maxPrice: maxPriceCents,
-      bedrooms: draft.bedrooms ?? undefined,
-      hasPool: draft.requires_pool || undefined,
-      petFriendly: draft.pet_friendly || undefined,
-      locations: draft.locations?.length ? draft.locations : undefined,
-      primaryLandmark: draft.primary_landmark ?? undefined,
-      limit: 3,
-      offset,
-    });
+    const results = searchNLListings(container, from.id, draft, 3, offset);
 
     for (const prop of results.items) {
       try {
@@ -393,16 +403,13 @@ export function createNLSearchHandler(container: AppContainer): Composer<MyConte
       return;
     }
 
-    const minPriceCents = draft.min_price ? draft.min_price * 100 : null;
-    const maxPriceCents = draft.max_price ? draft.max_price * 100 : null;
-
     container.filtersRepo.createFilter({
       user_id: user.id,
       type: draft.type,
       category: draft.category ?? null,
       city: draft.city,
-      min_price: minPriceCents,
-      max_price: maxPriceCents,
+      min_price: draft.min_price ?? null,
+      max_price: draft.max_price ?? null,
       bedrooms: draft.bedrooms ?? null,
       requires_pool: draft.requires_pool ?? false,
       min_lease_preferred: draft.min_lease_preferred ?? null,
@@ -428,8 +435,8 @@ export function createNLSearchHandler(container: AppContainer): Composer<MyConte
     await ctx.answerCallbackQuery();
     // Move user into wizard to fine-tune budget or other fields
     ctx.session.wizardStep = 'filter:budget';
-    const currentMin = draft?.min_price ? draft.min_price * 100 : null;
-    const currentMax = draft?.max_price ? draft.max_price * 100 : null;
+    const currentMin = draft?.min_price ?? null;
+    const currentMax = draft?.max_price ?? null;
     await ctx.reply(
       `✏️ <b>Adjust Parameters</b>\n\n` +
         `Current budget: <b>${buildPriceRangeLabel(currentMin, currentMax)}</b>\n\n` +
@@ -485,7 +492,7 @@ export function extractDraftFromCriteriaText(text: string): FilterDraft | null {
   const catMatch = /\((apartment|condo|house|villa|land|room|hotel)\)/i.exec(clean);
   const category = catMatch ? (catMatch[1]!.toLowerCase() as PropertyCategory) : null;
 
-  // Budget: e.g. "Up to $25,000", "$200 – $500", "From $300"
+  // Budget: e.g. "Up to $200 (USD/month)", "$200 – $500", "From $300"
   let min_price: number | undefined;
   let max_price: number | undefined;
   const budgetRangeMatch = /Budget:\s*.*?\$?(\d[\d,]*)\s*[–-]\s*\$?(\d[\d,]*)/i.exec(clean);
@@ -499,6 +506,13 @@ export function extractDraftFromCriteriaText(text: string): FilterDraft | null {
     max_price = parseInt(budgetUpToMatch[1]!.replace(/,/g, ''), 10);
   } else if (budgetFromMatch) {
     min_price = parseInt(budgetFromMatch[1]!.replace(/,/g, ''), 10);
+  }
+
+  // Older AI cards rendered prices in cents with a dollar sign. They have
+  // "Monthly Rent" but no explicit USD/month marker; fix them on recovery.
+  if (/Type:\s*[^\n]*Monthly Rent/i.test(clean) && !/Budget:\s*[^\n]*\(USD\/month\)/i.test(clean)) {
+    if (min_price !== undefined) min_price /= 100;
+    if (max_price !== undefined) max_price /= 100;
   }
 
   // Bedrooms: e.g. "1 BR", "Studio", "1, 2 BR"
@@ -520,7 +534,9 @@ export function extractDraftFromCriteriaText(text: string): FilterDraft | null {
 
   // District / Location
   const distMatch = /District:\s*(?:📍\s*)?([^\n]+)/i.exec(clean);
-  const locations: string[] = distMatch ? [distMatch[1]!.trim()] : [];
+  const locations: string[] = distMatch
+    ? [distMatch[1]!.trim().replace(/\s*\(searching .+ area\)$/i, '')]
+    : [];
 
   // Pool
   const requires_pool = /Swimming Pool:\s*(?:🏊\s*)?Required/i.test(clean);
@@ -538,16 +554,18 @@ export function extractDraftFromCriteriaText(text: string): FilterDraft | null {
 }
 
 function getOrRecoverDraft(ctx: MyContext): FilterDraft | null {
-  if (ctx.session?.filterDraft?.city && ctx.session?.filterDraft?.type) {
-    return ctx.session.filterDraft;
-  }
+  // When a user taps an older criteria card, use that card instead of the
+  // possibly newer search stored in their Telegram session.
   const msgText = ctx.callbackQuery?.message?.text || (ctx.callbackQuery?.message as { caption?: string } | undefined)?.caption || '';
   const recovered = extractDraftFromCriteriaText(msgText);
   if (recovered) {
     ctx.session.filterDraft = recovered;
     return recovered;
   }
-  return ctx.session?.filterDraft || null;
+  if (ctx.session?.filterDraft?.city && ctx.session?.filterDraft?.type) {
+    return ctx.session.filterDraft;
+  }
+  return null;
 }
 
 // ─── Helper: Handle Criteria Result ──────────────────────────────────────────
@@ -587,21 +605,7 @@ async function handleSearchCriteriaResult(ctx: MyContext, criteria: NLSearchCrit
     primary_landmark: criteria.primary_landmark ?? null,
   };
 
-  const minPriceCents = criteria.min_price ? criteria.min_price * 100 : undefined;
-  const maxPriceCents = criteria.max_price ? criteria.max_price * 100 : undefined;
-
-  const results = ctx.container.propertiesRepo.searchProperties({
-    city,
-    type: criteria.type || 'rent',
-    category: criteria.category ?? undefined,
-    minPrice: minPriceCents,
-    maxPrice: maxPriceCents,
-    bedrooms: criteria.bedrooms ?? undefined,
-    hasPool: criteria.requires_pool || undefined,
-    petFriendly: criteria.pet_friendly || undefined,
-    primaryLandmark: criteria.primary_landmark ?? undefined,
-    limit: 1,
-  });
+  const results = searchNLListings(ctx.container, ctx.from?.id, ctx.session.filterDraft, 1);
 
   const { text, keyboard } = renderCriteriaMessage(criteria, results.total);
   await ctx.reply(text, { parse_mode: 'HTML', reply_markup: keyboard });

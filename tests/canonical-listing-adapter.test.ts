@@ -24,6 +24,43 @@ const facts = sanitizeListingFacts({
 }, source)!;
 
 describe('canonical facts → legacy projection', () => {
+  test('drops an AI-invented bedroom count and its generated description claim when the original says none', () => {
+    const ungrounded = sanitizeListingFacts({
+      is_supported_listing: true,
+      title_en: '5 Bedroom Shophouse',
+      description_en: 'A five-bedroom shophouse is available. Suitable for office use.',
+      price: 500,
+      currency: 'USD',
+      property_type: 'Flat House',
+      city: 'Siem Reap',
+      bedrooms: 5,
+      bathrooms: 2,
+    }, 'Shophouse for rent in Siem Reap, Svay Dangkum. $500/month. Office use allowed.')!;
+
+    expect(ungrounded).toMatchObject({
+      bedrooms: null,
+      bathrooms: null,
+      title_en: 'Shophouse',
+      description_en: 'A shophouse is available. Suitable for office use.',
+    });
+  });
+
+  test('reconciles a generated room count against a written count in the source', () => {
+    const facts = sanitizeListingFacts({
+      is_supported_listing: true,
+      title_en: 'Five Bedroom Villa',
+      description_en: 'The villa has 5 bedrooms. It has a garden.',
+      price: 500,
+      currency: 'USD',
+      property_type: 'Private Villa',
+      city: 'Siem Reap',
+      bedrooms: 5,
+    }, 'Two bedrooms villa for rent in Siem Reap. $500/month.')!;
+
+    expect(facts).toMatchObject({ bedrooms: 2, title_en: '2 Bedroom Villa',
+      description_en: 'The villa has 2 bedrooms. It has a garden.' });
+  });
+
   test('preserves uncertainty and does not invent a lease, tariff or address', () => {
     const legacy = toLegacyListingExtraction(facts);
     expect(legacy.min_lease).toBeNull();

@@ -20,6 +20,11 @@ import { RepostClusteringService } from './modules/parser/repost-clustering';
 import { CanonicalShadowService } from './modules/parser/canonical-dedupe';
 import { ListingIdentityRepository } from './database/repositories/listing-identity.repo';
 import { InterestsRepository } from './database/repositories/interests.repo';
+import { CanonicalReportsRepository } from './database/repositories/canonical-reports.repo';
+import { CanonicalAlertsRepository } from './database/repositories/canonical-alerts.repo';
+import { CanonicalAlertsService } from './services/canonical-alerts.service';
+import { CanonicalReviewAlertsRepository } from './database/repositories/canonical-review-alerts.repo';
+import { CanonicalReviewAlertsService } from './services/canonical-review-alerts.service';
 
 export interface AppContainer {
   db: DatabaseSync;
@@ -27,6 +32,11 @@ export interface AppContainer {
   propertiesRepo: PropertiesRepository;
   canonicalListingRepo: CanonicalListingRepository;
   listingIdentityRepo: ListingIdentityRepository;
+  canonicalReportsRepo: CanonicalReportsRepository;
+  canonicalAlertsRepo: CanonicalAlertsRepository;
+  canonicalAlertsService: CanonicalAlertsService;
+  canonicalReviewAlertsRepo: CanonicalReviewAlertsRepository;
+  canonicalReviewAlertsService: CanonicalReviewAlertsService;
   filtersRepo: FiltersRepository;
   favoritesRepo: FavoritesRepository;
   metricsRepo: MetricsRepository;
@@ -57,13 +67,19 @@ export function createContainer(options?: CreateContainerOptions): AppContainer 
   const propertiesRepo = new PropertiesRepository(db);
   const canonicalListingRepo = new CanonicalListingRepository(db);
   const listingIdentityRepo = new ListingIdentityRepository(db);
+  const canonicalReportsRepo = new CanonicalReportsRepository(db);
+  const canonicalAlertsRepo = new CanonicalAlertsRepository(db);
+  const canonicalReviewAlertsRepo = new CanonicalReviewAlertsRepository(db);
   const filtersRepo = new FiltersRepository(db);
   const favoritesRepo = new FavoritesRepository(db);
   const metricsRepo = new MetricsRepository(db);
   const analyticsRepo = new AnalyticsRepository(db);
   const notifierService = new NotifierService(options?.api);
   const alertService = new AlertService(options?.api);
-  const matcherService = new MatcherService(filtersRepo, usersRepo, propertiesRepo, notifierService);
+  const matcherService = new MatcherService(filtersRepo, usersRepo, propertiesRepo, notifierService,
+    canonicalListingRepo);
+  const canonicalAlertsService = new CanonicalAlertsService(canonicalAlertsRepo, canonicalListingRepo, matcherService, notifierService);
+  const canonicalReviewAlertsService = new CanonicalReviewAlertsService(canonicalReviewAlertsRepo, alertService);
   const sourceIngestionRepo = new SourceIngestionRepository(db);
   const interestsRepo = new InterestsRepository(db);
   const ingestionService = new IngestionService(propertiesRepo, matcherService, alertService, sourceIngestionRepo,
@@ -79,6 +95,11 @@ export function createContainer(options?: CreateContainerOptions): AppContainer 
     propertiesRepo,
     canonicalListingRepo,
     listingIdentityRepo,
+    canonicalReportsRepo,
+    canonicalAlertsRepo,
+    canonicalAlertsService,
+    canonicalReviewAlertsRepo,
+    canonicalReviewAlertsService,
     filtersRepo,
     favoritesRepo,
     metricsRepo,

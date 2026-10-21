@@ -45,6 +45,8 @@ interface ListingRow {
   category: string | null; price: number | null; bedrooms: number | null;
   last_seen_at: string; availability_last_confirmed_at: string | null;
   next_check_at: string | null; occurrence_id: number | null; source_type: string | null; sangkat?: string | null;
+  pending_confirmation: number;
+  has_active_job: number;
 }
 
 interface ActiveFilter {
@@ -103,18 +105,20 @@ export class FreshnessScheduler {
     const rows = this.db.prepare(`
       SELECT l.id,l.status,l.availability_status,l.city,l.category,l.price,l.bedrooms,l.sangkat,
         l.last_seen_at,l.availability_last_confirmed_at,
-        (SELECT MIN(oo.next_check_at) FROM canonical_listing_source_occurrences oo WHERE oo.listing_id=l.id AND oo.source_entity_key='canonical-dedupe-v1' AND oo.is_current=1) AS next_check_at,
-        (SELECT oo.id FROM canonical_listing_source_occurrences oo
-          JOIN source_registry rr ON rr.id=oo.source_registry_id
-          WHERE oo.listing_id=l.id AND oo.source_entity_key='canonical-dedupe-v1' AND oo.is_current=1 ORDER BY
-            CASE rr.source_type WHEN 'AGENT' THEN 0 WHEN 'LANDLORD' THEN 0 WHEN 'KHMER24' THEN 1 ELSE 2 END,
-            oo.last_seen_at DESC LIMIT 1) AS occurrence_id,
-        (SELECT r.source_type FROM canonical_listing_source_occurrences oo
-          JOIN source_registry r ON r.id=oo.source_registry_id
-          WHERE oo.listing_id=l.id AND oo.is_current=1 ORDER BY
-            CASE r.source_type WHEN 'AGENT' THEN 0 WHEN 'LANDLORD' THEN 0 WHEN 'KHMER24' THEN 1 ELSE 2 END,
-            oo.last_seen_at DESC LIMIT 1) AS source_type
+        selected.next_check_at,selected.id AS occurrence_id,r.source_type,
+        CASE WHEN selected.consecutive_terminal_checks>0 AND selected.terminal_check_confirm_after_at IS NOT NULL
+          THEN 1 ELSE 0 END AS pending_confirmation,
+        EXISTS(SELECT 1 FROM freshness_jobs j WHERE j.listing_id=l.id
+          AND j.status IN ('QUEUED','RUNNING')) AS has_active_job
       FROM canonical_listings l
+      LEFT JOIN canonical_listing_source_occurrences selected ON selected.id=(
+        SELECT oo.id FROM canonical_listing_source_occurrences oo
+        JOIN source_registry rr ON rr.id=oo.source_registry_id
+        WHERE oo.listing_id=l.id AND oo.source_entity_key='canonical-dedupe-v1' AND oo.is_current=1
+        ORDER BY CASE WHEN oo.consecutive_terminal_checks>0 AND oo.terminal_check_confirm_after_at IS NOT NULL
+          THEN -1 ELSE CASE rr.source_type WHEN 'AGENT' THEN 0 WHEN 'LANDLORD' THEN 0 WHEN 'KHMER24' THEN 1 ELSE 2 END END,
+          oo.last_seen_at DESC,oo.id LIMIT 1)
+      LEFT JOIN source_registry r ON r.id=selected.source_registry_id
       WHERE l.status='active' AND COALESCE(l.availability_status,'unknown') NOT IN ('rented','removed')
       ORDER BY l.id
     `).all() as unknown as Array<ListingRow>;
@@ -155,13 +159,19 @@ export class FreshnessScheduler {
       const latestEvidence = [row.last_seen_at, row.availability_last_confirmed_at]
         .filter((value): value is string => Boolean(value)).sort().at(-1) ?? null;
       const age = daysSince(latestEvidence, now);
-      if (age <= staleAfterDays) { currentlyFresh++; countSkip('recently observed or confirmed'); continue; }
+      const dueConfirmation = row.pending_confirmation === 1 && row.next_check_at !== null &&
+        Date.parse(row.next_check_at) <= now.getTime();
+      if (age <= staleAfterDays && !dueConfirmation) { currentlyFresh++; countSkip('recently observed or confirmed'); continue; }
       stale++;
       if (!topDemand.has(row.id)) { countSkip('no active demand in top-N'); continue; }
+      if (row.occurrence_id === null) { countSkip('no current canonical source occurrence'); continue; }
+      if (row.has_active_job) { countSkip('freshness job already queued or running'); continue; }
       if (row.next_check_at && Date.parse(row.next_check_at) > now.getTime()) { countSkip('next_check_at is in the future'); continue; }
       const provider = providerFor(row.source_type);
       const cost = providerCost(provider);
-      const reasons = [`active request top-${topN} match (${topDemand.get(row.id)!.size} request(s))`, `last evidence ${Math.floor(age)} day(s) ago`, `cheapest available source: ${provider}`];
+      const reasons = [`active request top-${topN} match (${topDemand.get(row.id)!.size} request(s))`,
+        dueConfirmation ? 'due Khmer24 terminal confirmation' : `last evidence ${Math.floor(age)} day(s) ago`,
+        `selected source: ${provider}`];
       proposed.push({ listingId: row.id, priority: Math.min(100, 70 + Math.floor(age) + topDemand.get(row.id)!.size * 5),
         provider, checkType: provider === 'AGENT' ? 'AGENT_CONFIRMATION' : 'SOURCE_RECHECK',
         sourceOccurrenceId: row.occurrence_id, reason: reasons, estimatedBrightDataRecords: cost });
@@ -203,6 +213,10 @@ export function reserveBrightDataRecords(db: DatabaseSync, input: {
   const monthStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1)).toISOString();
   db.exec('BEGIN IMMEDIATE');
   try {
+    // Only one unfinished freshness job may target a listing, across providers.
+    const alreadyQueued = db.prepare(`SELECT 1 FROM freshness_jobs WHERE listing_id=?
+      AND status IN ('QUEUED','RUNNING') LIMIT 1`).get(input.listingId);
+    if (alreadyQueued) { db.exec('ROLLBACK'); return false; }
     const spent = db.prepare(`SELECT COALESCE(SUM(records),0) n FROM external_provider_usage
       WHERE lower(provider) LIKE '%brightdata%' AND created_at>=?`).get(monthStart) as { n: number };
     const reserved = db.prepare(`SELECT COALESCE(SUM(estimated_records),0) n FROM freshness_jobs

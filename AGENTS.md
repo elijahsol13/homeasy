@@ -1,46 +1,22 @@
 # 🤖 Project Rules & Inviolable Principles for AI Agents & Developers
 
-## 🛡️ IRONCLAD RULE: AGGRESSIVE TRAFFIC CONSERVATION ON RESIDENTIAL PROXIES
+## Project harness: durable context and safe entry
 
-> **CRITICAL MANDATE**: Residential proxy bandwidth is metered and expensive ($2 - $10+ per Gigabyte).
-> **EVERY AGENT AND DEVELOPER MUST ACTIVELY SEEK, PROPOSE, AND ENFORCE TRAFFIC REDUCTIONS IN ALL PROXY-ROUTED CODE.**
-> Wasting proxy bandwidth on binary data or unneeded telemetry is treated as a critical regression.
+- **OWNER DIRECTIVE — no self-invented work (2026-10-15):** Follow the agreed sequence in `agent_docs/project_progress.md` and `agent_docs/decisions.md`. Do not turn an incidental concern, test idea, or optional risk mitigation into a new prerequisite, architecture project, or multi-hour detour. If the goal, necessity, priority, underlying assumption, cost, or scope is materially unclear, **ask the owner a targeted question before starting that branch of work**. Explain the concrete reason and impact first. Do not interpret "continue" as approval for an unrelated workstream. Routine implementation/testing within a clearly approved workstream can proceed autonomously.
+- **Owner-approved network architecture (2026-10-15):** Scrapers use the ordinary residential internet connection of the host (currently MacBook/Docker; planned home server behind CGNAT). Remove obsolete paid/residential proxy integrations and experimental Khmer24 egress brokers, Linux network namespaces, firewall quotas and physical-byte caps. Do not restart that work without a specific owner request. Cloudflare Tunnel/reverse proxy for incoming API traffic is a separate existing component.
+- Before nontrivial work, follow the short entry map at `agent_docs/current_context.md`; read `agent_docs/project_progress.md`, `agent_docs/decisions.md` and `agent_docs/latest_session_work.md`. Read architecture, roadmap and history only as relevant to the current task. Follow `agent_docs/harness_protocol.md` for intake, verification and handoff. Do not bulk-load historical logs.
+- `AGENTS.md` owns standing engineering/safety invariants; `agent_docs/decisions.md` records accepted choices; `agent_docs/project_progress.md` owns current gates and next priorities. Do not create competing copies of these facts in ad-hoc agent memory.
+- **Codex tooling (2026-10-21):** Superpowers supplies optional task-appropriate planning, debugging, testing and review skills; Serena MCP supplies semantic TypeScript/Python navigation. In Codex Desktop, ensure Serena has activated **this** Homeasy project before symbol queries (activate it explicitly if needed). Serena runs with `no-memories`; do not create separate Serena/project-plan sources of truth. Apply skills within the owner's approved task and the existing harness; never let a skill create a new prerequisite, unauthorized branch/worktree, or unrelated workstream.
+- Preserve the dirty working tree and real `data/` files. Before a database operation, establish whether its path is live; use isolated temporary fixtures for tests. Never reset live listing inventory or execute live scrapers/paid LLMs without explicit task authorization.
+- Never stage database files, SQLite WAL/SHM/journals, backups, or private runtime files from `data/`. The repository provides `.gitignore` rules and `.githooks/pre-commit` with `scripts/check-staged-private-files.cjs` to reject forced-staged private files. In every new clone, enable the hook with `git config --local core.hooksPath .githooks`. Do not bypass this hook for normal commits. Existing remote history/PR refs require separate remediation.
+- Record evidence, remaining risks and the next step in the **short** `agent_docs/latest_session_work.md` after meaningful work; move older handoffs to `agent_docs/history/` with an index before they accumulate. `project_progress.md` owns current state, `decisions.md` owner decisions. External tools may assist execution, but must not create competing sources of authority.
 
----
+## 🛡️ Scraper resource filtering
 
-### 1. The 5 Zero-Tolerance Proxy Invariants
-
-1. **NO UNFILTERED BROWSER CONTEXTS**:
-   - **NEVER** launch a Playwright or Puppeteer browser/context with a proxy and call `page.goto()` without an active route interception filter.
-   - You MUST attach resource blocking (`page.route` or `attachTrafficGuard`) **before** any navigation happens.
-
-2. **ABORT 100% OF BINARY IMAGES & MEDIA**:
-   - Photo URLs, albums, and CDN links are extracted as **string URLs** from JSON API payloads (GraphQL Relay, REST) or HTML DOM attributes (`src`, `data-src`, `image.uri`).
-   - The browser worker **NEVER** needs to download or render the binary image blobs (`.jpg`, `.png`, `.webp`, `scontent*`, `fbcdn.net`, `khmer24.com/photos`).
-   - Aborting images, videos, audio, and animations saves **85% to 95%** of page weight.
-
-3. **ABORT FONTS, STYLESHEETS & NON-ESSENTIALS**:
-   - Headless scraping agents do not look at layouts or fonts.
-   - Abort resource types: `['image', 'media', 'font', 'stylesheet', 'other']`.
-   - Only allow stylesheets if interactive human visual login (e.g. Remote Browser) is strictly taking place.
-
-4. **ABORT TELEMETRY, ANALYTICS & LOGGING BEACONS**:
-   - Facebook, Khmer24, and third-party sites stream megabytes of telemetry:
-     - `facebook.com/ajax/bz`, `facebook.com/tr/`, `connect.facebook.net/signals`
-     - `graph.facebook.com/logging_client_events`
-     - `google-analytics.com`, `googletagmanager.com`, `doubleclick.net`, `onesignal`
-   - Abort these unconditionally.
-
-5. **PREFER TEXT-ONLY / DIRECT HTTP OVER BROWSERS**:
-   - Always evaluate direct HTTP HTML/JSON extraction before launching a browser.
-   - Never use mobile Facebook hosts or spoof a mobile UA: Camoufox supports desktop fingerprints only.
-   - Facebook connects directly from the Cambodian scraper host by default. Proxying is explicit opt-in and must never affect Khmer24, Telegram, AI APIs, or internal services.
-
----
-
-## 🛠️ Implementation Standard
-
-Use `attachTrafficGuard(page)` from `src/modules/parser/traffic-guard.ts` across all scrapers, test helpers, and maintenance scripts.
+- Attach `attachTrafficGuard(page)` from `src/modules/parser/traffic-guard.ts` before browser navigation where used by the existing scraper. Keep the existing response/API interception and extraction logic.
+- Extract image URLs as strings from JSON/HTML, avoiding unnecessary binary image, media and font downloads in headless workers. Keep visual assets/stylesheets available when required for attended login.
+- Preserve existing blocking of nonessential telemetry and tracking beacons, and direct HTTP/JSON extraction when it works for the source.
+- Never spoof mobile Facebook user agents: the pinned Camoufox identity supports desktop fingerprints only.
 
 ---
 
@@ -59,7 +35,7 @@ implementation of each rule, always.
 ```bash
 python3 -m venv .venv-camoufox
 .venv-camoufox/bin/pip install -r scripts/camoufox/requirements.txt
-.venv-camoufox/bin/camoufox fetch          # patched Firefox + GeoLite2 + uBO
+.venv-camoufox/bin/camoufox fetch          # patched Firefox + uBO
 ```
 
 ### Run
@@ -68,7 +44,7 @@ python3 -m venv .venv-camoufox
 # One-time visual login: a headed Camoufox window opens, YOU type the
 # password/2FA, the script only waits for the c_user cookie and saves
 # storage_state to data/fb_session.json.
-npm run fb:login                  # direct local IP by default; use --proxy explicitly
+npm run fb:login                  # direct connection through the local host
 
 # One-group smoke cycle, then the normal headless cycle
 npm run scrape:fb:smoke -- --group=0

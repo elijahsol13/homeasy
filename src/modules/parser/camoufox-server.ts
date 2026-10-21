@@ -35,8 +35,6 @@ export interface CamoufoxBrowser {
 
 export interface LaunchCamoufoxOptions {
   headless?: boolean;
-  /** Raw proxy URL (e.g. http://user:pass@host:port) — parsed by serve.py. */
-  proxyUrl?: string;
   /** Device identity file (pinned fingerprint + seeds). Default data/fb_device.json. */
   devicePath?: string;
 }
@@ -53,7 +51,6 @@ export async function launchCamoufox(options: LaunchCamoufoxOptions = {}): Promi
 
   const args = [SERVE_SCRIPT];
   if (options.headless) args.push('--headless');
-  if (options.proxyUrl) args.push('--proxy', options.proxyUrl);
   if (options.devicePath) args.push('--device', options.devicePath);
 
   const proc: ChildProcess = spawn(CAMOUFOX_PYTHON, args, {

@@ -1,10 +1,11 @@
 import type { DatabaseSync } from 'node:sqlite';
 import type { CityKey } from '../../config/settings';
-import { canonicalizeLocation, extractCoordinatesFromMapsUrl } from '../../config/locations';
+import { canonicalizeLocation, extractCoordinatesFromMapsUrl, isCoordinateInSanityBounds } from '../../config/locations';
+import { isKnownKhmer24AdministrativePin } from '../../modules/parser/source-geography';
 import type { Property, PropertyFilterOptions } from './properties.repo';
 
 type CanonicalRow = Record<string, unknown>;
-type ReadStats = { queryCount: number; candidateCount: number; sqlMs: number; mappingMs: number; totalMs: number };
+type ReadStats = { queryCount: number; candidateCount: number; countMs: number; listMs: number; sqlMs: number; mappingMs: number; totalMs: number };
 
 function jsonObject(value: unknown): Record<string, unknown> {
   if (typeof value !== 'string') return {};
@@ -32,45 +33,122 @@ const LIKE_ESCAPE = (value: string) => `%${value.toLowerCase().replace(/[!%_]/g,
 
 /** Read-only canonical projection. Filtering, ordering, counting and pagination are executed in SQLite. */
 export class CanonicalListingRepository {
-  lastDiagnostics: ReadStats = { queryCount: 2, candidateCount: 0, sqlMs: 0, mappingMs: 0, totalMs: 0 };
+  lastDiagnostics: ReadStats = { queryCount: 2, candidateCount: 0, countMs: 0, listMs: 0, sqlMs: 0, mappingMs: 0, totalMs: 0 };
   constructor(private readonly db: DatabaseSync) {}
 
   searchProperties(options: PropertyFilterOptions = {}): { items: Property[]; total: number } {
     const started = performance.now();
     const { whereSql, params } = this.buildWhere(options);
     const from = this.fromSql();
-    const sqlStarted = performance.now();
-    const countRow = this.db.prepare(`SELECT COUNT(*) AS total ${from} ${whereSql}`).get(...params) as { total: number };
-    const total = Number(countRow.total);
-    const orderBy = options.sort === 'price_asc'
-      ? 'ORDER BY l.price ASC, COALESCE(o.posted_at,o.last_seen_at,l.last_seen_at) DESC,l.id DESC'
-      : options.sort === 'price_desc'
-        ? 'ORDER BY l.price DESC, COALESCE(o.posted_at,o.last_seen_at,l.last_seen_at) DESC,l.id DESC'
-        : 'ORDER BY COALESCE(o.posted_at,o.last_seen_at,l.last_seen_at) DESC,l.id DESC';
-    const rentTier=this.rentTierSql(options);
-    const cityTier=this.cityTierSql(options.city);
-    const tierOrder = `${cityTier}='EXACT_CITY' DESC,${cityTier}='PROBABLE_CITY' DESC,CASE WHEN ${rentTier}='EXACT' THEN 0 WHEN ${rentTier}='PROBABLE' THEN 1 ELSE 2 END,`;
     const limit = Math.max(1, Math.min(options.limit ?? 20, 500));
     const offset = Math.max(0, options.offset ?? 0);
-    const rows = this.db.prepare(`SELECT ${this.projectionSql(false,options)} ${from} ${whereSql} ORDER BY ${tierOrder} ${orderBy.replace(/^ORDER BY /,'')} LIMIT ? OFFSET ?`)
+    const sqlStarted = performance.now();
+    const rows = this.db.prepare(this.listSql(options, from, whereSql))
       .all(...params, limit, offset) as CanonicalRow[];
+    const listMs = performance.now() - sqlStarted;
+    // The window total reuses the expensive geographic and offer eligibility scan.
+    // A page beyond the end has no row carrying that total, so count only then.
+    const countStarted = performance.now();
+    const total = rows.length ? Number(rows[0].__total) : Number((this.db.prepare(`SELECT COUNT(*) AS total ${from} ${whereSql}`).get(...params) as { total: number }).total);
+    const countMs = performance.now() - countStarted;
     const sqlMs = performance.now() - sqlStarted;
     const mappingStarted = performance.now();
     const items = rows.map((row) => this.toProperty(row, false));
     const mappingMs = performance.now() - mappingStarted;
-    this.lastDiagnostics = { queryCount: 2, candidateCount: rows.length, sqlMs: +sqlMs.toFixed(2), mappingMs: +mappingMs.toFixed(2), totalMs: +(performance.now()-started).toFixed(2) };
+    this.lastDiagnostics = { queryCount: rows.length ? 1 : 2, candidateCount: rows.length, countMs: +countMs.toFixed(2), listMs: +listMs.toFixed(2), sqlMs: +sqlMs.toFixed(2), mappingMs: +mappingMs.toFixed(2), totalMs: +(performance.now()-started).toFixed(2) };
     return { items, total };
   }
 
-  explainSearch(options: PropertyFilterOptions = {}): Array<Record<string, unknown>> {
+  /** Stream every eligible map candidate in list order. Viewport filtering and
+   * the exact-marker cap happen after GPS validation; area counts need all rows. */
+  forEachMapProperty(options: PropertyFilterOptions, visit: (property: Property) => void): number {
     const { whereSql, params } = this.buildWhere(options);
-    return this.db.prepare(`EXPLAIN QUERY PLAN SELECT l.id ${this.fromSql()} ${whereSql}`).all(...params) as Array<Record<string, unknown>>;
+    let count = 0;
+    const rows = this.db.prepare(this.listSql(options, this.fromSql(), whereSql, false)).iterate(...params);
+    for (const row of rows) {
+      visit(this.toProperty(row as CanonicalRow, false));
+      count += 1;
+    }
+    return count;
+  }
+
+  /** Aggregate metadata for the entire public cohort without the 500-card limit
+   * or the expensive photo/contact/detail projections. Keep location fallbacks
+   * identical to toProperty() and eligibility identical to searchProperties(). */
+  getMetadata(city: CityKey): {
+    locations: Array<{ location: string; count: number }>;
+    categories: Array<{ category: string; count: number }>;
+    priceRange: { minPrice: number; maxPrice: number };
+  } {
+    const { whereSql, params } = this.buildWhere({ city, type: 'rent' });
+    const rows = this.db.prepare(`SELECT l.category,l.price,l.explicit_location,l.sangkat,
+        p.explicit_location AS property_explicit_location,p.sangkat AS property_sangkat,p.canonical_address,
+        COALESCE(NULLIF(l.city,''),NULLIF(p.city,'')) AS projection_city
+        ${this.fromSql()} ${whereSql}`).iterate(...params);
+    const locations = new Map<string, number>();
+    const categories = new Map<string, number>();
+    let minPrice = 0;
+    let maxPrice = 0;
+    for (const row of rows) {
+      const item = row as CanonicalRow;
+      const location = nonEmpty(item.explicit_location) ?? nonEmpty(item.sangkat)
+        ?? nonEmpty(item.property_explicit_location) ?? nonEmpty(item.property_sangkat)
+        ?? nonEmpty(item.canonical_address) ?? nonEmpty(item.projection_city) ?? 'siem_reap';
+      locations.set(location, (locations.get(location) ?? 0) + 1);
+      const category = nonEmpty(item.category);
+      if (category) categories.set(category, (categories.get(category) ?? 0) + 1);
+      const price = Number(item.price);
+      if (price > 0 && (!minPrice || price < minPrice)) minPrice = price;
+      if (price > maxPrice) maxPrice = price;
+    }
+    return {
+      locations: [...locations].map(([location, count]) => ({ location, count })),
+      categories: [...categories].map(([category, count]) => ({ category, count })),
+      priceRange: { minPrice, maxPrice },
+    };
+  }
+
+  private listSql(options: PropertyFilterOptions, from: string, whereSql: string, paginated = true): string {
+    const priceSort = options.sort === 'price_asc' || options.sort === 'price_desc';
+    const orderBy = options.sort === 'price_asc'
+      ? 'ORDER BY CASE WHEN l.price IS NULL OR l.price<=0 THEN 1 ELSE 0 END ASC,l.price ASC,COALESCE(o.posted_at,o.last_seen_at,l.last_seen_at) DESC,l.id DESC'
+      : options.sort === 'price_desc'
+        ? 'ORDER BY CASE WHEN l.price IS NULL OR l.price<=0 THEN 1 ELSE 0 END ASC,l.price DESC,COALESCE(o.posted_at,o.last_seen_at,l.last_seen_at) DESC,l.id DESC'
+        : 'ORDER BY COALESCE(o.posted_at,o.last_seen_at,l.last_seen_at) DESC,l.id DESC';
+    const rentTier=this.rentTierSql(options);
+    const cityTier=this.cityTierSql(options.city);
+    const tierOrder = priceSort ? '' : `${cityTier}='EXACT_CITY' DESC,${cityTier}='PROBABLE_CITY' DESC,CASE WHEN ${rentTier}='EXACT' THEN 0 WHEN ${rentTier}='PROBABLE' THEN 1 ELSE 2 END,`;
+    return `SELECT ${paginated ? 'COUNT(*) OVER() AS __total, ' : ''}${this.projectionSql(false,options)} ${from} ${whereSql} ORDER BY ${tierOrder} ${orderBy.replace(/^ORDER BY /,'')}${paginated ? ' LIMIT ? OFFSET ?' : ''}`;
+  }
+
+  explainSearch(options: PropertyFilterOptions = {}): { count: Array<Record<string, unknown>>; list: Array<Record<string, unknown>> } {
+    const { whereSql, params } = this.buildWhere(options);
+    const from = this.fromSql();
+    const limit = Math.max(1, Math.min(options.limit ?? 20, 500));
+    const offset = Math.max(0, options.offset ?? 0);
+    return {
+      count: this.db.prepare(`EXPLAIN QUERY PLAN SELECT COUNT(*) ${from} ${whereSql}`).all(...params) as Array<Record<string, unknown>>,
+      list: this.db.prepare(`EXPLAIN QUERY PLAN ${this.listSql(options, from, whereSql)}`).all(...params,limit,offset) as Array<Record<string, unknown>>,
+    };
+  }
+
+  /**
+   * Returns the exact set of canonical listings that the public catalog can
+   * expose for the supplied filters. Operational jobs use this rather than
+   * duplicating the publication SQL in a second subsystem.
+   */
+  listPublicListingIds(options: PropertyFilterOptions = {}): number[] {
+    const { whereSql, params } = this.buildWhere(options);
+    const rows = this.db.prepare(`SELECT l.id ${this.fromSql()} ${whereSql} ORDER BY l.id ASC`)
+      .all(...params) as Array<{ id: number }>;
+    return rows.map((row) => row.id);
   }
 
   getPropertyById(id: number, includeModerated = false): Property | undefined {
     const row = this.db.prepare(`SELECT ${this.projectionSql(true)} ${this.fromSql()}
-      WHERE l.id=? AND l.status='active' AND COALESCE(l.availability_status,'unknown') NOT IN ('rented','removed')
+      WHERE l.id=? ${includeModerated ? '' : "AND l.status='active' AND COALESCE(l.availability_status,'unknown') NOT IN ('rented','removed')"}
         ${includeModerated ? '' : "AND EXISTS(SELECT 1 FROM canonical_listing_moderation m WHERE m.listing_id=l.id AND m.review_status='approved')"}
+        ${includeModerated ? '' : `AND ${this.publicFreshnessSql()}`}
         AND s.classification='HOUSING_SUPPLY'
         AND lower(COALESCE(json_extract(l.listing_facts_json,'$.offer_type'),''))<>'sale'
         AND NOT (lower(COALESCE(json_extract(l.listing_facts_json,'$.offer_type'),'')) NOT IN ('rent','rent_or_sale','mixed','rent_and_sale','sale') AND ${this.saleLanguageSql()} AND NOT ${this.rentalLanguageSql()})
@@ -86,6 +164,33 @@ export class CanonicalListingRepository {
       LEFT JOIN source_registry sr ON sr.id=o.source_registry_id`;
   }
 
+  /** An old original offer cannot be refreshed by a later repost or a scraper revisit.
+   * Use the earliest parseable source publication, including historical occurrences.
+   * Unknown publication dates are left eligible until the source provides evidence.
+   * content_changed_at is reserved for independently confirmed substantive edits;
+   * neither last_seen_at nor an automatically refreshed content hash qualifies. */
+  private publicFreshnessSql(): string {
+    const published = 'COALESCE(julianday(original.posted_at),julianday(original_source.published_at))';
+    // ORDER BY must run before choosing the original. An aggregate MAX() here
+    // would evaluate all reposts together and let a fresh copy renew the offer.
+    const originalEligible = `(SELECT CASE
+      WHEN original.is_current=0 AND original.source_alive=0 AND original.last_check_result='REMOVED'
+        AND NOT EXISTS (
+          SELECT 1 FROM canonical_listing_source_occurrences reopened
+          WHERE reopened.listing_id=l.id AND reopened.source_item_id=original.source_item_id
+            AND reopened.is_current=1 AND julianday(reopened.last_seen_at)>julianday(original.ended_at)
+        ) THEN 0
+      WHEN ${published} IS NULL THEN 1
+      WHEN MAX(${published},COALESCE(julianday(original.content_changed_at),${published}))>=julianday('now','-30 days') THEN 1
+      ELSE 0 END
+      FROM canonical_listing_source_occurrences original
+      JOIN source_items original_source ON original_source.id=original.source_item_id
+      WHERE original.listing_id=l.id
+      ORDER BY ${published} IS NULL,${published} ASC,
+        julianday(original.first_seen_at) ASC,original.id ASC LIMIT 1)`;
+    return `COALESCE(${originalEligible},1)=1`;
+  }
+
   private projectionSql(detail: boolean, options: PropertyFilterOptions = {}): string {
     const photoProjection = `(SELECT group_concat(photo_url,char(10)) FROM (
         SELECT photo_url FROM (
@@ -99,6 +204,12 @@ export class CanonicalListingRepository {
             1 AS source_order, CAST(raw_photo.key AS INTEGER) AS item_order
           FROM json_each(COALESCE(json_extract(s.raw_payload_json,'$.photos'),json_extract(s.raw_payload_json,'$.listing.photos'),
             json_extract(s.raw_payload_json,'$.image_urls'),json_extract(s.raw_payload_json,'$.images'),'[]')) raw_photo
+          WHERE NOT EXISTS (
+            SELECT 1 FROM media_asset_source_occurrences linked
+            JOIN media_assets canonical_media ON canonical_media.id=linked.media_asset_id
+            WHERE linked.listing_id=l.id AND linked.source_occurrence_id=o.id
+              AND canonical_media.source_url IS NOT NULL AND canonical_media.source_url<>''
+          )
         ) WHERE photo_url IS NOT NULL AND photo_url<>''
         GROUP BY photo_url ORDER BY MIN(source_order),MIN(item_order)
       ))`;
@@ -129,13 +240,24 @@ export class CanonicalListingRepository {
 
   private buildWhere(options: PropertyFilterOptions): { whereSql: string; params: Array<string | number> } {
     const clauses = [
-      "l.status='active'",
-      "COALESCE(l.availability_status,'unknown') NOT IN ('rented','removed')",
       "s.classification='HOUSING_SUPPLY'",
     ];
+    // Admin moderation queues include pending/rejected and inactive entries.
+    // Public reads remain strictly active and available.
+    if (!options.includeInactive) {
+      clauses.push("l.status='active'", "COALESCE(l.availability_status,'unknown') NOT IN ('rented','removed')");
+      clauses.push(this.publicFreshnessSql());
+    }
     const params: Array<string | number> = [];
-    if(options.reviewStatus==='all'&&options.includeInactive){}else if(options.reviewStatus){clauses.push('EXISTS(SELECT 1 FROM canonical_listing_moderation m WHERE m.listing_id=l.id AND m.review_status=?)');params.push(options.reviewStatus);}
-    else clauses.push("EXISTS(SELECT 1 FROM canonical_listing_moderation m WHERE m.listing_id=l.id AND m.review_status='approved')");
+    if (options.canonicalListingIds !== undefined) {
+      // One JSON parameter avoids SQLite variable limits for large districts.
+      clauses.push('l.id IN (SELECT value FROM json_each(?))');
+      params.push(JSON.stringify(options.canonicalListingIds));
+    }
+    if (!(options.reviewStatus === 'all' && options.includeInactive)) {
+      if (options.reviewStatus) { clauses.push('EXISTS(SELECT 1 FROM canonical_listing_moderation m WHERE m.listing_id=l.id AND m.review_status=?)'); params.push(options.reviewStatus); }
+      else clauses.push("EXISTS(SELECT 1 FROM canonical_listing_moderation m WHERE m.listing_id=l.id AND m.review_status='approved')");
+    }
     if (options.type !== 'sale') {
       const offer="lower(COALESCE(json_extract(l.listing_facts_json,'$.offer_type'),''))";
       clauses.push(`${offer}<>'sale'`);
@@ -157,18 +279,42 @@ export class CanonicalListingRepository {
       if (options.type !== 'rent') { clauses.push("json_extract(l.listing_facts_json,'$.offer_type')=?"); params.push(options.type); }
     }
     if (options.category) { clauses.push('l.category=?'); params.push(options.category); }
+    // A contradictory interval is empty even for listings with unknown prices.
+    if (options.minPrice !== undefined && options.maxPrice !== undefined && options.maxPrice > 0 && options.minPrice > options.maxPrice) {
+      clauses.push('1=0');
+    }
     if (options.minPrice !== undefined && options.minPrice >= 0) { clauses.push('(l.price IS NULL OR l.price<=0 OR l.price>=?)'); params.push(options.minPrice); }
     if (options.maxPrice !== undefined && options.maxPrice > 0) { clauses.push('(l.price IS NULL OR l.price<=0 OR l.price<=?)'); params.push(options.maxPrice); }
-    if (options.bedrooms?.length) { clauses.push(`(l.bedrooms IN (${options.bedrooms.map(()=>'?').join(',')}) OR l.bedrooms IS NULL)`); params.push(...options.bedrooms); }
+    if (options.bedrooms?.length) {
+      const exactBedrooms = options.bedrooms.filter((count) => count !== 4);
+      const selections: string[] = [];
+      if (exactBedrooms.length) {
+        selections.push(`l.bedrooms IN (${exactBedrooms.map(() => '?').join(',')})`);
+        params.push(...exactBedrooms);
+      }
+      if (options.bedrooms.includes(4)) {
+        selections.push('l.bedrooms >= ?');
+        params.push(4);
+      }
+      clauses.push(`(${selections.join(' OR ')} OR l.bedrooms IS NULL)`);
+    }
     if (options.bathrooms?.length) { clauses.push(`l.bathrooms IN (${options.bathrooms.map(()=>'?').join(',')})`); params.push(...options.bathrooms); }
     if (options.hasPool) clauses.push("json_extract(l.listing_facts_json,'$.has_pool')=1");
     if (options.petFriendly) clauses.push('l.pet_friendly=1');
     if (options.primaryLandmark) { clauses.push("EXISTS(SELECT 1 FROM json_each(l.listing_facts_json,'$.landmarks') WHERE lower(value)=lower(?))"); params.push(options.primaryLandmark); }
-    if (options.minLeaseMax && options.minLeaseMax > 0) { clauses.push('l.min_lease_months IS NOT NULL AND l.min_lease_months<=?'); params.push(options.minLeaseMax); }
+    if (typeof options.minLeaseMax === 'number' && options.minLeaseMax > 0) {
+      // Unknown lease terms remain eligible, matching the legacy search contract.
+      clauses.push('(l.min_lease_months IS NULL OR l.min_lease_months<=?)');
+      params.push(options.minLeaseMax);
+    }
     if (options.locations?.length) {
-      const or = options.locations.map(() => `(l.sangkat LIKE ? OR l.explicit_location LIKE ? OR p.sangkat LIKE ? OR p.explicit_location LIKE ? OR p.canonical_address LIKE ?)`);
-      clauses.push(`(${or.join(' OR ')})`);
-      for (const location of options.locations) { const pattern=LIKE_ESCAPE(location); params.push(pattern,pattern,pattern,pattern,pattern); }
+      // Match the *one* displayed location used by cards and metadata counts.
+      // Matching every raw address field inflated selected counts (T10).
+      const projectedLocation = `COALESCE(NULLIF(TRIM(l.explicit_location),''),NULLIF(TRIM(l.sangkat),''),
+        NULLIF(TRIM(p.explicit_location),''),NULLIF(TRIM(p.sangkat),''),NULLIF(TRIM(p.canonical_address),''),
+        NULLIF(TRIM(l.city),''),NULLIF(TRIM(p.city),''),'siem_reap')`;
+      clauses.push(`lower(TRIM(${projectedLocation})) IN (${options.locations.map(() => '?').join(',')})`);
+      params.push(...options.locations.map((location) => location.trim().toLowerCase()));
     }
     if (options.query?.trim()) {
       const pattern=LIKE_ESCAPE(options.query.trim());
@@ -188,12 +334,12 @@ export class CanonicalListingRepository {
     const extractedOutside = this.anyCityLike(factCity,params);
     const textualOutside = EXPLICIT_TEXT_CITY_TERMS.map((city)=>{
       const p=city.replace(/'/g,"''");
-      if (city.includes('province')||city.includes('district')||city.includes(',')||/[^\x00-\x7F]/.test(city)) return `${text} LIKE '%${p}%'`;
+      if (city.includes('province')||city.includes('district')||city.includes(',')||/[^\p{ASCII}]/u.test(city)) return `${text} LIKE '%${p}%'`;
       return `(${text} LIKE '%located in ${p}%' OR ${text} LIKE '%location: ${p}%' OR ${text} LIKE '%in ${p}%' OR ${text} LIKE '%${p}, cambodia%')`;
     }).join(' OR ');
     const titleOutside=EXPLICIT_TEXT_CITY_TERMS.map((city)=>{
       const p=city.replace(/'/g,"''");
-      if (city.includes('province')||city.includes('district')||city.includes(',')||/[^\x00-\x7F]/.test(city)) return `${title} LIKE '%${p}%'`;
+      if (city.includes('province')||city.includes('district')||city.includes(',')||/[^\p{ASCII}]/u.test(city)) return `${title} LIKE '%${p}%'`;
       return `(${title} LIKE '%located in ${p}%' OR ${title} LIKE '%location: ${p}%' OR ${title} LIKE '%in ${p}%' OR ${title} LIKE '%${p}, cambodia%')`;
     }).join(' OR ');
     return `NOT (${explicitOutside} OR (${extractedOutside} AND lower(COALESCE(json_extract(l.listing_facts_json,'$.explicit_location'),'')) NOT LIKE '%siem reap%')
@@ -268,10 +414,25 @@ export class CanonicalListingRepository {
     const telegram=nonEmpty(row.contact_telegram)??nonEmpty(payloadContacts.telegram);
     const whatsapp=nonEmpty(payloadContacts.whatsapp);
     const contact={...(phones?{phone:phones}:{}),...(telegram?{telegram}:{}),...(whatsapp?{whatsapp}:{})};
-    const mapsUrl=nonEmpty(row.facts_maps_url)??nonEmpty(facts.maps_url)??nonEmpty(raw.maps_url)??nonEmpty(payloadListing.maps_url);
-    let latitude=row.latitude===null||row.latitude===undefined?null:Number(row.latitude);
-    let longitude=row.longitude===null||row.longitude===undefined?null:Number(row.longitude);
-    if((latitude===null||longitude===null)&&mapsUrl){const coords=extractCoordinatesFromMapsUrl(mapsUrl);if(coords){latitude=coords.latitude;longitude=coords.longitude;}}
+    const sourceMapsUrl=nonEmpty(row.facts_maps_url)??nonEmpty(facts.maps_url)??nonEmpty(raw.maps_url)??nonEmpty(payloadListing.maps_url);
+    const untrustedKhmer24Gps=(lat:unknown,lng:unknown):boolean=>row.source_type==='KHMER24'
+      && typeof lat==='number'&&typeof lng==='number'&&isKnownKhmer24AdministrativePin(lat,lng);
+    // Prevent a historic district centre from leaking back via a synthesized
+    // Maps URL even after the listing fact / property coordinate is suppressed.
+    const sourceMapCoords=sourceMapsUrl?extractCoordinatesFromMapsUrl(sourceMapsUrl):null;
+    const mapsUrl=sourceMapCoords&&untrustedKhmer24Gps(sourceMapCoords.latitude,sourceMapCoords.longitude)
+      ?null:sourceMapsUrl;
+    // Facts describe this listing; a canonical property can contain several offers.
+    const validGps=(lat:unknown,lng:unknown):boolean=>typeof lat==='number'&&typeof lng==='number'
+      &&Number.isFinite(lat)&&Number.isFinite(lng)&&isCoordinateInSanityBounds(lat,lng,city)
+      &&!untrustedKhmer24Gps(lat,lng);
+    let latitude:number|null=null;let longitude:number|null=null;
+    const coordinates: Array<[unknown,unknown]>=[
+      [facts.latitude,facts.longitude],
+      [row.latitude===null||row.latitude===undefined?null:Number(row.latitude),row.longitude===null||row.longitude===undefined?null:Number(row.longitude)],
+    ];
+    if(mapsUrl){const coords=extractCoordinatesFromMapsUrl(mapsUrl);if(coords)coordinates.push([coords.latitude,coords.longitude]);}
+    for(const [lat,lng] of coordinates){if(validGps(lat,lng)){latitude=lat as number;longitude=lng as number;break;}}
     const title=nonEmpty(row.title)??'Property'; const description=nonEmpty(row.description)??'';
     const sourceUrl=nonEmpty(row.occurrence_source_url)??nonEmpty(row.item_source_url)??nonEmpty(row.canonical_url);
     const postedAt=nonEmpty(row.posted_at)??nonEmpty(row.published_at);
@@ -293,7 +454,8 @@ export class CanonicalListingRepository {
       deposit:row.deposit_amount===null?null:Number(row.deposit_amount),min_lease:row.min_lease_months===null?null:Number(row.min_lease_months),
       has_pool:typeof facts.has_pool==='boolean'?facts.has_pool:null,location,location_key:canonicalizeLocation(location,city)?.key??null,raw_location:null,
       city,coordinate_precision:latitude!==null&&longitude!==null?'exact':location!==city?'district':'city',maps_url:mapsUrl,
-      source_url:sourceUrl,photos,image_phash:null,image_phashes:[],direct_contact:contact,original_url:sourceUrl??'',reports_count:0,is_active:1,
+      source_url:sourceUrl,photos,image_phash:null,image_phashes:[],direct_contact:contact,original_url:sourceUrl??'',reports_count:0,
+      is_active:row.status==='active' && row.availability_status!=='rented' && row.availability_status!=='removed' ? 1 : 0,
       parsed_at:postedAt??updatedAt,posted_at:postedAt,updated_at:updatedAt,created_at:nonEmpty(row.created_at)??updatedAt,
       electricity,water,cleaning:nonEmpty(facts.cleaning),restrictions,pet_friendly:typeof facts.pet_friendly==='boolean'?facts.pet_friendly:null,
       landmarks:factsLandmarks,marketing_landmarks:marketing,raw_text:nonEmpty(row.raw_text),listing_facts_json:nonEmpty(row.listing_facts_json),

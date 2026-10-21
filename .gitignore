@@ -11,7 +11,8 @@ dist/
 deploy.sh
 
 # Temporary / sensitive data files
-# Runtime data, customer information and snapshots must never enter public Git.
+# All runtime datasets, snapshots, scraped content and reports can contain PII.
+# Keep the entire data tree outside the public repository.
 /data/
 data/*.db-wal
 data/*.db-shm
@@ -33,6 +34,9 @@ Thumbs.db
 .idea/
 
 # Tool & agent artifacts
+.serena/cache/
+.serena/memories/
+.serena/logs/
 repomix-output.xml
 BACKLOG.md
 *plan*.md
@@ -43,7 +47,21 @@ task*.md
 scratch/
 
 # Database and backups
+*.db
+*.sqlite
+*.sqlite3
+*.db-wal
+*.db-shm
+*.db-journal
+*.sqlite-wal
+*.sqlite-shm
+*.sqlite-journal
+*.sqlite3-wal
+*.sqlite3-shm
+*.sqlite3-journal
 data/homeasy.db
+data/.backup-monitor-state.json
+data/.backup-monitor-telegram-*.json
 data/backups/
 backups/
 *.tar.gz
@@ -55,7 +73,7 @@ data/discovered_features_report.json
 # Archived/legacy one-off debug & PoC scripts (kept locally, not shipped)
 scripts/_archive/
 
-# Persistent Playwright disk cache for proxy bandwidth conservation — KEEP ON DISK,
+# Persistent Playwright disk cache — KEEP ON DISK,
 # never delete this folder, just don't track it in git (large, binary, host-specific).
 data/browser_cache/
 
@@ -69,6 +87,11 @@ data/fb_groups_state.json
 data/scraper_state.json
 data/database.sqlite
 data/homeasy_before.db*
+data/**/*.db
+data/**/*.sqlite
+data/**/*.sqlite3
+data/**/*.db-wal
+data/**/*.db-shm
 data/homeasy_backup_final.db
 js_urls.txt
 scratch.html

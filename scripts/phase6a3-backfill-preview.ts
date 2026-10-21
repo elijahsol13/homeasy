@@ -10,6 +10,7 @@ import { installLegacyPropertiesWriteGuard, snapshotLegacyProperties } from '../
 import { FacebookLiveAdapter, type LiveListingEnvelope } from '../src/modules/parser/live-source-adapters';
 import type { LegacyPropertyRow } from '../src/modules/parser/legacy-khmer24-backfill-adapter';
 import type { RawListing } from '../src/modules/parser/schemas';
+import { assessSiemReapGeography } from '../src/modules/parser/source-geography';
 
 const sourcePath=process.env.PHASE6A_DB??'data/rebuild/phase6a-checkpoint-20261007.db';
 const ids=[158,18,3];
@@ -100,7 +101,14 @@ async function main():Promise<void>{
     });
     const legacyAfter=snapshotLegacyProperties(db);
     const duplicateBindings=db.prepare(`SELECT COUNT(*) n FROM (SELECT source_item_id,source_entity_key FROM canonical_listing_source_occurrences WHERE is_current=1 GROUP BY 1,2 HAVING COUNT(*)>1)`).get() as {n:number};
-    const report={mode:'isolated-copy-commit-preview',sourcePath,previewPath,rowsInspected:rows.map((r)=>({id:r.id,url:r.source_url??r.original_url,classification:/phnom\s*penh|ភ្នំពេញ/i.test(`${r.title} ${r.raw_text}`)?'INTENTIONALLY_EXCLUDED':'BACKFILL_CANDIDATE'})),insufficientLocalData:[{legacyId:2,status:'INSUFFICIENT_LOCAL_DATA',reason:'The raw post only says the owner relocated to Phnom Penh; it does not state the villa location. Legacy location is empty and group scope alone is only a prior.'}],ingestion:result,before,after,repeat,afterRepeat,details,dedupeAudit,
+    const report={mode:'isolated-copy-commit-preview',sourcePath,previewPath,rowsInspected:rows.map((r)=>{
+      const geo=assessSiemReapGeography({rawText:String(r.raw_text??''),title:String(r.title??''),description:String(r.description??''),
+        city:String(r.city??''),explicitLocation:String(r.raw_location??r.location??'')});
+      const insufficient=!/siem\s*reap|សៀមរាប|pub\s*street|old\s*market|sala\s*kamreuk|svay\s*dangkum|slor\s*kram/i.test(String(r.raw_text??'')+' '+String(r.raw_location??r.location??''))
+        &&geo.tier!=='CONTRADICTION_CITY';
+      return {id:r.id,url:r.source_url??r.original_url,geographyTier:geo.tier,geographyFlags:geo.flags,
+        classification:insufficient?'INSUFFICIENT_LOCAL_DATA':geo.tier==='CONTRADICTION_CITY'?'SOURCE_OUTSIDE_CITY':geo.tier==='GEOGRAPHY_CONFLICT'?'NEEDS_SOURCE_VERIFICATION':'BACKFILL_REVIEW_CANDIDATE'};
+    }),insufficientLocalData:[{legacyId:2,status:'INSUFFICIENT_LOCAL_DATA',reason:'The raw post only says the owner relocated to Phnom Penh; it does not state the villa location. Legacy location is empty and group scope alone is only a prior.'}],ingestion:result,before,after,repeat,afterRepeat,details,dedupeAudit,
       acceptance:{legacyUnchanged:legacyBefore.digest===legacyAfter.digest&&legacyBefore.count===legacyAfter.count,legacyBefore:{count:legacyBefore.count,digest:legacyBefore.digest},legacyAfter:{count:legacyAfter.count,digest:legacyAfter.digest},duplicateCurrentBindings:duplicateBindings.n,
         idempotent:repeat.errors.length===0&&repeat.newSourceItems===0&&repeat.newVersions===0&&repeat.unchangedSourceItems===ids.length&&JSON.stringify(after)===JSON.stringify(afterRepeat),
         aiAttempts:(details as Array<{ai_attempts:number}>).reduce((n,r)=>n+Number(r.ai_attempts),0),errors:result.errors.length}};

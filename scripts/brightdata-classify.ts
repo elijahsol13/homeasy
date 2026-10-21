@@ -12,7 +12,9 @@
  * Requires at least one of GROQ_API_KEY, GEMINI_API_KEY, CLOUDFLARE_API_KEY.
  *
  * Usage:
- *   npm run brightdata:classify
+ *   npm run brightdata:classify                    # classify and ingest into canonical
+ *   npm run brightdata:classify -- --classify-only # classify/export, no database writes
+ *   --shadow-ingestion remains an accepted alias for existing batch scripts.
  */
 import 'dotenv/config';
 import fs from 'node:fs/promises';
@@ -42,6 +44,7 @@ import { SourceIngestionRepository } from '../src/database/repositories/source-i
 import { ReplayAdapter } from '../src/modules/parser/replay-adapter';
 import { createContainer } from '../src/container';
 import { stableMediaHash } from '../src/modules/parser/media-identity';
+import { facebookRepostCodeKey } from '../src/modules/parser/facebook-repost-key';
 
 const OUTPUT_DIR = path.resolve(process.cwd(), 'tmp', 'brightdata-test');
 // Sized for Groq free tier on qwen/qwen3.8-27b: ITPM 7,000 / TPM 8K / TPD 200K (console.groq.com/docs/rate-limits).
@@ -51,6 +54,11 @@ const CLASSIFICATION_BATCH_SIZE = Number(process.env.CLASSIFY_BATCH_SIZE ?? 20);
 const DEMAND_EXTRACTION_BATCH_SIZE = Number(process.env.DEMAND_BATCH_SIZE ?? 4);
 const RUN_ID = process.env.BRIGHTDATA_RUN_ID ?? new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
 if (!/^[a-zA-Z0-9_-]{1,64}$/.test(RUN_ID)) throw new Error('Invalid BRIGHTDATA_RUN_ID');
+// Allow bounded/adaptive runs (<10 group files) to be classified from saved raw snapshots.
+const SOURCE_RUN_ID = process.env.BRIGHTDATA_SOURCE_RUN_ID;
+if (SOURCE_RUN_ID && !/^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}$/.test(SOURCE_RUN_ID)) {
+  throw new Error('BRIGHTDATA_SOURCE_RUN_ID must be a raw snapshot run timestamp');
+}
 const BRIGHTDATA_API_BASE = 'https://api.brightdata.com/datasets/v3';
 
 const INTER_BATCH_DELAY_MS = Number(process.env.CLASSIFY_BATCH_DELAY_MS ?? 35_000);
@@ -210,17 +218,20 @@ async function loadLatestFullRunRecords(): Promise<FacebookPost[]> {
     prefixCounts.set(prefix, (prefixCounts.get(prefix) ?? 0) + 1);
   }
   const sortedPrefixes = Array.from(prefixCounts.entries()).sort((a, b) => b[0].localeCompare(a[0]));
-  const targetPrefix = sortedPrefixes.find(([, count]) => count >= 10)?.[0];
+  const targetPrefix = SOURCE_RUN_ID ?? sortedPrefixes.find(([, count]) => count >= 10)?.[0];
   if (!targetPrefix) {
     throw new Error('No full-run Bright Data raw files found in tmp/brightdata-test/');
   }
 
   const posts: FacebookPost[] = [];
   const targetFiles = files.filter((f) => path.basename(f).startsWith(targetPrefix));
+  if (!targetFiles.length) throw new Error(`No Bright Data raw files for run ${targetPrefix}`);
   for (const file of targetFiles) {
-    const raw = JSON.parse(await fs.readFile(file, 'utf-8')) as { request?: unknown; status?: number; response?: unknown };
+    const raw = JSON.parse(await fs.readFile(file, 'utf-8')) as { request?: unknown; status?: number; response?: unknown; records?: unknown[] };
     let records: unknown[] = [];
-    if (Array.isArray(raw.response)) {
+    if (Array.isArray(raw.records)) {
+      records = raw.records;
+    } else if (Array.isArray(raw.response)) {
       records = raw.response;
     } else if (raw.response && typeof raw.response === 'object' && 'snapshot_id' in raw.response) {
       const snapshotId = String((raw.response as { snapshot_id: string }).snapshot_id);
@@ -472,7 +483,9 @@ async function classifyAll(posts: FacebookPost[]): Promise<ClassifiedPost[]> {
     const totalBatches = Math.ceil(total / CLASSIFICATION_BATCH_SIZE);
     console.log(`[${batchNum}/${totalBatches}] Classifying ${batch.length} posts...`);
     const map = await classifyPostsBatch(batch);
-    if (map.size !== batch.length && process.env.BRIGHTDATA_REPLAY_FILE) {
+    // Never cache an AI transport failure as a completed classification: a
+    // later retry must be able to resume from the last valid batch.
+    if (map.size !== batch.length) {
       throw new Error(`Classification incomplete at records ${i + 1}-${i + batch.length}; progress saved through ${i}`);
     }
     for (const post of batch) {
@@ -656,24 +669,6 @@ function normalizeText(text: string): string {
     .slice(0, 220);
 }
 
-function extractPropertyCode(text: string): string | null {
-  const patterns = [
-    /property\s*code\s*[:\-]?\s*([a-z0-9\-]+)/i,
-    /original\s*id\s*[:\-]?\s*([a-z0-9\-]+)/i,
-    /(?:^|\s)code\s*[:\-]?\s*([a-z0-9\-]{2,})/i,
-    /(?:^|\s)id\s*[:\-]?\s*(sr-[a-z0-9]+)/i,
-    /(?:^|\s)(sr-\d{3,}[a-z]*)/i,
-  ];
-  for (const re of patterns) {
-    const m = re.exec(text);
-    if (m && m[1]) {
-      const code = m[1].trim().toLowerCase();
-      if (code.length >= 2 && !/^(www|http|https)$/.test(code)) return code;
-    }
-  }
-  return null;
-}
-
 function extractContacts(text: string): string {
   const phones = Array.from(text.matchAll(/(?:\+?855[\s-]?)?(?:0\d{1,2}[\s-]?\d{3}[\s-]?\d{3,4}|0\d{8,9})/g), (m) => m[0]);
   const teles = Array.from(text.matchAll(/t\.me\/[a-z0-9_]+/gi), (m) => m[0]);
@@ -681,9 +676,11 @@ function extractContacts(text: string): string {
 }
 
 function supplyRepostKey(post: ClassifiedPost): string | null {
-  // 1. Gold signal: explicit property code / ID from the agent.
-  const code = extractPropertyCode(post.content);
-  if (code) return `code|${code}`;
+  // Explicit *numbered* reference plus compatible original-source room and price facts.
+  // A prior regex extracted the word "Number" from "Original ID Number: SR – 00158KN"
+  // and copied one apartment's LLM facts into dozens of unrelated posts.
+  const codeKey = facebookRepostCodeKey(post.content);
+  if (codeKey) return codeKey;
 
   // 2. Author + normalized text + contacts (cheap near-exact repost signal).
   const author = post.userUrl || post.userName || 'unknown';
@@ -812,18 +809,21 @@ async function main() {
   console.log(`🏷️  Run ID: ${RUN_ID}`);
   console.log('📂 Loading raw Bright Data records...');
   const replayFile = process.env.BRIGHTDATA_REPLAY_FILE;
-  const shadowIngestion = process.argv.includes('--shadow-ingestion');
-  const db = shadowIngestion ? new DatabaseSync(path.resolve(env.DATABASE_PATH)) : null;
+  const previewSource = process.argv.includes('--preview-source');
+  const canonicalIngestion = !previewSource && !process.argv.includes('--classify-only') && !process.argv.includes('--no-ingest');
+  const db = canonicalIngestion ? new DatabaseSync(path.resolve(env.DATABASE_PATH)) : null;
+  let legacyBefore: ReturnType<typeof snapshotLegacyProperties> | null = null;
+  try {
   if (db) {
     installLegacyPropertiesWriteGuard(db);
     runMigrations(db);
   }
-  const legacyBefore = db ? snapshotLegacyProperties(db) : null;
+  legacyBefore = db ? snapshotLegacyProperties(db) : null;
   let sourceRepo: SourceIngestionRepository | null = null;
   const unchangedPosts = new Map<string, ClassifiedPost>();
   if (db) {
     const migration = db.prepare('SELECT MAX(version) AS version FROM schema_migrations').get() as { version: number | null };
-    if ((migration.version ?? 0) < 44) { db.close(); throw new Error('Apply database migrations through v44 before --shadow-ingestion'); }
+    if ((migration.version ?? 0) < 44) throw new Error('Apply database migrations through v44 before canonical ingestion');
     sourceRepo = new SourceIngestionRepository(db);
   }
   let posts = replayFile ? await loadReplayRecords(replayFile) : await loadLatestFullRunRecords();
@@ -832,6 +832,12 @@ async function main() {
   if (limit > 0 && limit < posts.length) {
     posts = posts.slice(0, limit);
     console.log(`🔒 CLASSIFY_LIMIT=${limit}: processing ${posts.length} posts only`);
+  }
+  if (previewSource) {
+    const counts = new Map<string, number>();
+    for (const post of posts) counts.set(post.groupUrl || post.source, (counts.get(post.groupUrl || post.source) ?? 0) + 1);
+    console.log(JSON.stringify({ postsWithText: posts.length, groups: Object.fromEntries(counts) }, null, 2));
+    return;
   }
   if (sourceRepo) {
     const processable: FacebookPost[] = [];
@@ -864,7 +870,7 @@ async function main() {
       } else processable.push(post);
     }
     posts = processable;
-    console.log(`⏭️  Unified shadow incremental mode: ${unchangedPosts.size} unchanged posts reuse stored classification/extraction; ${posts.length} new or changed posts go through AI.`);
+    console.log(`⏭️  Canonical incremental mode: ${unchangedPosts.size} unchanged posts reuse stored classification/extraction; ${posts.length} new or changed posts go through AI.`);
   }
   console.log(`✅ Loaded ${posts.length} posts\n`);
 
@@ -999,27 +1005,18 @@ async function main() {
   console.log(`\n✅ Saved classified posts: ${outFile}`);
   console.log(`✅ Saved group report: ${reportFile}`);
 
-  if (db && shadowIngestion) {
-    try {
+  if (db && canonicalIngestion) {
       const container = createContainer({ db });
       const result = await container.ingestionService.ingestBatch(new ReplayAdapter(outFile), {
         runType: 'DISCOVERY', ingestionMethod: 'BRIGHTDATA', parserVersion: 'brightdata-unified-v1',
       });
-      console.log('🌘 Unified shadow ingestion:', JSON.stringify({
+      console.log('📥 Canonical ingestion:', JSON.stringify({
         rawReceived: result.inputItems, newSourceItems: result.newSourceItems,
         changedSourceItems: result.updatedSourceItems, unchangedSourceItems: result.unchangedSourceItems,
         newVersions: result.newVersions, aiProviderModelRecords: result.providerCounts,
         errors: result.errors.length, runId: result.runId,
       }, null, 2));
       if (result.errors.length) process.exitCode = 2;
-    } finally {
-      try {
-        if (legacyBefore) {
-          const after = assertLegacyPropertiesUnchanged(db, legacyBefore);
-          console.log(`🛡️  Legacy properties unchanged: ${after.count} rows; sha256=${after.digest}`);
-        }
-      } finally { db.close(); }
-    }
   }
 
   console.log('\n═══════════════════════════════════════════════════════════════');
@@ -1036,6 +1033,16 @@ async function main() {
   }
   console.log('-'.repeat(130));
   console.log(`Total raw: ${totalRaw} | Unique supply clusters: ${totalUniqueSupply} | Unique demand clusters: ${totalUniqueDemand} | Out-of-area supply: ${totalOutOfAreaSupply}`);
+  } finally {
+    if (db) {
+      try {
+        if (legacyBefore) {
+          const after = assertLegacyPropertiesUnchanged(db, legacyBefore);
+          console.log(`🛡️  Legacy properties unchanged: ${after.count} rows; sha256=${after.digest}`);
+        }
+      } finally { db.close(); }
+    }
+  }
 }
 
 main().catch((err) => {

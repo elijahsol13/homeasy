@@ -100,6 +100,8 @@ export interface FilterMetadata {
 export interface FilterState {
   city: CityKey;
   locations: string[];
+  /** Canonical cluster membership, resolved on the server; clear when manually editing filters. */
+  mapClusterKey?: string;
   category?: string;
   type?: 'rent' | 'sale';
   minPrice?: number;

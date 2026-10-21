@@ -90,5 +90,16 @@ export class AlertService {
       }
     }
   }
+
+  /** A single accountable Telegram attempt for a canonical review delivery. */
+  async sendCanonicalPending(telegramId: number, title: string, publicRef: string): Promise<void> {
+    if (!this.api) throw new Error('Telegram API is not configured');
+    const escape = (value: string) => value.replace(/&/g, '&amp;').replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    const message = `🏠 <b>Новое объявление ожидает модерации</b>\n\n` +
+      `Название: ${escape(title.slice(0, 180))}\nID: <code>${escape(publicRef)}</code>\n\n` +
+      'Откройте Mini App → Фильтры → Pending.';
+    await this.api.sendMessage(telegramId, message, { parse_mode: 'HTML' });
+  }
 }
 

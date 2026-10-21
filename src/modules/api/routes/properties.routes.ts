@@ -9,20 +9,40 @@ import { toPropertyDTO, toMapMarkerDTO, toSangkatClusterDTO } from '../dto';
 import { env } from '../../../config/env';
 import { isCanonicalReadCanary, listingReadPathForUser } from '../listing-read-path';
 
-function recordListingView(
-  container: AppContainer,
-  request: { telegramUser?: { id: number; username?: string } },
-  publicRef: string | null | undefined,
-  servedPath: 'legacy' | 'canonical',
-): void {
-  if (!request.telegramUser || !publicRef) return;
-  const user = container.usersRepo.upsertUser(request.telegramUser.id, request.telegramUser.username ?? null);
-  container.analyticsRepo.trackEvent({
-    userId: user.id,
-    telegramId: user.telegram_id,
-    eventType: 'listing_view',
-    metadata: { listing_public_ref: publicRef, served_path: servedPath },
-  });
+class InvalidNumericQuery extends Error {
+  readonly statusCode = 400;
+  readonly name = 'Bad Request';
+  constructor(parameter: string) {
+    super(`Invalid numeric parameter: ${parameter}`);
+  }
+}
+
+/** Validate query numbers before they can become SQLite bound parameters. */
+function optionalInteger(value: unknown, parameter: string, min = 0, multiplier = 1): number | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value !== 'string' || !/^[+-]?\d+$/.test(value.trim())) throw new InvalidNumericQuery(parameter);
+  const parsed = Number(value.trim());
+  const scaled = parsed * multiplier;
+  if (!Number.isSafeInteger(parsed) || parsed < min || !Number.isSafeInteger(scaled)) {
+    throw new InvalidNumericQuery(parameter);
+  }
+  return scaled;
+}
+
+function optionalIntegerList(value: unknown, parameter: string): number[] | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value !== 'string') throw new InvalidNumericQuery(parameter);
+  return value.split(',').map((part) => optionalInteger(part, parameter)!);
+}
+
+function optionalFiniteDecimal(value: unknown, parameter: string): number | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value !== 'string' || !/^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?$/i.test(value.trim())) {
+    throw new InvalidNumericQuery(parameter);
+  }
+  const parsed = Number(value.trim());
+  if (!Number.isFinite(parsed)) throw new InvalidNumericQuery(parameter);
+  return parsed;
 }
 
 export const propertiesRoutes: FastifyPluginAsync<{ container: AppContainer }> = async (fastify, opts) => {
@@ -43,30 +63,27 @@ export const propertiesRoutes: FastifyPluginAsync<{ container: AppContainer }> =
       const type = 'rent' as const;
 
       // Price in USD -> convert to USD cents
-      const minPrice = query.min_price ? Math.max(0, parseInt(query.min_price, 10) * 100) : undefined;
-      const maxPrice = query.max_price ? Math.max(0, parseInt(query.max_price, 10) * 100) : undefined;
+      const minPrice = optionalInteger(query.min_price, 'min_price', 0, 100);
+      const maxPrice = optionalInteger(query.max_price, 'max_price', 0, 100);
 
       // Bedrooms
-      let bedrooms: number[] | undefined;
-      if (query.bedrooms) {
-        bedrooms = query.bedrooms
-          .split(',')
-          .map((n) => parseInt(n.trim(), 10))
-          .filter((n) => !isNaN(n));
-      }
+      const bedrooms = optionalIntegerList(query.bedrooms, 'bedrooms');
 
       // Bathrooms
-      let bathrooms: number[] | undefined;
-      if (query.bathrooms) {
-        bathrooms = query.bathrooms
-          .split(',')
-          .map((n) => parseInt(n.trim(), 10))
-          .filter((n) => !isNaN(n));
-      }
+      const bathrooms = optionalIntegerList(query.bathrooms, 'bathrooms');
 
       // Locations / Sangkats
       let locations: string[] | undefined;
-      if (query.locations) {
+      if (query.locations_json) {
+        // Map clusters send every original displayed-location alias (T24).
+        // JSON preserves commas in source addresses; CSV stays supported.
+        try {
+          const parsed: unknown = JSON.parse(query.locations_json);
+          if (Array.isArray(parsed) && parsed.length <= 100 && parsed.every((item) => typeof item === 'string' && item.length <= 250)) {
+            locations = parsed.map((item: string) => item.trim()).filter(Boolean);
+          }
+        } catch { /* Ignore an invalid optional filter payload. */ }
+      } else if (query.locations) {
         locations = query.locations
           .split(',')
           .map((s) => s.trim())
@@ -89,7 +106,7 @@ export const propertiesRoutes: FastifyPluginAsync<{ container: AppContainer }> =
       const primaryLandmark = query.primary_landmark ? query.primary_landmark.trim() : undefined;
 
       // Min lease
-      const minLeaseMax = query.min_lease_max ? parseInt(query.min_lease_max, 10) : undefined;
+      const minLeaseMax = optionalInteger(query.min_lease_max, 'min_lease_max');
 
       // Search text query
       const textQuery = query.query ? query.query.trim() : undefined;
@@ -99,7 +116,7 @@ export const propertiesRoutes: FastifyPluginAsync<{ container: AppContainer }> =
 
       // Admin-only review-status filter (pending/approved/rejected/all)
       const canary = isCanonicalReadCanary(request.telegramUser?.id);
-      const isAdmin = !canary && (
+      const isAdmin = (
         isAdminTelegramUser(request.telegramUser?.id) ||
         (request.telegramUser
           ? container.usersRepo.findByTelegramId(request.telegramUser.id)?.role === 'admin'
@@ -114,9 +131,10 @@ export const propertiesRoutes: FastifyPluginAsync<{ container: AppContainer }> =
       }
 
       // Pagination
-      const page = Math.max(1, query.page ? parseInt(query.page, 10) : 1);
-      const limit = Math.min(50, Math.max(1, query.limit ? parseInt(query.limit, 10) : 20));
+      const page = optionalInteger(query.page, 'page', 1) ?? 1;
+      const limit = Math.min(50, optionalInteger(query.limit, 'limit', 1) ?? 20);
       const offset = (page - 1) * limit;
+      if (!Number.isSafeInteger(offset)) throw new InvalidNumericQuery('page');
 
       const searchOptions: PropertyFilterOptions = {
         city,
@@ -139,6 +157,29 @@ export const propertiesRoutes: FastifyPluginAsync<{ container: AppContainer }> =
         offset,
       };
       const readPath = listingReadPathForUser(request.telegramUser?.id);
+      if (readPath === 'canonical' && query.map_cluster_key !== undefined) {
+        // Use the same unlocated/GPS split and aggregation as the map endpoint.
+        // Location aliases alone include exact GPS pins that aren't in the cluster.
+        const clusterKey = query.map_cluster_key;
+        if (!/^[a-z0-9_:]{1,100}$/.test(clusterKey)) {
+          return reply.status(400).send({ error: 'Invalid map cluster key' });
+        }
+        const unlocated: Array<{ listingId: number; city: string; location: string; locationKey: string | null; priceUsd: number }> = [];
+        container.canonicalListingRepo.forEachMapProperty({ city, type, category }, (property) => {
+          const marker = toMapMarkerDTO(property);
+          if (!marker.coordinates) unlocated.push({
+            listingId: property.id,
+            city: marker.city,
+            location: marker.location,
+            locationKey: marker.locationKey,
+            priceUsd: marker.priceUsd,
+          });
+        });
+        const cluster = aggregateUnlocatedMapItems(unlocated, city)
+          .find((item) => item.locationKey === clusterKey);
+        searchOptions.canonicalListingIds = cluster?.listingIds ?? [];
+        searchOptions.locations = undefined;
+      }
       const needsLegacy = readPath === 'legacy' || env.LISTING_READ_SHADOW || canary;
       const needsCanonical = readPath === 'canonical' || env.LISTING_READ_SHADOW || canary;
       const legacyStarted = performance.now();
@@ -208,45 +249,37 @@ export const propertiesRoutes: FastifyPluginAsync<{ container: AppContainer }> =
     const city: CityKey = 'siem_reap';
     const category = query.category || undefined;
     const type = 'rent' as const;
-    const limit = query.limit ? Math.min(500, parseInt(query.limit, 10)) : 300;
+    const limit = Math.min(500, optionalInteger(query.limit, 'limit', 1) ?? 300);
 
     let bounds: MapBoundingBox | undefined = undefined;
+    const minLat = optionalFiniteDecimal(query.minLat, 'minLat');
+    const maxLat = optionalFiniteDecimal(query.maxLat, 'maxLat');
+    const minLng = optionalFiniteDecimal(query.minLng, 'minLng');
+    const maxLng = optionalFiniteDecimal(query.maxLng, 'maxLng');
+    const paddingRatio = optionalFiniteDecimal(query.paddingRatio, 'paddingRatio') ?? 0.2;
+    if (paddingRatio < 0) throw new InvalidNumericQuery('paddingRatio');
     if (
-      query.minLat !== undefined &&
-      query.maxLat !== undefined &&
-      query.minLng !== undefined &&
-      query.maxLng !== undefined
+      minLat !== undefined &&
+      maxLat !== undefined &&
+      minLng !== undefined &&
+      maxLng !== undefined
     ) {
-      const minLat = parseFloat(query.minLat);
-      const maxLat = parseFloat(query.maxLat);
-      const minLng = parseFloat(query.minLng);
-      const maxLng = parseFloat(query.maxLng);
-      const paddingRatio = query.paddingRatio !== undefined ? parseFloat(query.paddingRatio) : 0.2;
-
-      if (!isNaN(minLat) && !isNaN(maxLat) && !isNaN(minLng) && !isNaN(maxLng)) {
-        bounds = {
-          minLat,
-          maxLat,
-          minLng,
-          maxLng,
-          paddingRatio: !isNaN(paddingRatio) ? paddingRatio : 0.2,
-        };
+      const latPadding = Math.abs(maxLat - minLat) * paddingRatio;
+      const lngPadding = Math.abs(maxLng - minLng) * paddingRatio;
+      if (![Math.min(minLat, maxLat) - latPadding, Math.max(minLat, maxLat) + latPadding,
+        Math.min(minLng, maxLng) - lngPadding, Math.max(minLng, maxLng) + lngPadding].every(Number.isFinite)) {
+        throw new InvalidNumericQuery('paddingRatio or map bounds');
       }
+      bounds = { minLat, maxLat, minLng, maxLng, paddingRatio };
     }
 
     const readPath = listingReadPathForUser(request.telegramUser?.id);
     const canary = isCanonicalReadCanary(request.telegramUser?.id);
     if (readPath === 'canonical') {
       const started = performance.now();
-      let canonical;
-      try {
-        canonical = container.canonicalListingRepo.searchProperties({ city, type, category, limit: Math.min(limit, 500) });
-      } catch (error) {
-        if (canary) request.log.error({ event: 'canonical_canary_read_error', surface: 'map', error: String(error) });
-        throw error;
-      }
       const exactMarkers: ReturnType<typeof toMapMarkerDTO>[] = [];
       const unlocatedItems: Array<{
+        listingId: number;
         city: string;
         location: string;
         locationKey: string | null;
@@ -262,22 +295,28 @@ export const propertiesRoutes: FastifyPluginAsync<{ container: AppContainer }> =
           && coordinates.lng <= Math.max(bounds.minLng, bounds.maxLng) + lngPadding;
       };
 
-      for (const property of canonical.items) {
-        const marker = toMapMarkerDTO(property);
-        if (marker.coordinates) {
-          if (isInsideBounds(marker.coordinates)) exactMarkers.push(marker);
-          continue;
-        }
+      let canonicalCount: number;
+      try {
+        canonicalCount = container.canonicalListingRepo.forEachMapProperty({ city, type, category }, (property) => {
+          const marker = toMapMarkerDTO(property);
+          if (marker.coordinates) {
+            if (exactMarkers.length < limit && isInsideBounds(marker.coordinates)) exactMarkers.push(marker);
+            return;
+          }
 
-        // Canonical ingestion often knows the Sangkat but not an exact street
-        // address. Show those listings as honest neighborhood clusters rather
-        // than returning markers without coordinates (which Leaflet cannot draw).
-        unlocatedItems.push({
-          city: marker.city,
-          location: marker.location || '',
-          locationKey: marker.locationKey,
-          priceUsd: marker.priceUsd,
+          // All non-GPS listings contribute to district totals, even when the
+          // exact-marker cap has been reached or the viewport is narrow.
+          unlocatedItems.push({
+            listingId: property.id,
+            city: marker.city,
+            location: marker.location || '',
+            locationKey: marker.locationKey,
+            priceUsd: marker.priceUsd,
+          });
         });
+      } catch (error) {
+        if (canary) request.log.error({ event: 'canonical_canary_read_error', surface: 'map', error: String(error) });
+        throw error;
       }
 
       // Keep the small set of district markers available even when their
@@ -301,11 +340,11 @@ export const propertiesRoutes: FastifyPluginAsync<{ container: AppContainer }> =
           const legacyKeys = new Set(legacyMarkers.map(markerIdentity));
           const canonicalKeys = new Set(canonicalMarkers.map(markerIdentity));
           request.log.info({ event: 'canonical_canary_shadow', surface: 'map', servedPath: readPath, shadowPath: 'legacy',
-            canonicalCount: canonical.items.length, canonicalMapMarkers: canonicalMarkers.length,
+            canonicalCount, canonicalMapMarkers: canonicalMarkers.length,
             legacyCount: legacyMarkers.length, legacyExactMarkers: legacyExactMarkers.length,
             legacyAreaMarkers: legacyClusters.length,
             markerOverlap: [...canonicalKeys].filter((key) => legacyKeys.has(key)).length,
-            canonicalTop10Refs: canonical.items.slice(0,10).map((item)=>item.public_listing_ref).filter(Boolean),
+            canonicalTop10Refs: exactMarkers.slice(0,10).map((item)=>item.publicRef).filter(Boolean),
             canonicalLatencyMs: +(performance.now()-started).toFixed(2), legacyLatencyMs: +(performance.now()-legacyStarted).toFixed(2) });
         } catch (error) {
           request.log.warn({ event: 'canonical_canary_shadow_error', surface: 'map', error: String(error) });
@@ -355,20 +394,21 @@ export const propertiesRoutes: FastifyPluginAsync<{ container: AppContainer }> =
           : false);
       const readPath = listingReadPathForUser(request.telegramUser?.id);
       const canary = isCanonicalReadCanary(request.telegramUser?.id);
-      const includeModerated = isAdminUser && !canary;
+      const includeModerated = isAdminUser;
       if (/^lst_[a-f0-9]{32}$/.test(id)) {
         if (readPath !== 'canonical') return reply.status(404).send({ statusCode: 404, error: 'Not Found', message: 'Listing not found' });
         const identity = container.listingIdentityRepo.resolvePublicRef(id);
         const canonicalProperty = identity ? container.canonicalListingRepo.getPropertyById(identity.listingId,includeModerated) : undefined;
-        if (!canonicalProperty || canonicalProperty.public_listing_ref !== id) {
+        // An explicit old public-ref alias may point to the surviving listing
+        // after a verified duplicate merge. The canonical DTO keeps its current ref.
+        if (!canonicalProperty) {
         if (canary) request.log.info({ event: 'canonical_canary_detail_opened', servedPath: readPath, publicRef: id, resolved: false, aliasResolved: Boolean(identity) });
           return reply.status(404).send({ statusCode: 404, error: 'Not Found', message: 'Listing not found' });
         }
         const user=request.telegramUser?container.usersRepo.findByTelegramId(request.telegramUser.id):undefined;
         const isFavorite=user?container.favoritesRepo.isCanonicalFavorite(user.id,identity!.listingId):false;
         if (canary) request.log.info({ event: 'canonical_canary_detail_opened', publicRef: id, resolved: true });
-        recordListingView(container, request, identity!.publicRef, readPath);
-        return reply.send(toPropertyDTO(canonicalProperty,isFavorite));
+        return reply.send(toPropertyDTO(canonicalProperty, isFavorite, { includeAllPhotos: true }));
       }
       const propId = parseInt(id, 10);
 
@@ -410,8 +450,7 @@ export const propertiesRoutes: FastifyPluginAsync<{ container: AppContainer }> =
 
       if (canary) request.log.info({ event: 'canonical_canary_detail_opened', servedPath: readPath, legacyId: propId, publicRef: property.public_listing_ref, resolved: true, aliasResolved: Boolean(legacyAlias) });
 
-      recordListingView(container, request, property.public_listing_ref, readPath);
-      return reply.send(toPropertyDTO(property, isFavorite));
+      return reply.send(toPropertyDTO(property, isFavorite, { includeAllPhotos: true }));
     },
   );
 
@@ -441,18 +480,39 @@ export const propertiesRoutes: FastifyPluginAsync<{ container: AppContainer }> =
       const propId = parseInt(id, 10);
       const action = (request.body as { action?: string } | undefined)?.action;
 
-      if(env.LISTING_READ_PATH==='canonical'){
-        if(action!=='approve'&&action!=='reject')return reply.status(400).send({statusCode:400,error:'Bad Request',message:'action=approve|reject required'});
-        const identity=/^lst_[a-f0-9]{32}$/.test(id)
-          ?container.listingIdentityRepo.resolvePublicRef(id)
-          :Number.isSafeInteger(propId)?container.listingIdentityRepo.resolve('legacy_property_id',propId):undefined;
-        if(!identity)return reply.status(404).send({statusCode:404,error:'Not Found',message:'Canonical listing not found'});
-        const status=action==='approve'?'approved':'rejected';
-        container.db.prepare(`INSERT INTO canonical_listing_moderation(listing_id,review_status,decision_origin)
-          VALUES(?,?, 'EXPLICIT_CANONICAL') ON CONFLICT(listing_id) DO UPDATE SET review_status=excluded.review_status,
-          decision_origin='EXPLICIT_CANONICAL',review_reason=NULL,updated_at=strftime('%Y-%m-%dT%H:%M:%SZ','now')`).run(identity.listingId,status);
-        const property=status==='approved'?container.canonicalListingRepo.getPropertyById(identity.listingId):undefined;
-        return reply.send({ok:true,action,publicRef:identity.publicRef,reviewStatus:status,property:property?toPropertyDTO(property):null});
+      // Canonical IDs and legacy integer IDs belong to distinct namespaces.
+      // Accept only public refs here so a canonical integer cannot accidentally
+      // resolve an unrelated legacy alias.
+      if (listingReadPathForUser(request.telegramUser?.id) === 'canonical') {
+        if (action !== 'approve' && action !== 'reject') {
+          return reply.status(400).send({ statusCode: 400, error: 'Bad Request', message: 'action=approve|reject required' });
+        }
+        if (!/^lst_[a-f0-9]{32}$/.test(id)) {
+          return reply.status(400).send({ statusCode: 400, error: 'Bad Request', message: 'Canonical review requires a publicRef' });
+        }
+        const identity = container.listingIdentityRepo.resolvePublicRef(id);
+        if (!identity || !container.canonicalListingRepo.getPropertyById(identity.listingId, true)) {
+          return reply.status(404).send({ statusCode: 404, error: 'Not Found', message: 'Canonical listing not found' });
+        }
+        const status = action === 'approve' ? 'approved' : 'rejected';
+        // Mirror legacy pending-only transitions. Do not replace an explicit
+        // moderation decision or fabricate a missing moderation row. An
+        // unavailable listing may be rejected, but never newly approved.
+        const updated = container.db.prepare(`UPDATE canonical_listing_moderation
+          SET review_status=?,decision_origin='EXPLICIT_CANONICAL',review_reason=NULL,
+            updated_at=strftime('%Y-%m-%dT%H:%M:%SZ','now')
+          WHERE listing_id=? AND review_status='pending'
+          ${action === 'approve' ? `AND EXISTS (SELECT 1 FROM canonical_listings l
+            WHERE l.id=canonical_listing_moderation.listing_id AND l.status='active'
+              AND COALESCE(l.availability_status,'unknown') NOT IN ('rented','removed'))` : ''}`)
+          .run(status, identity.listingId);
+        if (!updated.changes) {
+          return reply.status(409).send({ statusCode: 409, error: 'Conflict', message: 'Listing already reviewed, unavailable or missing' });
+        }
+        const property = status === 'approved' ? container.canonicalListingRepo.getPropertyById(identity.listingId) : undefined;
+        // The v55 SQLite trigger records the approval atomically. The selected
+        // Telegram worker will materialize and deliver canonical notifications.
+        return reply.send({ ok: true, action, publicRef: identity.publicRef, reviewStatus: status, property: property ? toPropertyDTO(property, undefined, { includeAllPhotos: true }) : null });
       }
 
       if (isNaN(propId) || (action !== 'approve' && action !== 'reject')) {
@@ -485,7 +545,7 @@ export const propertiesRoutes: FastifyPluginAsync<{ container: AppContainer }> =
       }
 
       const property = container.propertiesRepo.getPropertyById(propId);
-      return reply.send({ ok: true, action, property: property ? toPropertyDTO(property) : null });
+      return reply.send({ ok: true, action, property: property ? toPropertyDTO(property, undefined, { includeAllPhotos: true }) : null });
     },
   );
 };

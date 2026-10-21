@@ -322,8 +322,10 @@ export class NotifierService {
   }
 
   dispatchNotification(telegramId: number, property: Property): void {
+    const identity = (listing: Property) => listing.public_listing_ref
+      ? `canonical:${listing.public_listing_ref}` : `legacy:${listing.id}`;
     const alreadyQueued = this.queue.some(
-      (item) => item.telegramId === telegramId && item.property.id === property.id,
+      (item) => item.telegramId === telegramId && identity(item.property) === identity(property),
     );
     if (alreadyQueued) return;
 
@@ -398,5 +400,13 @@ export class NotifierService {
   async sendListingCard(telegramId: number, property: Property): Promise<void> {
     const api = this.getApi();
     await sendListingCard(telegramId, property, api);
+  }
+
+  /** Single-request canonical alert: no retry or fallback after an ambiguous Telegram error. */
+  async sendCanonicalAlert(telegramId: number, property: Property): Promise<void> {
+    await this.getApi().sendMessage(telegramId, formatListingCard(property), {
+      parse_mode: 'HTML',
+      reply_markup: listingActionKeyboard(property),
+    });
   }
 }

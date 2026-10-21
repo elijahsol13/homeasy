@@ -2,7 +2,7 @@
  * HomEasy Listings Safe Re-Parser
  *
  * Capabilities:
- *  1. Gentle, stealthy Facebook re-parser (30-60s jitter + 3m cooldown per 10 items) via FB_PROXY + fb_session.json.
+ *  1. Gentle Facebook re-parser (30-60s jitter + 3m cooldown per 10 items) using the saved fb_session.json.
  *  2. Khmer24 detail re-parser (fetching full descriptions and 100% of photo URLs).
  *  3. Canonical `--ai` re-parse: re-extracts ListingFacts from stored text via
  *     `reparseCanonicalListings` (preview by default, `--apply` to write).

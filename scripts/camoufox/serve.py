@@ -12,7 +12,7 @@ hijacking to anti-fraud. We therefore pin a real fingerprint preset and the
 three noise seeds once per account and reuse them forever.
 
 Usage:
-    serve.py [--headless] [--device PATH] [--proxy URL] [--port N] [--ws-path P]
+    serve.py [--headless] [--device PATH] [--port N] [--ws-path P]
 
 The ws endpoint is printed to stdout by the Playwright driver ("ws://...").
 The process blocks until killed; closing stdin also shuts the server down.
@@ -25,7 +25,6 @@ import json
 import sys
 from pathlib import Path
 from random import randint
-from urllib.parse import urlsplit
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_DEVICE_PATH = REPO_ROOT / "data" / "fb_device.json"
@@ -61,25 +60,10 @@ def load_or_create_device(path: Path, requested_os: str | None = None) -> dict:
     return device
 
 
-def parse_proxy(raw: str | None) -> dict | None:
-    if not raw:
-        return None
-    parsed = urlsplit(raw if "://" in raw else f"http://{raw}")
-    if not parsed.hostname or not parsed.port:
-        raise ValueError(f"Cannot parse proxy: {raw!r}")
-    proxy = {"server": f"{parsed.scheme}://{parsed.hostname}:{parsed.port}"}
-    if parsed.username:
-        proxy["username"] = parsed.username
-    if parsed.password:
-        proxy["password"] = parsed.password
-    return proxy
-
-
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--headless", action="store_true")
     parser.add_argument("--device", type=Path, default=DEFAULT_DEVICE_PATH)
-    parser.add_argument("--proxy", default=None)
     parser.add_argument("--port", type=int, default=0)
     parser.add_argument("--ws-path", default=None)
     parser.add_argument(
@@ -101,10 +85,6 @@ def main() -> None:
         "humanize": False,
         "enable_cache": True,
     }
-    proxy = parse_proxy(args.proxy)
-    if proxy:
-        options["proxy"] = proxy
-        options["geoip"] = True
     if args.port:
         options["port"] = args.port
     if args.ws_path:

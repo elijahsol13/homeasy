@@ -1,7 +1,7 @@
 import 'dotenv/config';
 import { createContainer } from './container';
 import { runMigrations } from './database/migrate';
-import { startWorker, stopWorker } from './services/scheduler';
+import { startWorker, stopWorkerAndWait } from './services/scheduler';
 import { closeDatabase } from './database/db';
 import { env } from './config/env';
 
@@ -16,20 +16,21 @@ export async function runScraper(): Promise<void> {
   const container = createContainer();
   runMigrations(container.db);
 
-  // 2. Start sequential scraper worker (default: 110 min for proxy conservation)
+  // 2. Start sequential scraper worker (configurable interval; default 110 min)
   startWorker(container, env.SCRAPER_CYCLE_PAUSE_MINUTES);
 
   // 3. Graceful shutdown on SIGINT / SIGTERM
-  const shutdown = (signal: string) => {
+  const shutdown = async (signal: string) => {
     console.log(`\n⚡ Received ${signal} — stopping scraper worker gracefully...`);
-    stopWorker();
+    await stopWorkerAndWait();
+    await container.analyticsRepo.shutdown();
     closeDatabase(container.db);
     console.log('✅ Scraper worker shut down.');
     process.exit(0);
   };
 
-  process.once('SIGINT', () => shutdown('SIGINT'));
-  process.once('SIGTERM', () => shutdown('SIGTERM'));
+  process.once('SIGINT', () => void shutdown('SIGINT'));
+  process.once('SIGTERM', () => void shutdown('SIGTERM'));
 
   // Keep process alive
   await new Promise<void>(() => {});

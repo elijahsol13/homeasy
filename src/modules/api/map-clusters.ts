@@ -7,6 +7,7 @@ import {
 import type { CityKey } from '../../config/settings';
 
 export interface UnlocatedMapItem {
+  listingId?: number;
   city: string;
   location: string;
   locationKey: string | null;
@@ -14,6 +15,8 @@ export interface UnlocatedMapItem {
 }
 
 export interface MapAreaCluster {
+  /** Server-side membership; never sent to the map client. */
+  listingIds: number[];
   location: string;
   locationKey: string | null;
   locationAliases: string[];
@@ -35,6 +38,7 @@ export function aggregateUnlocatedMapItems(items: UnlocatedMapItem[], city: City
     location: string;
     locationKey: string | null;
     aliases: Set<string>;
+    listingIds: number[];
     count: number;
     minPriceUsd: number;
     maxPriceUsd: number;
@@ -67,6 +71,7 @@ export function aggregateUnlocatedMapItems(items: UnlocatedMapItem[], city: City
 
     if (existing) {
       existing.count += 1;
+      if (item.listingId !== undefined) existing.listingIds.push(item.listingId);
       existing.minPriceUsd = Math.min(existing.minPriceUsd, item.priceUsd);
       existing.maxPriceUsd = Math.max(existing.maxPriceUsd, item.priceUsd);
       if (item.location.trim()) existing.aliases.add(item.location.trim());
@@ -75,6 +80,7 @@ export function aggregateUnlocatedMapItems(items: UnlocatedMapItem[], city: City
         location,
         locationKey,
         aliases: new Set(item.location.trim() ? [item.location.trim()] : []),
+        listingIds: item.listingId === undefined ? [] : [item.listingId],
         count: 1,
         minPriceUsd: item.priceUsd,
         maxPriceUsd: item.priceUsd,
@@ -91,6 +97,7 @@ export function aggregateUnlocatedMapItems(items: UnlocatedMapItem[], city: City
       location: group.location,
       locationKey: group.locationKey,
       locationAliases: [...group.aliases],
+      listingIds: group.listingIds,
       count: group.count,
       minPriceUsd: group.minPriceUsd,
       maxPriceUsd: group.maxPriceUsd,

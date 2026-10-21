@@ -4,7 +4,9 @@ import { z } from 'zod';
 dotenv.config();
 
 const EnvSchema = z.object({
-  BOT_TOKEN: z.string().min(1, 'BOT_TOKEN is required'),
+  // Telegram is optional for offline ingestion and read-only audit tools. The
+  // bot entrypoints call requireBotToken() before creating a Telegram client.
+  BOT_TOKEN: z.string().min(1, 'BOT_TOKEN must not be empty').optional(),
 
   /**
    * Comma-separated list of Telegram user IDs that receive admin privileges.
@@ -25,6 +27,10 @@ const EnvSchema = z.object({
   DATABASE_PATH: z.string().default('./data/homeasy.db'),
   SHADOW_INGESTION: z.enum(['true', 'false']).default('false').transform((value) => value === 'true'),
   LISTING_READ_PATH: z.enum(['legacy', 'canonical']).default('legacy'),
+  /** Explicit opt-in: persistent canonical Telegram publication alerts. */
+  CANONICAL_ALERTS_ENABLED: z.enum(['true', 'false']).default('false').transform((v) => v === 'true'),
+  /** Opt-in admin notifications for newly ingested canonical pending listings. */
+  ADMIN_REVIEW_ALERTS_ENABLED: z.enum(['true', 'false']).default('false').transform((v) => v === 'true'),
   LISTING_READ_SHADOW: z.enum(['true', 'false']).default('false').transform((value) => value === 'true'),
   /** Comma-separated Telegram IDs served canonical reads while global path remains legacy. */
   CANONICAL_READ_CANARY_TELEGRAM_IDS: z.string().default('').transform((value) =>
@@ -42,11 +48,6 @@ const EnvSchema = z.object({
   TELEGRAM_MINIAPP_URL: z.string().optional(),
   /** Bot username without @, used as a fallback deep-link base if TELEGRAM_MINIAPP_URL is not set. */
   TELEGRAM_BOT_USERNAME: z.string().optional(),
-  FB_PROXY: z.string().optional(),
-  FB_PROXY_ENABLED: z
-    .enum(['true', 'false'])
-    .default('false')
-    .transform((value) => value === 'true'),
   POSTHOG_API_KEY: z.string().optional(),
   POSTHOG_HOST: z.string().default('https://eu.i.posthog.com'),
   BRIGHTDATA_API_KEY: z.string().optional(),
@@ -68,13 +69,39 @@ const EnvSchema = z.object({
   FB_MAX_SCROLLS_PER_GROUP: z.coerce.number().default(1),
 });
 
-const result = EnvSchema.safeParse(process.env);
+const DiscoveryEnvSchema = EnvSchema.pick({
+  DATABASE_PATH: true,
+  SHADOW_INGESTION: true,
+});
 
-if (!result.success) {
-  console.error('❌ Invalid environment variables:');
-  console.error(JSON.stringify(result.error.format(), null, 2));
-  process.exit(1);
+function parseEnvironment(): z.infer<typeof EnvSchema> {
+  if (process.env.HOMEASY_CONFIG_PROFILE === 'discovery') {
+    const defaults = EnvSchema.parse({});
+    const discovery = DiscoveryEnvSchema.safeParse(process.env);
+    if (!discovery.success) {
+      throw new Error(`Invalid discovery environment: ${JSON.stringify(discovery.error.format())}`);
+    }
+    return { ...defaults, ...discovery.data };
+  }
+  const result = EnvSchema.safeParse(process.env);
+  if (!result.success) {
+    console.error('❌ Invalid environment variables:');
+    console.error(JSON.stringify(result.error.format(), null, 2));
+    process.exit(1);
+  }
+  if (!result.data.BOT_TOKEN) {
+    console.error('❌ Invalid environment variables:');
+    console.error(JSON.stringify({ BOT_TOKEN: { _errors: ['BOT_TOKEN is required'] } }, null, 2));
+    process.exit(1);
+  }
+  return result.data;
 }
 
-export const env = result.data;
+export const env = parseEnvironment();
 export type Env = typeof env;
+
+export function requireBotToken(): string {
+  const token = env.BOT_TOKEN;
+  if (!token) throw new Error('BOT_TOKEN is required for Telegram bot operations');
+  return token;
+}

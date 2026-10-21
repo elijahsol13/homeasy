@@ -1,6 +1,6 @@
 # AI cascade and quota setup
 
-All listing extraction, demand extraction, Bright Data classification and extraction use the same route order: Groq Qwen 3.8 27B → Gemini 3.5 Flash-Lite → Gemini 3.1 Flash-Lite → Gemini 3.8 Flash → Gemini 3.7 Flash → Gemini 3.6 Flash → Gemini 3.5 Flash → Cloudflare Llama 3.1 8B FP8. Natural-language search uses the same Gemini routes and quota counters, including voice input. OpenAI is not used.
+All listing extraction, demand extraction, Bright Data classification and extraction use the same route order: Groq Qwen 3.8 27B → Gemini 3.5 Flash-Lite → Gemini 3.1 Flash-Lite → Gemini 3.8 Flash → Gemini 3.6 Flash → Cloudflare Llama 3.1 8B FP8. Natural-language search uses the same Gemini routes and quota counters, including voice input. OpenAI is not used. Google's [deprecations page](https://ai.google.dev/gemini-api/docs/deprecations) states that 3.7 Flash routes to 3.8 Flash and 3.5 Flash routes to 3.6 Flash; these aliases are excluded to avoid incorrectly allocating a second RPM/RPD budget to the same serving model.
 
 The Google models above have a **standard API free tier** on the [official pricing page](https://ai.google.dev/gemini-api/docs/pricing). Free-tier eligibility is not a guarantee that a particular API project has access or that a paid project will be charged zero. Do not enable billing for this project if zero spend is a hard requirement.
 
@@ -15,9 +15,7 @@ Google [does not publish a single universal free-tier RPM/TPM/RPD table](https:/
 | 3.5 Flash-Lite | 15 | 250,000 | 500 |
 | 3.1 Flash-Lite | 15 | 250,000 | 500 |
 | 3.8 Flash | 5 | 250,000 | 20 |
-| 3.7 Flash | 5 | 250,000 | 20 |
 | 3.6 Flash | 5 | 250,000 | 20 |
-| 3.5 Flash | 5 | 250,000 | 20 |
 
 Requests made in AI Studio or by another process are not included in this process's local counter. Google still enforces the project quota; on a 429 the affected model cools down while other models continue. Recheck the dashboard after a tier change.
 

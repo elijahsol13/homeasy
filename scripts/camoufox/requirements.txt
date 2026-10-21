@@ -7,5 +7,4 @@
 #
 # The TS side spawns serve.py, reads the ws:// endpoint from stdout, and
 # connects with playwright's firefox.connect (src/modules/parser/camoufox-server.ts).
-# `geoip` extra is required for the --proxy path (timezone/locale alignment).
-camoufox[geoip]==0.5.6
+camoufox==0.5.6

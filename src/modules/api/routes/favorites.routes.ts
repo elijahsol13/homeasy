@@ -3,6 +3,7 @@ import type { AppContainer } from '../../../container';
 import { requireTelegramAuth } from '../auth';
 import { toPropertyDTO } from '../dto';
 import { isCanonicalReadCanary, listingReadPathForUser } from '../listing-read-path';
+import { MAX_FAVORITES_PER_USER } from '../../../config/settings';
 
 export const favoritesRoutes: FastifyPluginAsync<{ container: AppContainer }> = async (fastify, opts) => {
   const { container } = opts;
@@ -69,8 +70,12 @@ export const favoritesRoutes: FastifyPluginAsync<{ container: AppContainer }> = 
           if(isCanonicalReadCanary(tgUser.id))request.log.info({event:'canonical_canary_favorite_resolution',servedPath:'canonical',publicRef:body.publicRef,resolved:false});
           return reply.status(404).send({statusCode:404,error:'Not Found',message:'Listing not found'});
         }
+        if(!container.favoritesRepo.isCanonicalFavorite(user.id,identity.listingId)
+          && container.favoritesRepo.getCanonicalFavorites(user.id,container.canonicalListingRepo).length >= MAX_FAVORITES_PER_USER){
+          return reply.status(409).send({statusCode:409,error:'Conflict',message:'Favorites limit reached'});
+        }
         const isFavorite=container.favoritesRepo.toggleCanonicalFavorite(user.id,identity.listingId);
-        const totalFavorites=(container.db.prepare('SELECT COUNT(*) n FROM canonical_user_favorites WHERE user_id=?').get(user.id) as {n:number}).n;
+        const totalFavorites=container.favoritesRepo.getCanonicalFavorites(user.id,container.canonicalListingRepo).length;
         if(isCanonicalReadCanary(tgUser.id))request.log.info({event:'canonical_canary_favorite_resolution',servedPath:'canonical',publicRef:body.publicRef,resolved:true,isFavorite});
         return reply.send({publicRef:body.publicRef,isFavorite,totalFavorites});
       }

@@ -1,0 +1,19 @@
+# Latest Session Work — bounded handoff
+
+Updated 2026-10-21. Previous full checkpoint (including Git recovery bundles, SQLite consolidation and earlier Mini App diagnostics): [history/session_work_2026-10-21_before-git-hardening.md](history/session_work_2026-10-21_before-git-hardening.md). Historical checkpoints are indexed in `history/README.md`. Follow `harness_protocol.md`.
+
+## 2026-10-21 — Remote-branch audit and staged private-file protection
+
+**Owner directive:** preserve `origin/feature/telegram-mini-app`: it is the production branch of the Cloudflare Pages `homeasy-app` project. Local fixes in unified `main` do not automatically reach the production Mini App. No merge into the deployment branch, Cloudflare deployment or remote Git action was performed.
+
+**Branch evidence:** `origin/main` (`cf26824`), `origin/develop` (`caed716`) and `origin/codex/phase6b-khmer24` (`65352a5`) all resolve to tree `24e2825ff5330aa301c1851200329d826c020161`; develop has no unique file content compared with published main. GitHub connected PR lookup found PR #1 (head `feature/telegram-mini-app`, base `main`), closed and merged; no other PRs returned from the account's repository PR listing. External deployment/branch consumers have not been exhaustively checked, so retain `develop` until the owner decides on remote cleanup.
+
+**Phase retention:** key Phase 6A canonical repository, API and parity script exist in local `main`; some Phase 6A source files changed in later development, so the phase is not byte-identical. Key Phase 6B Khmer24 discovery/freshness files and Phase 7A interests/contact/funnel report paths were checked against the phase branches without path differences. This is source/tree audit, not an exhaustive functional parity proof. Current local `main` was `a39931e` (two commits ahead of `origin/main`) when hardening began.
+
+**Staged file protection:** `.gitignore` now adds global SQLite `*.db`, `*.sqlite`, `*.sqlite3` and their WAL/SHM/journal forms, preserving `/data/` and `backups/` ignore rules. Added `scripts/check-staged-private-files.cjs` and `.githooks/pre-commit`, enabled with `git config --local core.hooksPath .githooks`. Guard scans Git's staged index with NUL-separated names and rejects staged `data/`, `backups/` and SQLite paths even after `git add -f`. Each new clone requires the same local hook setting. A bypassed hook or old GitHub history is outside this protection's scope.
+
+**Fresh verification:** `node --test tests/git-staged-private-guard.test.cjs` **10/10 PASS**, including real rejected commit in a temporary Git repo; `node scripts/check-staged-private-files.cjs` PASS; `git diff --check` PASS; `git check-ignore -v` showed exclusions for live SQLite, sidecars, backups and external SQLite paths. `git ls-files data` and tracked SQLite filename scan returned no files. All tests use temp repos and dummy content; no production SQLite reads/writes, scraper, paid model or deployment.
+
+**Additional audit evidence:** Archimedes reported **0 CRITICAL and 1 HIGH** for `src/modules/parser/canonical-dedupe.ts`: in scoped reconciliation, verified GPS changes in `listing_facts_json` may not be copied to `canonical_properties.latitude/longitude`. Previously documented “audit report not obtained” was stale. Treat the issue as separate product work; no GPS fix or live-data operation occurred here.
+
+**GitHub gate:** previously attempted `git push origin main:main` was refused by automatic approval review. This session did not retry or bypass it. No remote branch was deleted. Keep all existing untracked reports, active `data/homeasy.db` and its WAL/SHM, session files and recovery archives. Next: owner decision on a reviewed main publication and separately scoped remote branch cleanup; then resume the four reported Mini App product issues.

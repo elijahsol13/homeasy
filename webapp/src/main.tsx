@@ -1,21 +1,10 @@
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
-import posthog from 'posthog-js';
+import { initializeAnalytics } from './services/analytics';
 import './index.css';
 import App from './App.tsx';
 
-const posthogKey = import.meta.env.VITE_POSTHOG_API_KEY;
-if (posthogKey) {
-  try {
-    posthog.init(posthogKey, {
-      api_host: import.meta.env.VITE_POSTHOG_HOST || 'https://eu.i.posthog.com',
-      autocapture: false,
-      capture_pageview: true,
-    });
-  } catch (err) {
-    console.warn('[PostHog] Init error:', err);
-  }
-}
+initializeAnalytics();
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>

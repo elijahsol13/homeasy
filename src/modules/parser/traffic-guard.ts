@@ -3,7 +3,7 @@ import type { Page, Route, Request } from 'playwright';
 export interface TrafficGuardOptions {
   /** If true, allows CSS stylesheets (e.g. for login or visual rendering). Default: false (aborts stylesheets) */
   allowStylesheets?: boolean;
-  /** If true, allows images (NEVER recommended on residential proxy). Default: false */
+  /** If true, allows images. Default: false for text-only scraping. */
   allowImages?: boolean;
   /** Additional URL substrings to abort */
   extraBlockedPatterns?: string[];
@@ -13,7 +13,7 @@ export interface TrafficGuardOptions {
  * Attaches strict resource-blocking routes to a Playwright Page to eliminate unnecessary
  * data transfer over expensive residential proxies.
  *
- * 🛡️ IRONCLAD RULE: Residential proxy bandwidth is paid per GB and must never be wasted.
+ * Resource filter: avoid downloading media that text/JSON scraping does not need.
  * We extract text, metadata, and photo URL strings from HTML/JSON. We NEVER download image/video binaries!
  *
  * Bandwidth reduction: 90% - 98% per page load.

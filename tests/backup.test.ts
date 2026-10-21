@@ -51,6 +51,94 @@ describe('Database Backup Service', () => {
     backupDb.close();
   });
 
+  test('restores a verified snapshot to a separate writable SQLite database', () => {
+    const snapshot = createDatabaseBackup({
+      dbPath: testDbPath,
+      backupDir: testBackupDir,
+      maxRetained: 3,
+    });
+    expect(snapshot.success).toBe(true);
+
+    const restoredPath = path.join(testDir, 'restored.db');
+    fs.copyFileSync(snapshot.backupPath!, restoredPath);
+    const restored = new DatabaseSync(restoredPath);
+    try {
+      expect(restored.prepare('PRAGMA integrity_check').get()).toEqual({ integrity_check: 'ok' });
+      expect(restored.prepare('PRAGMA foreign_key_check').all()).toEqual([]);
+      expect(restored.prepare('SELECT name FROM test_items ORDER BY id').all()).toEqual([
+        { name: 'Item A' }, { name: 'Item B' }, { name: 'Item C' },
+      ]);
+      restored.prepare('INSERT INTO test_items(name) VALUES(?)').run('Restore is writable');
+      expect(restored.prepare('SELECT COUNT(*) AS count FROM test_items').get()).toEqual({ count: 4 });
+    } finally {
+      restored.close();
+    }
+
+    const original = new DatabaseSync(testDbPath, { readOnly: true });
+    try {
+      expect(original.prepare('SELECT COUNT(*) AS count FROM test_items').get()).toEqual({ count: 3 });
+    } finally {
+      original.close();
+    }
+  });
+
+  test('backs up committed data while another connection has an open WAL write transaction', () => {
+    const writer = new DatabaseSync(testDbPath);
+    writer.exec('BEGIN IMMEDIATE');
+    try {
+      writer.prepare("INSERT INTO test_items(name) VALUES('Uncommitted')").run();
+      const result = createDatabaseBackup({ dbPath: testDbPath, backupDir: testBackupDir, maxRetained: 3 });
+      expect(result.success).toBe(true);
+
+      const backup = new DatabaseSync(result.backupPath!, { readOnly: true });
+      try {
+        expect(backup.prepare('SELECT COUNT(*) AS count FROM test_items').get()).toEqual({ count: 3 });
+      } finally {
+        backup.close();
+      }
+    } finally {
+      writer.exec('ROLLBACK');
+      writer.close();
+    }
+  });
+
+  test('rejects a snapshot containing foreign key violations', () => {
+    const invalidDbPath = path.join(testDir, 'invalid_foreign_keys.db');
+    const invalid = new DatabaseSync(invalidDbPath);
+    invalid.exec(`
+      PRAGMA foreign_keys = OFF;
+      CREATE TABLE parents(id INTEGER PRIMARY KEY);
+      CREATE TABLE children(parent_id INTEGER REFERENCES parents(id));
+      INSERT INTO children(parent_id) VALUES (100);
+    `);
+    invalid.close();
+
+    const result = createDatabaseBackup({ dbPath: invalidDbPath, backupDir: testBackupDir, maxRetained: 3 });
+    expect(result.success).toBe(false);
+    expect(result.error).toContain('foreign key violation');
+    expect(result.backupPath).toBeUndefined();
+    expect(fs.readdirSync(testBackupDir).some((name) => name.endsWith('.partial'))).toBe(false);
+  });
+
+  test('never publishes a corrupt source or leaves an incomplete snapshot after failure', () => {
+    const brokenPath = path.join(testDir, 'corrupt_source.db');
+    const isolatedDir = path.join(testDir, 'broken_backups');
+    fs.writeFileSync(brokenPath, 'not a sqlite database');
+    const result = createDatabaseBackup({ dbPath: brokenPath, backupDir: isolatedDir });
+    expect(result.success).toBe(false);
+    expect(fs.readdirSync(isolatedDir)).toEqual([]);
+  });
+
+  test('publishes distinct verified snapshots even within one second', () => {
+    const isolatedDir = path.join(testDir, 'rapid_backups');
+    const first = createDatabaseBackup({ dbPath: testDbPath, backupDir: isolatedDir });
+    const second = createDatabaseBackup({ dbPath: testDbPath, backupDir: isolatedDir });
+    expect(first.success).toBe(true);
+    expect(second.success).toBe(true);
+    expect(first.backupPath).not.toBe(second.backupPath);
+    expect(fs.readdirSync(isolatedDir).sort()).toEqual([first.filename!, second.filename!].sort());
+  });
+
   test('handles nonexistent database source gracefully', () => {
     const result = createDatabaseBackup({
       dbPath: path.join(testDir, 'nonexistent.db'),
@@ -59,6 +147,42 @@ describe('Database Backup Service', () => {
 
     expect(result.success).toBe(false);
     expect(result.error).toContain('not found');
+  });
+
+  test('uses the deployed DATABASE_PATH and adjacent backup folder by default', () => {
+    const previous = process.env.DATABASE_PATH;
+    const separateDb = path.join(testDir, 'configured', 'configured.db');
+    fs.mkdirSync(path.dirname(separateDb), { recursive: true });
+    const db = new DatabaseSync(separateDb);
+    try {
+      db.exec("CREATE TABLE data_source (name TEXT); INSERT INTO data_source VALUES ('configured');");
+    } finally {
+      db.close();
+    }
+
+    try {
+      process.env.DATABASE_PATH = separateDb;
+      const result = createDatabaseBackup();
+      expect(result.success).toBe(true);
+      expect(path.dirname(result.backupPath!)).toBe(path.join(testDir, 'configured', 'backups'));
+      const backup = new DatabaseSync(result.backupPath!, { readOnly: true });
+      try {
+        expect(backup.prepare('SELECT name FROM data_source').get()).toEqual({ name: 'configured' });
+      } finally {
+        backup.close();
+      }
+    } finally {
+      if (previous === undefined) delete process.env.DATABASE_PATH;
+      else process.env.DATABASE_PATH = previous;
+    }
+  });
+
+  test('rejects retention zero before publishing or pruning a snapshot', () => {
+    const isolatedDir = path.join(testDir, 'invalid_retention');
+    const result = createDatabaseBackup({ dbPath: testDbPath, backupDir: isolatedDir, maxRetained: 0 });
+    expect(result).toMatchObject({ success: false, error: expect.stringContaining('maxRetained') });
+    expect(fs.existsSync(isolatedDir)).toBe(false);
+    expect(() => pruneOldBackups(testBackupDir, 0)).toThrow('maxRetained');
   });
 
   test('prunes older backups when exceeding maxRetained', () => {

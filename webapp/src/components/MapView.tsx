@@ -9,7 +9,7 @@ import { formatPropertyTypeLabel } from '../formatters';
 interface MapViewProps {
   city: CityKey;
   onSelectProperty: (property: PropertyDTO) => void;
-  onSelectLocation?: (locationName: string) => void;
+  onSelectLocation?: (locationNames: string[], clusterKey: string | null) => void;
   focusRequest?: MapFocusRequest | null;
   onFocusHandled?: () => void;
   onBackToProperty?: () => void;
@@ -36,14 +36,18 @@ export const MapView: React.FC<MapViewProps> = ({
   const [selectedMarker, setSelectedMarker] = useState<MapMarkerDTO | null>(null);
   const [zoomedCluster, setZoomedCluster] = useState<{
     location: string;
+    locationKey: string | null;
+    locationAliases: string[];
     count: number;
     coordinatePrecision: 'district' | 'city';
   } | null>(null);
   const [loading, setLoading] = useState(true);
   const debounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const markersRequestId = useRef(0);
 
   const fetchMarkersForCurrentBounds = () => {
     if (!mapInstanceRef.current) return;
+    const requestId = ++markersRequestId.current;
     const b = mapInstanceRef.current.getBounds();
     const bounds = {
       minLat: b.getSouth(),
@@ -55,10 +59,12 @@ export const MapView: React.FC<MapViewProps> = ({
 
     fetchMapMarkers(city, undefined, undefined, bounds)
       .then((data) => {
+        if (requestId !== markersRequestId.current) return;
         setMarkers(data);
         setLoading(false);
       })
       .catch((err) => {
+        if (requestId !== markersRequestId.current) return;
         console.error('Failed to load map markers:', err);
         setLoading(false);
       });
@@ -113,6 +119,7 @@ export const MapView: React.FC<MapViewProps> = ({
     }
     return () => {
       if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current);
+      ++markersRequestId.current;
     };
   }, [city]);
 
@@ -206,6 +213,8 @@ export const MapView: React.FC<MapViewProps> = ({
           setSelectedMarker(null);
           setZoomedCluster({
             location: item.location,
+            locationKey: item.locationKey,
+            locationAliases: item.locationAliases?.length ? item.locationAliases : [item.location],
             count: item.count ?? 0,
             coordinatePrecision: item.coordinatePrecision === 'city' ? 'city' : 'district',
           });
@@ -249,6 +258,8 @@ export const MapView: React.FC<MapViewProps> = ({
       setSelectedMarker(null);
       setZoomedCluster({
         location: target.location,
+        locationKey: target.locationKey,
+        locationAliases: target.locationAliases?.length ? target.locationAliases : [target.location],
         count: target.count ?? 0,
         coordinatePrecision: target.coordinatePrecision === 'city' ? 'city' : 'district',
       });
@@ -265,7 +276,7 @@ export const MapView: React.FC<MapViewProps> = ({
 
     if (selectedMarker.isExact === false || selectedMarker.count) {
       if (onSelectLocation) {
-        onSelectLocation(selectedMarker.location);
+        onSelectLocation(selectedMarker.locationAliases?.length ? selectedMarker.locationAliases : [selectedMarker.location], selectedMarker.locationKey);
       }
       return;
     }
@@ -317,7 +328,7 @@ export const MapView: React.FC<MapViewProps> = ({
                   type="button"
                   onClick={() => {
                     triggerHaptic('medium');
-                    onSelectLocation(zoomedCluster.location);
+                    onSelectLocation(zoomedCluster.locationAliases, zoomedCluster.locationKey);
                   }}
                   className="text-xs font-bold text-teal-600 dark:text-teal-400 hover:underline mt-1"
                 >

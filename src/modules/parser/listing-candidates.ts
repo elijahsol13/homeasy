@@ -1,4 +1,6 @@
 import type { DatabaseSync } from 'node:sqlite';
+import { sourceListingFacts } from './source-listing-facts';
+import { parseSourceListingPrice } from './source-price';
 
 export interface ListingCandidatePhoto {
   sourceItemId: number;
@@ -59,14 +61,8 @@ function parseArray<T>(value: unknown): T[] {
 function asString(value: unknown): string | null { return typeof value === 'string' && value.trim() ? value.trim() : null; }
 function asNumber(value: unknown): number | null { return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : null; }
 
-function canonicalFacts(item: SourceItemRow, payload: Record<string, unknown>): Record<string, unknown> {
-  const extracted = payload.listingExtraction && typeof payload.listingExtraction === 'object'
-    ? payload.listingExtraction as Record<string, unknown>
-    : payload.listingFacts && typeof payload.listingFacts === 'object'
-      ? payload.listingFacts as Record<string, unknown>
-      : {};
-  if (item.source_type === 'KHMER24') return extracted;
-  return extracted;
+function canonicalFacts(_item: SourceItemRow, payload: Record<string, unknown>): Record<string, unknown> {
+  return sourceListingFacts(payload);
 }
 
 function collectUrls(value: unknown, urls = new Set<string>(), path = ''): string[] {
@@ -85,21 +81,6 @@ function normalizeText(text: string | null): string {
     .replace(/https?:\/\/\S+/g, ' ').replace(/(?:\+?855|0)[1-9]\d{1,2}(?:[\s().-]*\d){6,8}/g, ' ')
     .replace(/\p{Extended_Pictographic}/gu, ' ').replace(/[\u200B-\u200D\uFEFF]/g, '')
     .replace(/[^\p{L}\p{N}$%#+_-]+/gu, ' ').replace(/\s+/g, ' ').trim();
-}
-
-function parsePriceFromText(rawText: string | null): { price: number; currency: 'USD' | 'KHR' | null } | null {
-  if (!rawText) return null;
-  const patterns = [
-    /(?:monthly\s+rent|rental?\s+price|asking\s+price|monthly\s+rate|rental?\s+rate|price)\s*[:|]?\s*(USD|KHR|\$|៛)?\s*([\d][\d,]*(?:\.\d+)?)/i,
-    /\bUSD\s*([\d][\d,]*(?:\.\d+)?)/i,
-  ];
-  for (let i=0;i<patterns.length;i++) {
-    const match=patterns[i]!.exec(rawText);if(!match)continue;
-    const amount=Number((match[i===0?2:1]??'').replace(/,/g,''));if(!Number.isFinite(amount)||amount<=0)continue;
-    const currencyLabel=(match[i===0?1:0]??'').toUpperCase();
-    return{price:amount,currency:currencyLabel==='KHR'||currencyLabel==='៛'?'KHR':currencyLabel==='USD'||currencyLabel==='$'?'USD':null};
-  }
-  return null;
 }
 
 function inferOfferType(rawText: string | null, facts: Record<string,unknown>): 'rent'|'sale'|null {
@@ -182,7 +163,7 @@ export class ListingCandidateBuilder {
       if (!representative) continue;
       const payload = parseObject(representative.raw_payload_json);
       const facts = canonicalFacts(representative, payload);
-      const priceFromText=parsePriceFromText(representative.raw_text);
+      const priceFromText=parseSourceListingPrice(representative.raw_text);
       const memberRows = group.memberIds.map((id) => rowById.get(id)).filter((row): row is SourceItemRow => Boolean(row));
       const allIdentifiers = memberRows.flatMap((item) => identifiersByItem.get(item.id) ?? []);
       const media = memberRows.flatMap((item) => photoAssets(item, parseObject(item.raw_payload_json)));

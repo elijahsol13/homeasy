@@ -1,5 +1,5 @@
 import { AiRouter, resetAiRouterLimits } from '../src/modules/ai/router';
-import { GEMINI_PROJECT_LIMITS } from '../src/modules/ai/cascade';
+import { GEMINI_FREE_MODELS, GEMINI_PROJECT_LIMITS } from '../src/modules/ai/cascade';
 import { nextPacificMidnight } from '../src/modules/ai/quota-clock';
 import { ProviderError, type AiProvider, type AiRunMetric } from '../src/modules/ai/types';
 
@@ -41,9 +41,12 @@ describe('AI cascade quota isolation', () => {
     for (const model of ['gemini-3.5-flash-lite', 'gemini-3.1-flash-lite'] as const) {
       expect(GEMINI_PROJECT_LIMITS[model]).toMatchObject({ rpm: 15, inputTpm: 250_000, rpd: 500 });
     }
-    for (const model of ['gemini-3.8-flash', 'gemini-3.7-flash', 'gemini-3.6-flash', 'gemini-3.5-flash'] as const) {
+    for (const model of ['gemini-3.8-flash', 'gemini-3.6-flash'] as const) {
       expect(GEMINI_PROJECT_LIMITS[model]).toMatchObject({ rpm: 5, inputTpm: 250_000, rpd: 20 });
     }
+    // Google routes these aliases to newer models. They must not receive independent quota budgets.
+    expect(GEMINI_FREE_MODELS).not.toContain('gemini-3.7-flash');
+    expect(GEMINI_FREE_MODELS).not.toContain('gemini-3.5-flash');
   });
 
   test('Gemini input TPM does not charge reserved output tokens', async () => {

@@ -9,9 +9,7 @@ export const GEMINI_FREE_MODELS = [
   'gemini-3.5-flash-lite',
   'gemini-3.1-flash-lite',
   'gemini-3.8-flash',
-  'gemini-3.7-flash',
   'gemini-3.6-flash',
-  'gemini-3.5-flash',
 ] as const;
 
 // User-provided AI Studio project limits, 2026-10-06. The number BEFORE '/' in
@@ -19,10 +17,8 @@ export const GEMINI_FREE_MODELS = [
 // These can change with project tier and should be rechecked in AI Studio.
 export const GEMINI_PROJECT_LIMITS: Record<(typeof GEMINI_FREE_MODELS)[number], AiModelLimits> = {
   'gemini-3.8-flash': { rpm: 5, inputTpm: 250_000, rpd: 20, maxOutputTokens: 2048 },
-  'gemini-3.7-flash': { rpm: 5, inputTpm: 250_000, rpd: 20, maxOutputTokens: 2048 },
   'gemini-3.6-flash': { rpm: 5, inputTpm: 250_000, rpd: 20, maxOutputTokens: 2048 },
   'gemini-3.5-flash-lite': { rpm: 15, inputTpm: 250_000, rpd: 500, maxOutputTokens: 2048 },
-  'gemini-3.5-flash': { rpm: 5, inputTpm: 250_000, rpd: 20, maxOutputTokens: 2048 },
   'gemini-3.1-flash-lite': { rpm: 15, inputTpm: 250_000, rpd: 500, maxOutputTokens: 2048 },
 };
 

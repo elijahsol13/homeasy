@@ -40,8 +40,9 @@ export async function fetchProperties(
   params.set('sort', filters.sort);
 
   if (filters.locations.length > 0) {
-    params.set('locations', filters.locations.join(','));
+    params.set('locations_json', JSON.stringify(filters.locations));
   }
+  if (filters.mapClusterKey) params.set('map_cluster_key', filters.mapClusterKey);
   if (filters.category) {
     params.set('category', filters.category);
   }
@@ -181,10 +182,10 @@ export async function fetchFavorites(): Promise<PropertyDTO[]> {
 }
 
 export async function reviewProperty(
-  propertyId: number,
+  listingIdentity: number | string,
   action: 'approve' | 'reject',
 ): Promise<{ ok: boolean; action: string; property: PropertyDTO | null }> {
-  const res = await fetch(`${API_BASE}/properties/${propertyId}/review`, {
+  const res = await fetch(`${API_BASE}/properties/${encodeURIComponent(String(listingIdentity))}/review`, {
     method: 'POST',
     headers: getAuthHeaders(),
     body: JSON.stringify({ action }),
@@ -205,6 +206,7 @@ export interface TrackingAttribution {
   post_id: string | null;
   request_id: string | null;
   listing_id: number | null;
+  listing_public_ref: string | null;
   agent_id: number | null;
 }
 
@@ -212,6 +214,7 @@ export interface TrackMiniAppOpenResponse {
   ok: true;
   slug: string;
   attribution: TrackingAttribution;
+  listingTarget: string | number | null;
 }
 
 export async function trackMiniAppOpen(slug: string): Promise<TrackMiniAppOpenResponse> {

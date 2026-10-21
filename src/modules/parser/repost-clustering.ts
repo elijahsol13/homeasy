@@ -157,7 +157,7 @@ const STOP_WORDS = new Set([
 const PHONE_PATTERN = /(?:\+?855|0)[1-9]\d{1,2}(?:[\s().-]*\d){6,8}/g;
 const URL_PATTERN = /\b(?:https?:\/\/|www\.)[^\s<>"']+/gi;
 const EMAIL_PATTERN = /[\p{L}\p{N}._%+-]+@[\p{L}\p{N}.-]+\.[\p{L}]{2,}/giu;
-const TELEGRAM_PATTERN = /@[p{L}][p{L}p{N}_]{4,31}/gu;
+const TELEGRAM_PATTERN = /@\p{L}[\p{L}\p{N}_]{4,31}/gu;
 const IMAGE_URL_PATTERN = /(?:\.(?:jpe?g|png|webp|gif)(?:\?|$)|fbcdn|scontent|khmer24\.com\/photos)/i;
 
 function stripUrlPunctuation(value: string): string { return value.replace(/[),.;]+$/g, ''); }
@@ -169,7 +169,7 @@ export function normalizeRepostText(rawText: string | null | undefined): string 
     .replace(EMAIL_PATTERN, ' ')
     .replace(PHONE_PATTERN, ' ')
     .replace(TELEGRAM_PATTERN, ' ')
-    .replace(/[\u200B-\u200D\uFEFF\uFE0E\uFE0F]/g, '')
+    .replace(/\u200B|\u200C|\u200D|\uFEFF|\uFE0E|\uFE0F/gu, '')
     .replace(/\p{Extended_Pictographic}/gu, ' ')
     .replace(/[-_=*•·]{3,}/g, ' ')
     .toLocaleLowerCase('en')
@@ -304,7 +304,6 @@ export class RepostClusteringService {
     if (!changedIds.length) return { algorithmVersion, sourceItemIds: [], affectedItemIds: [], assignments: [], clustersCreated: 0, clustersUpdated: 0, clustersRemoved: 0 };
     const all = this.loadItems();
     const byId = new Map(all.map((item) => [item.id, item]));
-    const changed = changedIds.map((id) => byId.get(id)).filter((item): item is Item => Boolean(item));
     const changedSet = new Set(changedIds);
     const oldRows = this.db.prepare(`SELECT c.id,c.entity_type,c.cluster_key,c.representative_source_item_id,m.source_item_id
       FROM dedupe_clusters c LEFT JOIN dedupe_cluster_members m ON m.cluster_id=c.id
@@ -419,7 +418,7 @@ export class RepostClusteringService {
   }
 
   private createReport(algorithmVersion:string,dryRun:boolean,items:Item[],supply:Item[],demand:Item[],supplyResult:ReturnType<RepostClusteringService['clusterEntity']>,demandResult:ReturnType<RepostClusteringService['clusterEntity']>,clusters:ClusterResult[],idByKey:Map<string,number>):RepostClusterReport{
-    const summary = (entity: EntityType, entityItems: Item[], entityClusters: ClusterResult[], diagnostics: PairEvaluation[]): RepostClusterReport['entities'][EntityType] => {
+    const summary = (entityItems: Item[], entityClusters: ClusterResult[]): RepostClusterReport['entities'][EntityType] => {
       const multi = entityClusters.filter((cluster) => cluster.members.length > 1);
       const clustersByMethod: Record<string, number> = {};
       for (const cluster of multi) clustersByMethod[cluster.method] = (clustersByMethod[cluster.method] ?? 0) + 1;
@@ -460,8 +459,8 @@ export class RepostClusteringService {
       candidatePairCount: supplyResult.candidatePairCount + demandResult.candidatePairCount,
       indexedSignalCount,
       entities: {
-        SUPPLY_REPOST: summary('SUPPLY_REPOST', supply, supplyResult.clusters, supplyAccepted),
-        DEMAND_REPOST: summary('DEMAND_REPOST', demand, demandResult.clusters, demandAccepted),
+        SUPPLY_REPOST: summary(supply, supplyResult.clusters),
+        DEMAND_REPOST: summary(demand, demandResult.clusters),
       },
       ambiguousNotClustered: supplyResult.clusters.filter((cluster) => cluster.members.length === 1).length + supplyResult.nearThreshold.length,
       nearThresholdPairCount: supplyResult.nearThreshold.length + demandResult.nearThreshold.length,
@@ -582,7 +581,7 @@ export class RepostClusteringService {
     return a.id - b.id;
   }
 
-  private evaluateSupply(a: Item, b: Item, retrievedBy: Set<string>): PairEvaluation {
+  private evaluateSupply(a: Item, b: Item, _retrievedBy: Set<string>): PairEvaluation {
     const tokenJaccard = jaccard(a.tokens, b.tokens);
     const trigramDice = dice(a.trigrams, b.trigrams);
     const similarity = 0.7 * tokenJaccard + 0.3 * trigramDice;

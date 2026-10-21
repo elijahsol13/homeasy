@@ -1,6 +1,7 @@
 import { writeFileSync } from 'node:fs';
 import { DatabaseSync } from 'node:sqlite';
 import { CanonicalListingRepository } from '../src/database/repositories/canonical-listing.repo';
+import { assessSiemReapGeography } from '../src/modules/parser/source-geography';
 
 const dbPath=process.env.PHASE6A_DB??'data/rebuild/phase6a-checkpoint-20261007.db';
 const db=new DatabaseSync(dbPath,{readOnly:true});
@@ -22,18 +23,11 @@ const strip=(v:string)=>v.replace(/https?:\/\/\S+/gi,'[link]').replace(/\+?\d[\d
 const outside=['phnom penh','phnompenh','ភ្នំពេញ','kandal','ខេត្តកណ្ដាល','sihanoukville','preah sihanouk','battambang','kampot','kep','poipet','kampong cham','kampong thom','kampong speu','kampong chhnang','koh kong','kratie','mondulkiri','ratanakiri','pursat','takeo','svay rieng','bavet','stung treng','pailin','banteay meanchey','prey veng','tbong khmum'];
 const local=['wat bo','sala kamreuk','sala kamraeuk','svay dangkum','sla kram','chreav','chong kaosou','phare circus','pub street','old market','wat damnak','wat polanka','bakong','pradak','kandaek','siem reap'];
 function cityTier(r:Row):'EXACT_CITY'|'PROBABLE_CITY'|'UNKNOWN_CITY'|'CONTRADICTION_CITY'|'GEOGRAPHY_CONFLICT' {
-  const fields=[r.listing_city,r.property_city,r.explicit_location,r.sangkat,r.property_explicit_location,r.property_sangkat,r.canonical_address].map(clean).filter(Boolean);
-  const title=clean(r.title).toLowerCase(), body=`${clean(r.raw_text)} ${clean(r.description)}`.toLowerCase();
-  const all=`${fields.join(' ')} ${title} ${body}`.toLowerCase();
-  const other=outside.find((x)=>all.includes(x));
-  const siemEvidence=/siem\s*reap|siemreap|សៀមរាប/i.test(fields.join(' '))||/(?:in|located in|location:)\s*siem\s*reap|សៀមរាប/.test(`${title} ${body}`);
-  const titleOther=outside.find((x)=>title.includes(x));
-  if(titleOther&&siemEvidence)return 'GEOGRAPHY_CONFLICT';
-  const structuredOther=fields.find((x)=>outside.some((city)=>x.toLowerCase().includes(city)));
-  if(structuredOther||titleOther)return 'CONTRADICTION_CITY';
-  if((typeof r.listing_city==='string'&&r.listing_city==='siem_reap')||(typeof r.property_city==='string'&&r.property_city==='siem_reap')||siemEvidence)return 'EXACT_CITY';
-  if(local.some((x)=>all.includes(x))||r.source_registry_city==='siem_reap')return 'PROBABLE_CITY';
-  return 'UNKNOWN_CITY';
+  return assessSiemReapGeography({rawText:clean(r.raw_text),title:clean(r.title),
+    description:clean(r.description),city:clean(r.listing_city),propertyCity:clean(r.property_city),
+    sangkat:clean(r.sangkat)||clean(r.property_sangkat),
+    explicitLocation:[r.explicit_location,r.property_explicit_location,r.canonical_address].map(clean).filter(Boolean).join(' '),
+    sourceCity:clean(r.source_registry_city)}).tier;
 }
 const classify=(r:Row)=>{
   const p=results.items.find((x)=>x.id===Number(r.id));
@@ -51,8 +45,8 @@ const counts=allEnriched.reduce((acc,r)=>{acc[r.proposedGeographyTier]++;return 
 const offerCityCrossTab=allEnriched.reduce((acc,r)=>{const key=`${r.proposedGeographyTier}__${r.offerTier}`;acc[key]=(acc[key]??0)+1;return acc;},{} as Record<string,number>);
 const extraCounts=enriched.reduce((acc,r)=>{acc[r.proposedGeographyTier]++;return acc;},{EXACT_CITY:0,PROBABLE_CITY:0,UNKNOWN_CITY:0,CONTRADICTION_CITY:0,GEOGRAPHY_CONFLICT:0});
 const report={generatedAt:new Date().toISOString(),database:dbPath,mode:'read_only',sourceRegistryPolicy:'acquisition prior only; never exact city evidence',baseline:{repositoryReturned:results.total,repositoryOnlyCount:candidates.length,repositoryOnlyIds:candidates.map((p)=>p.id)},counts,offerCityCrossTab,
-  repositoryOnlyCityCounts:extraCounts,acceptedByProposedCityPolicy:allEnriched.filter((x)=>['EXACT_CITY','PROBABLE_CITY','UNKNOWN_CITY'].includes(x.proposedGeographyTier)).length,
-  excludedOrHeld:allEnriched.filter((x)=>['CONTRADICTION_CITY','GEOGRAPHY_CONFLICT'].includes(x.proposedGeographyTier)).length,records:enriched};
+  repositoryOnlyCityCounts:extraCounts,acceptedByProposedCityPolicy:allEnriched.filter((x)=>x.proposedGeographyTier==='EXACT_CITY').length,
+  excludedOrHeld:allEnriched.filter((x)=>x.proposedGeographyTier!=='EXACT_CITY').length,records:enriched};
 const out='reports/phase6a2-source-city-prior-audit-20261007.json';
 writeFileSync(out,JSON.stringify(report,null,2)+'\n');
 console.log(JSON.stringify({out,repositoryReturned:results.total,repositoryOnlyCount:candidates.length,counts,offerCityCrossTab,repositoryOnlyCityCounts:extraCounts},null,2));

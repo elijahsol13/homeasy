@@ -8,9 +8,27 @@ import {
   handleViewFavorite,
   handleRemoveFavorite,
   handleFavoritesPage,
+  handleSaveCanonicalProperty,
+  handleViewCanonicalFavorite,
+  handleRemoveCanonicalFavorite,
 } from './favorites.handler';
 import { mainMenuKeyboard } from '../keyboards/main.keyboard';
 import { env } from '../../../config/env';
+import { listingReadPathForUser } from '../../api/listing-read-path';
+
+const PUBLIC_REF_PATTERN = /^lst_[a-f0-9]{32}$/;
+
+function positiveInteger(raw: string): number | undefined {
+  if (!/^[1-9][0-9]*$/.test(raw)) return undefined;
+  const value = Number(raw);
+  return Number.isSafeInteger(value) ? value : undefined;
+}
+
+function pageNumber(raw: string): number | undefined {
+  if (!/^(0|[1-9][0-9]*)$/.test(raw)) return undefined;
+  const value = Number(raw);
+  return Number.isSafeInteger(value) ? value : undefined;
+}
 
 export function createCallbacksHandler(_container: AppContainer): Composer<MyContext> {
   const handler = new Composer<MyContext>();
@@ -138,13 +156,84 @@ async function route(ctx: MyContext, data: string): Promise<boolean> {
 
   // ── Property actions ───────────────────────────────────────────────────────
 
+  // Telegram keyboards persist in old messages across rollout. Once the user
+  // moves to canonical listings, legacy numeric buttons must not modify the
+  // rollback favorites or report a different legacy listing with the same ID.
+  if ((data.startsWith('cb:prop:') || data.startsWith('cb:fav:'))
+    && listingReadPathForUser(ctx.from?.id) === 'canonical') {
+    await safeAnswer(ctx, '⚠️ Old button. Open the current catalog or favorites.');
+    return true;
+  }
+
+  // Opaque canonical references are never parsed as legacy integer IDs.
+  if (data.startsWith('cb:cl:') || data.startsWith('cb:clfav:')) {
+    const match = /^cb:(cl|clfav):(save|hide|report|view|remove|page):(.+)$/.exec(data);
+    if (!match) {
+      await safeAnswer(ctx, '⚠️ Invalid action');
+      return true;
+    }
+    const [, scope, action, value] = match;
+    if (scope === 'clfav' && action === 'page') {
+      const page = pageNumber(value!);
+      if (page !== undefined) await handleFavoritesPage(ctx, page, 'canonical');
+      else await safeAnswer(ctx, '⚠️ Invalid page');
+      return true;
+    }
+    if (!PUBLIC_REF_PATTERN.test(value!)) {
+      await safeAnswer(ctx, '⚠️ Invalid listing');
+      return true;
+    }
+    if (listingReadPathForUser(ctx.from?.id) !== 'canonical') {
+      await safeAnswer(ctx, '⚠️ Action no longer available');
+      return true;
+    }
+    if (scope === 'cl' && action === 'save') await handleSaveCanonicalProperty(ctx, value!);
+    else if (scope === 'clfav' && action === 'view') await handleViewCanonicalFavorite(ctx, value!);
+    else if (scope === 'clfav' && action === 'remove') await handleRemoveCanonicalFavorite(ctx, value!);
+    else if (scope === 'cl' && action === 'hide') {
+      const identity = ctx.container.listingIdentityRepo.resolvePublicRef(value!);
+      if (!identity) await safeAnswer(ctx, '❌ Listing no longer available');
+      else {
+        try { await ctx.deleteMessage(); } catch { /* Already deleted. */ }
+        await safeAnswer(ctx, '🙈 Listing hidden');
+      }
+    } else if (scope === 'cl' && action === 'report') {
+      const user = ctx.from && ctx.container.usersRepo.findByTelegramId(ctx.from.id);
+      const identity = ctx.container.listingIdentityRepo.resolvePublicRef(value!);
+      if (!user) await safeAnswer(ctx, '❌ Please /start the bot first');
+      else if (!identity || !ctx.container.canonicalListingRepo.getPropertyById(identity.listingId)) {
+        await safeAnswer(ctx, '❌ Listing no longer available');
+      } else {
+        const { added, total } = ctx.container.canonicalReportsRepo.report(identity.listingId, user.id);
+        if (added) {
+          ctx.container.analyticsRepo.trackEvent({
+            userId: user.id, telegramId: ctx.from?.id,
+            eventType: 'listing_reported', metadata: { publicRef: identity.publicRef },
+          });
+          // Reports require moderator review. A complaint never changes a
+          // canonical listing's status or a colliding legacy record.
+          if (total === 1) {
+            await ctx.container.alertService.warn(`Canonical listing ${identity.publicRef} received a report; manual review required.`);
+          }
+        }
+        await safeAnswer(ctx, added ? '🚩 Thank you. Sent for review.' : '🚩 You already reported this listing.');
+      }
+    } else await safeAnswer(ctx, '⚠️ Invalid action');
+    return true;
+  }
+
   if (data.startsWith('cb:prop:save:')) {
-    const id = parseInt(data.replace('cb:prop:save:', ''), 10);
-    if (!isNaN(id)) await handleSaveProperty(ctx, id);
+    const id = positiveInteger(data.slice('cb:prop:save:'.length));
+    if (id !== undefined) await handleSaveProperty(ctx, id);
+    else await safeAnswer(ctx, '⚠️ Invalid property');
     return true;
   }
 
   if (data.startsWith('cb:prop:hide:')) {
+    if (positiveInteger(data.slice('cb:prop:hide:'.length)) === undefined) {
+      await safeAnswer(ctx, '⚠️ Invalid property');
+      return true;
+    }
     try {
       await ctx.deleteMessage();
     } catch {
@@ -155,8 +244,8 @@ async function route(ctx: MyContext, data: string): Promise<boolean> {
   }
 
   if (data.startsWith('cb:prop:report:')) {
-    const id = parseInt(data.replace('cb:prop:report:', ''), 10);
-    if (!isNaN(id)) {
+    const id = positiveInteger(data.slice('cb:prop:report:'.length));
+    if (id !== undefined && ctx.container.propertiesRepo.getPropertyById(id)) {
       const { is_active } = ctx.container.propertiesRepo.reportProperty(id);
       if (!is_active) {
         await ctx.container.alertService.warn('Listing #' + id + ' hidden due to complaint threshold reached.');
@@ -177,20 +266,23 @@ async function route(ctx: MyContext, data: string): Promise<boolean> {
   // ── Favorites ──────────────────────────────────────────────────────────────
 
   if (data.startsWith('cb:fav:view:')) {
-    const id = parseInt(data.replace('cb:fav:view:', ''), 10);
-    if (!isNaN(id)) await handleViewFavorite(ctx, id);
+    const id = positiveInteger(data.slice('cb:fav:view:'.length));
+    if (id !== undefined) await handleViewFavorite(ctx, id);
+    else await safeAnswer(ctx, '⚠️ Invalid property');
     return true;
   }
 
   if (data.startsWith('cb:fav:remove:')) {
-    const id = parseInt(data.replace('cb:fav:remove:', ''), 10);
-    if (!isNaN(id)) await handleRemoveFavorite(ctx, id);
+    const id = positiveInteger(data.slice('cb:fav:remove:'.length));
+    if (id !== undefined) await handleRemoveFavorite(ctx, id);
+    else await safeAnswer(ctx, '⚠️ Invalid property');
     return true;
   }
 
   if (data.startsWith('cb:fav:page:')) {
-    const page = parseInt(data.replace('cb:fav:page:', ''), 10);
-    if (!isNaN(page)) await handleFavoritesPage(ctx, page);
+    const page = pageNumber(data.slice('cb:fav:page:'.length));
+    if (page !== undefined) await handleFavoritesPage(ctx, page);
+    else await safeAnswer(ctx, '⚠️ Invalid page');
     return true;
   }
 

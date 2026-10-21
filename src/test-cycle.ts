@@ -34,7 +34,7 @@ async function main() {
   console.log(`✅ Inserted                  : ${stats.inserted}`);
   console.log(`🔁 Duplicates / Skipped      : ${stats.duplicates}`);
   console.log(`❌ Errors                    : ${stats.errors}`);
-  console.log(`🌐 Exact Proxy Wire Transfer : ${totalMb} MB (${totalKb} KB)`);
+  console.log(`🌐 Observed response bytes   : ${totalMb} MB (${totalKb} KB)`);
   console.log('═══════════════════════════════════════════════════════════════\n');
 
   process.exit(0);

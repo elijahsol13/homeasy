@@ -4,6 +4,11 @@ import { FiltersRepository, MAX_USER_FILTERS } from '../src/database/repositorie
 import { PropertiesRepository } from '../src/database/repositories/properties.repo';
 import { UsersRepository } from '../src/database/repositories/users.repo';
 import { NLSearchService } from '../src/services/nl-search.service';
+import { createContainer } from '../src/container';
+import { env } from '../src/config/env';
+import { propertyMatchesFilter } from '../src/modules/matcher/matcher';
+import { extractDraftFromCriteriaText, renderCriteriaMessage, searchNLListings } from '../src/modules/bot/handlers/nl-search.handler';
+import type { FilterDraft } from '../src/modules/bot/session';
 import fs from 'fs';
 import path from 'path';
 
@@ -214,5 +219,121 @@ describe('Natural Language Search & Guardrails Engine', () => {
       expect(extractDraftFromCriteriaText('Hello there!')).toBeNull();
       expect(extractDraftFromCriteriaText('')).toBeNull();
     });
+  });
+});
+
+describe('Wat Bo text/voice search: count, pages, card and saved alert', () => {
+  const telegramId = 990055;
+  const criteria = {
+    is_real_estate_query: true,
+    summary_en: 'Room for rent in Wat Bo under $200',
+    city: 'siem_reap' as const,
+    type: 'rent' as const,
+    category: 'room' as const,
+    location: 'Wat Bo',
+    max_price: 200,
+  };
+  const draft: FilterDraft = {
+    city: 'siem_reap', type: 'rent', category: 'room',
+    max_price: 200, locations: ['Wat Bo'],
+  };
+  const fixtures = [
+    { slug: 'a', location: 'Sla Kram', price: 15000, category: 'room' },
+    { slug: 'b', location: 'Wat Bo', price: 17500, category: 'room' },
+    { slug: 'c', location: 'Slor Kram', price: 19900, category: 'room' },
+    { slug: 'd', location: 'Sangkat Sla Kram', price: 20000, category: 'room' },
+    { slug: 'expensive', location: 'Sla Kram', price: 25000, category: 'room' },
+    { slug: 'elsewhere', location: 'Sala Kamreuk', price: 12000, category: 'room' },
+    { slug: 'apartment', location: 'Wat Bo', price: 11000, category: 'apartment' },
+  ] as const;
+
+  it('shows $200/month and recovers both new cards and historical cents-based cards', () => {
+    const card = renderCriteriaMessage(criteria, 4);
+    expect(card.text).toContain('Up to $200 (USD/month)');
+    expect(card.text).toContain('Wat Bo (searching Sla Kram area)');
+    expect(card.text).toContain('4</b> matching listing(s)');
+    expect(extractDraftFromCriteriaText(card.text)).toMatchObject(draft);
+
+    const historical = card.text
+      .replace('Up to $200 (USD/month)', 'Up to $20,000')
+      .replace('Wat Bo (searching Sla Kram area)', 'Wat Bo');
+    expect(extractDraftFromCriteriaText(historical)?.max_price).toBe(200);
+    expect(extractDraftFromCriteriaText(historical)?.locations).toEqual(['Wat Bo']);
+  });
+
+  it.each(['legacy', 'canonical'] as const)('%s: same four matches for card estimate, first page, next page and alert', (path) => {
+    const previous = env.LISTING_READ_PATH;
+    const previousCanaries = env.CANONICAL_READ_CANARY_TELEGRAM_IDS;
+    const container = createContainer({ dbPath: ':memory:' });
+    try {
+      runMigrations(container.db);
+      env.LISTING_READ_PATH = path;
+      env.CANONICAL_READ_CANARY_TELEGRAM_IDS = [];
+      const now = new Date().toISOString();
+      const registryId = path === 'canonical' ? container.sourceIngestionRepo.upsertSource({
+        sourceType: 'KHMER24', externalSourceId: 'wat-bo-test', name: 'Wat Bo test',
+      }) : 0;
+      for (const fixture of fixtures) {
+        if (path === 'legacy') {
+          container.db.prepare(`INSERT INTO properties
+            (hash,title,price,currency,type,category,location,city,original_url,review_status,is_active)
+            VALUES (?,?,?,'USD','rent',?,?,'siem_reap',?,'approved',1)`)
+            .run(`wat-bo-${fixture.slug}`, fixture.slug, fixture.price, fixture.category,
+              fixture.location, `https://example.test/legacy/${fixture.slug}`);
+        } else {
+          const itemId = container.sourceIngestionRepo.upsertSourceItemDetailed(registryId, {
+            sourceType: 'KHMER24', externalId: fixture.slug,
+            sourceUrl: `https://example.test/canonical/${fixture.slug}`,
+            rawText: `Room for rent in ${fixture.location}`,
+            contentHash: `wat-bo-${fixture.slug}`,
+            classification: 'HOUSING_SUPPLY',
+            rawPayload: { listingFacts: { offer_type: 'rent', city: 'siem_reap', sangkat: fixture.location } },
+          }, now).id;
+          const listingId = Number(container.db.prepare(`INSERT INTO canonical_listings
+            (public_ref,title,description,status,availability_status,price,currency,category,city,sangkat,first_seen_at,last_seen_at,listing_facts_json)
+            VALUES ('lst_'||lower(hex(randomblob(16))),?,'For rent','active','available',?,'USD',?,'siem_reap',?,?,?,?)`)
+            .run(fixture.slug, fixture.price, fixture.category, fixture.location, now, now,
+              JSON.stringify({ offer_type: 'rent' })).lastInsertRowid);
+          const occurrenceId = Number(container.db.prepare(`INSERT INTO canonical_listing_source_occurrences
+            (source_item_id,listing_id,source_registry_id,source_url,first_seen_at,last_seen_at)
+            VALUES (?,?,?,?,?,?)`)
+            .run(itemId, listingId, registryId, `https://example.test/canonical/${fixture.slug}`, now, now).lastInsertRowid);
+          container.db.prepare('UPDATE canonical_listings SET primary_source_occurrence_id=? WHERE id=?').run(occurrenceId, listingId);
+          container.db.prepare(`INSERT INTO canonical_listing_moderation(listing_id,review_status)
+            VALUES (?,'approved')`).run(listingId);
+        }
+      }
+
+      const estimate = searchNLListings(container, telegramId, draft, 1);
+      const pageOne = searchNLListings(container, telegramId, draft, 3);
+      const pageTwo = searchNLListings(container, telegramId, draft, 3, 3);
+      expect(estimate.total).toBe(4);
+      expect(pageOne.total).toBe(4);
+      expect(pageOne.items).toHaveLength(3);
+      expect(pageTwo.total).toBe(4);
+      expect(pageTwo.items).toHaveLength(1);
+      expect(new Set([...pageOne.items, ...pageTwo.items].map((p) => p.id)).size).toBe(4);
+      expect([...pageOne.items, ...pageTwo.items].every((p) => p.price <= 20000 && p.category === 'room')).toBe(true);
+
+      const user = container.usersRepo.upsertUser(telegramId, 'wat_bo_test');
+      const savedAlert = container.filtersRepo.createFilter({
+        user_id: user.id, type: 'rent', category: 'room', city: 'siem_reap',
+        min_price: null, max_price: draft.max_price!, bedrooms: null, requires_pool: false,
+        min_lease_preferred: null, locations: draft.locations!,
+      });
+      expect(savedAlert.max_price).toBe(200);
+      expect(savedAlert.locations).toEqual(['Wat Bo']);
+      const wider = searchNLListings(container, telegramId, { ...draft, max_price: 300 }, 20);
+      const expensive = wider.items.find((p) => p.price === 25000);
+      expect(expensive).toBeDefined();
+      expect(propertyMatchesFilter(expensive!, savedAlert)).toBe(false);
+      for (const property of [...pageOne.items, ...pageTwo.items]) {
+        expect(propertyMatchesFilter(property, savedAlert)).toBe(true);
+      }
+    } finally {
+      env.LISTING_READ_PATH = previous;
+      env.CANONICAL_READ_CANARY_TELEGRAM_IDS = previousCanaries;
+      container.db.close();
+    }
   });
 });

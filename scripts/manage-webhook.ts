@@ -1,11 +1,11 @@
 import 'dotenv/config';
 import crypto from 'crypto';
 import { Bot } from 'grammy';
-import { env } from '../src/config/env';
+import { env, requireBotToken } from '../src/config/env';
 
 async function main() {
   const action = process.argv[2] || 'info';
-  const bot = new Bot(env.BOT_TOKEN);
+  const bot = new Bot(requireBotToken());
 
   console.log('🤖 HomEasy Telegram Bot Webhook Manager');
   console.log(`📍 Action: ${action}\n`);

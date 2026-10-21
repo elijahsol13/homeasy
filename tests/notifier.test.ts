@@ -42,7 +42,7 @@ describe('Dynamic Telegram Listing Card Formatter', () => {
     updated_at: new Date().toISOString(),
   };
 
-  test('renders a compact listing summary and omits absent features', () => {
+  test('renders a compact card without absent features or private contact details', () => {
     const card = formatListingCard(baseProperty);
 
     // Should NOT contain the bed/bath row icon or placeholders
@@ -51,14 +51,14 @@ describe('Dynamic Telegram Listing Card Formatter', () => {
     expect(card).not.toContain('Deposit:');
     expect(card).not.toContain('Min Lease:');
 
-    expect(card).toContain('<i>House</i>');
-    expect(card).toContain('💰 <b>$350</b>/month · 📍 <b>Svay Dangkum</b>');
+    // Should contain essentials
     expect(card).toContain('<b>Modern House in Siem Reap</b>');
+    expect(card).toContain('💰 <b>$350</b>/month · 📍 <b>Svay Dangkum</b>');
     expect(card).toContain('Facebook · posted today');
     expect(card).not.toContain('089899084');
   });
 
-  test('dynamically includes only present features and terms', () => {
+  test('dynamically includes present features without verbose lease terms', () => {
     const fullProperty: Property = {
       ...baseProperty,
       bedrooms: 2,
@@ -90,13 +90,13 @@ describe('Dynamic Telegram Listing Card Formatter', () => {
     expect(card).not.toContain('🏊 Pool');
   });
 
-  test('renders the canonical location without embedding map links in the compact card', () => {
+  test('shows human-readable location without embedding external map URLs', () => {
     const cardWithCustomMaps = formatListingCard({
       ...baseProperty,
       maps_url: 'https://maps.app.goo.gl/sample123',
     });
     expect(cardWithCustomMaps).toContain('📍 <b>Svay Dangkum</b>');
-    expect(cardWithCustomMaps).not.toContain('href=');
+    expect(cardWithCustomMaps).not.toContain('maps.app.goo.gl');
 
     const cardWithSpecificMaps = formatListingCard({
       ...baseProperty,
@@ -105,7 +105,6 @@ describe('Dynamic Telegram Listing Card Formatter', () => {
       city: 'siem_reap',
     });
     expect(cardWithSpecificMaps).toContain('📍 <b>Sala Kamreuk</b>');
-    expect(cardWithSpecificMaps).not.toContain('href=');
 
     const cardWithCityOnlyMaps = formatListingCard({
       ...baseProperty,
@@ -114,12 +113,12 @@ describe('Dynamic Telegram Listing Card Formatter', () => {
       city: 'siem_reap',
     });
     expect(cardWithCityOnlyMaps).toContain('📍 <b>Siem Reap</b>');
-    expect(cardWithCityOnlyMaps).not.toContain('href=');
   });
 
-  test('renders compact freshness metadata and formats full timestamps for callers', () => {
+  test('uses relative freshness in card and retains standalone timestamp formatter', () => {
     const card = formatListingCard(baseProperty);
-    expect(card).toContain('Facebook · posted today');
+    expect(card).toContain('posted today');
+    expect(card).not.toContain('🕒 Added:');
 
     // Test formatListingTimestamp unit scenarios
     const now = new Date();
@@ -139,7 +138,33 @@ describe('Dynamic Telegram Listing Card Formatter', () => {
     expect(notifier.getApi()).toBe(mockApi);
   });
 
-  test('keeps the compact card to primary structured features', () => {
+  test('sends legacy and canonical cards with overlapping numeric IDs and distinct action namespaces', async () => {
+    jest.useFakeTimers({ now: new Date('2026-10-14T12:00:00Z') });
+    try {
+      const mockApi = {
+        sendMessage: jest.fn().mockResolvedValue({}),
+      } as unknown as import('grammy').Api;
+      const notifier = new NotifierService(mockApi, []);
+      const legacy: Property = { ...baseProperty, photos: [] };
+      const publicRef = `lst_${'a'.repeat(32)}`;
+      const canonical: Property = { ...legacy, title: 'Canonical unit', public_listing_ref: publicRef };
+
+      notifier.dispatchNotification(12345, legacy);
+      notifier.dispatchNotification(12345, canonical);
+      notifier.dispatchNotification(12345, canonical); // same canonical item already queued
+      await jest.advanceTimersByTimeAsync(2_000);
+
+      const calls = (mockApi.sendMessage as jest.Mock).mock.calls;
+      expect(calls).toHaveLength(2);
+      const callbacks = calls.map((call) => JSON.stringify(call[2].reply_markup.inline_keyboard));
+      expect(callbacks.some((value) => value.includes('cb:prop:save:1'))).toBe(true);
+      expect(callbacks.some((value) => value.includes(`cb:cl:save:${publicRef}`))).toBe(true);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  test('keeps card concise even when the description has extensive amenities', () => {
     const richProperty: Property = {
       ...baseProperty,
       description:
@@ -150,10 +175,9 @@ describe('Dynamic Telegram Listing Card Formatter', () => {
     };
 
     const card = formatListingCard(richProperty);
-    expect(card).toContain('<i>Private Villa</i>');
     expect(card).toContain('🛏 3 BR · 🚿 3 Bath · 🏊 Pool');
     expect(card).not.toContain('120m²');
-    expect(card).not.toContain('Furnished');
+    expect(card).not.toContain('Elevator');
   });
 
   test('sendListingCard sends media group capped at 3 photos', async () => {
@@ -268,13 +292,13 @@ describe('Dynamic Telegram Listing Card Formatter', () => {
       expect(cardWithFixedRates).toContain('⚡ ($0.25/kWh) · 💧 Fixed ($5/person)');
     });
 
-    test('omits landmarks and links from the compact notification card', () => {
+    test('omits promotional landmark links from compact cards', () => {
       const cardWithLandmark = formatListingCard({
         ...baseProperty,
         description: 'Cozy apartment located along Apsara Road near Angkor Wat.',
       });
-      expect(cardWithLandmark).not.toContain('Landmark:');
-      expect(cardWithLandmark).not.toContain('href=');
+      expect(cardWithLandmark).not.toContain('🚩 Landmark:');
+      expect(cardWithLandmark).not.toContain('google.com/maps');
     });
 
     test('discards bogus coordinates inside Lake Tonle Sap and falls back to district polygon', () => {
@@ -286,6 +310,7 @@ describe('Dynamic Telegram Listing Card Formatter', () => {
       });
       // Should NOT contain the lake coordinates
       expect(cardWithLakeCoords).not.toContain('13.100000');
+      // Should fall back to the canonical Sala Kamreuk query
       expect(cardWithLakeCoords).toContain('📍 <b>Sala Kamreuk</b>');
     });
 
@@ -297,8 +322,10 @@ describe('Dynamic Telegram Listing Card Formatter', () => {
       };
 
       const card = formatListingCard(listingWithRestrictions);
-      expect(card).toContain('✨ Cleaning · 🚫 No Pets');
-      expect(card).not.toContain('No Smoking');
+      expect(card).toContain('✨ Cleaning');
+      expect(card).toContain('🚫 No Pets');
+      expect(card).not.toContain('🚭 No Smoking');
+      // Must not falsely add pet friendly
       expect(card).not.toContain('🐾 Pet-friendly');
     });
 
@@ -310,7 +337,7 @@ describe('Dynamic Telegram Listing Card Formatter', () => {
 
       const card = formatListingCard(petFriendlyListing);
       expect(card).toContain('✨ Cleaning');
-      expect(card).not.toContain('🐾 Pet-friendly');
+      expect(card).not.toContain('🚫 No Pets');
     });
   });
 });

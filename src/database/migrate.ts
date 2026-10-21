@@ -1029,6 +1029,150 @@ CREATE TABLE IF NOT EXISTS contact_grants (
 );
 CREATE INDEX IF NOT EXISTS idx_contact_grants_user_granted ON contact_grants(user_id, granted_at DESC);
 `,
+
+  // ── v52: canonical Khmer24 terminal-observation state ───────────────────────
+  // A source page that looks terminal is evidence, not an immediate listing
+  // removal. These fields retain the confirmation state per source occurrence.
+  `
+ALTER TABLE canonical_listing_source_occurrences
+  ADD COLUMN consecutive_terminal_checks INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE canonical_listing_source_occurrences
+  ADD COLUMN terminal_check_last_seen_at TEXT;
+ALTER TABLE canonical_listing_source_occurrences
+  ADD COLUMN terminal_check_confirm_after_at TEXT;
+CREATE INDEX IF NOT EXISTS idx_canonical_occ_terminal_confirmation
+  ON canonical_listing_source_occurrences(terminal_check_confirm_after_at);
+`,
+
+  // ── v53: canonical-only unsave state; keep legacy favorites for rollback ──
+  `
+CREATE TABLE IF NOT EXISTS canonical_favorite_exclusions (
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  listing_id INTEGER NOT NULL REFERENCES canonical_listings(id) ON DELETE CASCADE,
+  excluded_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+  PRIMARY KEY(user_id, listing_id)
+);
+`,
+
+  // ── v54: per-user canonical complaints; moderation stays manual ──────────
+  `
+CREATE TABLE IF NOT EXISTS canonical_listing_reports (
+  listing_id INTEGER NOT NULL REFERENCES canonical_listings(id) ON DELETE CASCADE,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  reported_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+  PRIMARY KEY(listing_id, user_id)
+);
+CREATE INDEX IF NOT EXISTS idx_canonical_listing_reports_user ON canonical_listing_reports(user_id);
+`,
+
+  // ── v55: durable canonical publication and at-most-one automatic attempt ──
+  // The high-water marks prevent a full historical canonical rebuild from
+  // broadcasting the pre-existing catalog when this migration is installed.
+  `
+CREATE TABLE canonical_alert_rollout (
+  id INTEGER PRIMARY KEY CHECK(id=1),
+  source_item_high_water INTEGER NOT NULL,
+  listing_high_water INTEGER NOT NULL,
+  activation_event_high_water INTEGER NOT NULL DEFAULT 0,
+  activated_at TEXT
+);
+INSERT INTO canonical_alert_rollout(id,source_item_high_water,listing_high_water)
+VALUES(1,(SELECT COALESCE(MAX(id),0) FROM source_items),
+         (SELECT COALESCE(MAX(id),0) FROM canonical_listings));
+
+CREATE TABLE canonical_publication_events (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  listing_id INTEGER NOT NULL UNIQUE REFERENCES canonical_listings(id) ON DELETE CASCADE,
+  event_kind TEXT NOT NULL CHECK(event_kind IN ('EXPLICIT_APPROVAL','NEW_SOURCE')),
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+  processed_at TEXT
+);
+CREATE INDEX idx_canonical_publications_pending ON canonical_publication_events(processed_at,id);
+
+CREATE TABLE canonical_alert_deliveries (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  listing_id INTEGER NOT NULL REFERENCES canonical_listings(id) ON DELETE CASCADE,
+  telegram_id INTEGER NOT NULL,
+  status TEXT NOT NULL DEFAULT 'pending'
+    CHECK(status IN ('pending','sending','sent','uncertain','cancelled')),
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+  claimed_at TEXT,
+  finished_at TEXT,
+  last_error TEXT,
+  UNIQUE(listing_id,telegram_id)
+);
+CREATE INDEX idx_canonical_alert_deliveries_pending ON canonical_alert_deliveries(status,id);
+
+CREATE TRIGGER canonical_explicit_approval_publication
+AFTER UPDATE OF review_status ON canonical_listing_moderation
+WHEN OLD.review_status <> 'approved' AND NEW.review_status = 'approved'
+  AND NEW.decision_origin='EXPLICIT_CANONICAL'
+BEGIN
+  INSERT OR IGNORE INTO canonical_publication_events(listing_id,event_kind)
+  VALUES(NEW.listing_id,'EXPLICIT_APPROVAL');
+END;
+`,
+
+  // ── v56: stable physical source-check identity for safe result retries ────
+  // Old source-check history has NULL identities; new checks provide their own.
+  `
+ALTER TABLE availability_checks ADD COLUMN observation_id TEXT;
+CREATE UNIQUE INDEX idx_availability_checks_observation_id
+  ON availability_checks(observation_id) WHERE observation_id IS NOT NULL;
+`,
+
+  // ── v57: fenced canonical freshness execution with durable observations ────
+  // A result is saved before application; reclaiming a crashed worker replays
+  // the same physical observation rather than performing another fetch.
+  `
+ALTER TABLE freshness_jobs ADD COLUMN claim_token TEXT;
+ALTER TABLE freshness_jobs ADD COLUMN lease_until TEXT;
+ALTER TABLE freshness_jobs ADD COLUMN retry_at TEXT;
+ALTER TABLE freshness_jobs ADD COLUMN observation_id TEXT;
+ALTER TABLE freshness_jobs ADD COLUMN observation_checked_at TEXT;
+ALTER TABLE freshness_jobs ADD COLUMN observation_outcome TEXT
+  CHECK(observation_outcome IN ('ALIVE','DEAD','UNKNOWN'));
+ALTER TABLE freshness_jobs ADD COLUMN observation_reason TEXT;
+CREATE UNIQUE INDEX idx_freshness_jobs_observation_id
+  ON freshness_jobs(observation_id) WHERE observation_id IS NOT NULL;
+`,
+
+  // ── v58: canonical pending review notifications for administrators ───────────
+  // Activation happens in the designated Telegram worker, so the existing
+  // pending catalog cannot be broadcast on migration or on first startup.
+  `
+CREATE TABLE canonical_review_alert_rollout (
+  id INTEGER PRIMARY KEY CHECK(id=1),
+  listing_high_water INTEGER NOT NULL DEFAULT 0,
+  source_item_high_water INTEGER NOT NULL DEFAULT 0,
+  activated_at TEXT
+);
+INSERT INTO canonical_review_alert_rollout(id) VALUES(1);
+
+CREATE TABLE canonical_review_alert_events (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  listing_id INTEGER NOT NULL UNIQUE REFERENCES canonical_listings(id) ON DELETE CASCADE,
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  processed_at TEXT
+);
+CREATE INDEX idx_canonical_review_alert_events_pending
+  ON canonical_review_alert_events(processed_at,id);
+
+CREATE TABLE canonical_review_alert_deliveries (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  event_id INTEGER NOT NULL REFERENCES canonical_review_alert_events(id) ON DELETE CASCADE,
+  telegram_id INTEGER NOT NULL,
+  status TEXT NOT NULL DEFAULT 'pending'
+    CHECK(status IN ('pending','sending','sent','uncertain','cancelled')),
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  claimed_at TEXT,
+  finished_at TEXT,
+  last_error TEXT,
+  UNIQUE(event_id,telegram_id)
+);
+CREATE INDEX idx_canonical_review_alert_deliveries_pending
+  ON canonical_review_alert_deliveries(status,id);
+`,
 ];
 
 /**
@@ -1068,6 +1212,46 @@ function beginExclusiveWithRetry(db: DatabaseSync, maxWaitMs = 60_000): void {
   );
 }
 
+/**
+ * Preserve the first terminal observation from before v52 without immediately
+ * closing a source occurrence or changing listing availability.
+ */
+export function backfillKhmer24TerminalConfirmations(db: DatabaseSync): number {
+  const result = db.prepare(`
+    UPDATE canonical_listing_source_occurrences AS o
+    SET consecutive_terminal_checks=1,
+      terminal_check_last_seen_at=o.last_seen_at,
+      terminal_check_confirm_after_at=(
+        SELECT strftime('%Y-%m-%dT%H:%M:%fZ', julianday(ac.checked_at) + 0.25)
+        FROM availability_checks ac WHERE ac.source_occurrence_id=o.id
+        ORDER BY ac.id DESC LIMIT 1
+      ),
+      next_check_at=(
+        SELECT strftime('%Y-%m-%dT%H:%M:%fZ', julianday(ac.checked_at) + 0.25)
+        FROM availability_checks ac WHERE ac.source_occurrence_id=o.id
+        ORDER BY ac.id DESC LIMIT 1
+      )
+    WHERE o.is_current=1
+      AND o.last_seen_at < (
+        SELECT ac.checked_at FROM availability_checks ac
+        WHERE ac.source_occurrence_id=o.id ORDER BY ac.id DESC LIMIT 1
+      )
+      AND 'REMOVED'=(
+        SELECT ac.result FROM availability_checks ac
+        WHERE ac.source_occurrence_id=o.id ORDER BY ac.id DESC LIMIT 1
+      )
+      AND 'SOURCE_RECHECK'=(
+        SELECT ac.check_type FROM availability_checks ac
+        WHERE ac.source_occurrence_id=o.id ORDER BY ac.id DESC LIMIT 1
+      )
+      AND 'KHMER24'=(
+        SELECT ac.provider FROM availability_checks ac
+        WHERE ac.source_occurrence_id=o.id ORDER BY ac.id DESC LIMIT 1
+      )
+  `).run();
+  return Number(result.changes);
+}
+
 export function runMigrations(db: DatabaseSync): void {
 
   // Bootstrap migration tracker (idempotent, safe to run before the lock)
@@ -1089,6 +1273,16 @@ export function runMigrations(db: DatabaseSync): void {
       }[]
     ).map((r) => r.version);
 
+    const unknownVersion = appliedVersions.find((version) =>
+      !Number.isInteger(version) || version < 1 || version > MIGRATIONS.length,
+    );
+    if (unknownVersion !== undefined) {
+      throw new Error(
+        `Database migration v${unknownVersion} is not supported by this build (latest known: v${MIGRATIONS.length}). ` +
+        'Update the application before opening this database.',
+      );
+    }
+
     const pendingCount = MIGRATIONS.filter((_, i) => !appliedVersions.includes(i + 1)).length;
 
     if (pendingCount === 0) {
@@ -1104,6 +1298,11 @@ export function runMigrations(db: DatabaseSync): void {
         db.exec(sql);
         insertMigration.run(version);
         console.log(`  ✅ Applied migration v${version}`);
+
+        if (version === 52) {
+          const pending = backfillKhmer24TerminalConfirmations(db);
+          console.log(`  🕒 Initialized ${pending} Khmer24 terminal confirmation(s)`);
+        }
 
         if (version === 14) {
           try {

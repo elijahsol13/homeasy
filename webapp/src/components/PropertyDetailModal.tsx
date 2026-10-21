@@ -12,14 +12,17 @@ import {
   ExternalLink,
   Map,
   MessageCircle,
+  Phone,
+  Copy,
   ChevronLeft,
   ChevronRight,
 } from 'lucide-react';
 import type { PropertyDTO } from '../types';
 import { triggerHaptic, openExternalUrl } from '../services/telegram';
-import { openTelegramContact, telegramActionHrefFromDto } from '../services/contact-actions';
-import posthog from 'posthog-js';
+import { copyPhoneNumber, onPhoneActionClick, openTelegramContact, phoneActionHref } from '../services/contact-actions';
+import { captureEvent } from '../services/analytics';
 import { formatPropertyTypeLabel } from '../formatters';
+import { PhotoWithFallback } from './PhotoWithFallback';
 
 interface PropertyDetailModalProps {
   property: PropertyDTO | null;
@@ -28,7 +31,7 @@ interface PropertyDetailModalProps {
   onShowOnMap: (property: PropertyDTO) => void;
   onTelegramContactDispatched?: (property: PropertyDTO) => void;
   isAdmin?: boolean;
-  onReview?: (propertyId: number, action: 'approve' | 'reject') => void;
+  onReview?: (property: PropertyDTO, action: 'approve' | 'reject') => Promise<void>;
 }
 
 export const PropertyDetailModal: React.FC<PropertyDetailModalProps> = ({
@@ -77,16 +80,11 @@ export const PropertyDetailModal: React.FC<PropertyDetailModalProps> = ({
   const handleReview = (action: 'approve' | 'reject') => {
     if (!onReview || reviewBusy) return;
     setReviewBusy(action);
-    onReview(property!.id, action);
+    void onReview(property!, action).finally(() => setReviewBusy(null));
   };
 
   if (!property) return null;
 
-  const telegramHref = telegramActionHrefFromDto(
-    property.contact.telegramLink,
-    property.contact.phone,
-    property.contact.telegram,
-  );
   const photos = property.photos && property.photos.length > 0 ? property.photos : [];
 
   const effectiveMapsUrl =
@@ -145,7 +143,7 @@ export const PropertyDetailModal: React.FC<PropertyDetailModalProps> = ({
                   className="flex overflow-x-auto snap-x snap-mandatory touch-pan-x scrollbar-hide w-full h-full"
                 >
                   {photos.map((src, idx) => (
-                    <img
+                    <PhotoWithFallback
                       key={idx}
                       src={src}
                       alt={`${property.title} - photo ${idx + 1}`}
@@ -212,7 +210,7 @@ export const PropertyDetailModal: React.FC<PropertyDetailModalProps> = ({
                     activePhoto === i ? 'border-sky-500 scale-105' : 'border-transparent opacity-60'
                   }`}
                 >
-                  <img src={src} alt="" className="w-full h-full object-cover" />
+                  <PhotoWithFallback src={src} alt={`Photo ${i + 1}`} className="w-full h-full object-cover" />
                 </button>
               ))}
             </div>
@@ -549,7 +547,7 @@ export const PropertyDetailModal: React.FC<PropertyDetailModalProps> = ({
             >
               {photos.map((src, idx) => (
                 <div key={idx} className="snap-center shrink-0 w-full h-full flex items-center justify-center px-2">
-                  <img
+                  <PhotoWithFallback
                     src={src}
                     alt={`${property.title} - photo ${idx + 1}`}
                     className="max-w-full max-h-full object-contain select-none"
@@ -592,25 +590,29 @@ export const PropertyDetailModal: React.FC<PropertyDetailModalProps> = ({
           {property.contact.phone && (
             <div className="px-4 pt-3 flex items-center justify-between gap-3 text-sm">
               <span className="text-zinc-700 dark:text-zinc-200 select-all">{property.contact.phone}</span>
+              <button
+                type="button"
+                onClick={(e) => void copyPhoneNumber(property.contact.phone, e)}
+                className="inline-flex items-center gap-1.5 text-sky-600 dark:text-sky-400 font-medium"
+                aria-label="Copy phone number"
+              >
+                <Copy className="w-4 h-4" /> Copy
+              </button>
             </div>
           )}
           <div className="p-4 flex items-center gap-3">
-          {telegramHref ? (
+          {property.contact.telegramLink ? (
             <button
               type="button"
               onClick={(e) => {
                 triggerHaptic('light');
                 try {
-                  posthog.capture('contact_lead_clicked', {
-                    propertyId: property.id,
-                    listingRef: property.publicRef ?? null,
-                    channel: 'telegram',
-                  });
+                  captureEvent('contact_lead_clicked', { propertyId: property.id, channel: 'telegram' });
                 } catch {
                   // ignore
                 }
                 onTelegramContactDispatched?.(property);
-                openTelegramContact(telegramHref, e);
+                openTelegramContact(property.contact.telegramLink!, e);
               }}
               className="flex-1 bg-sky-500 hover:bg-sky-600 text-white font-bold py-3 px-4 rounded-xl flex items-center justify-center gap-2 shadow-md active:scale-98 transition-all"
             >
@@ -637,7 +639,7 @@ export const PropertyDetailModal: React.FC<PropertyDetailModalProps> = ({
               onClick={(e) => {
                 triggerHaptic('light');
                 try {
-                  posthog.capture('contact_lead_clicked', { propertyId: property.id, channel: 'whatsapp' });
+                  captureEvent('contact_lead_clicked', { propertyId: property.id, channel: 'whatsapp' });
                 } catch {
                   // ignore
                 }
@@ -647,6 +649,25 @@ export const PropertyDetailModal: React.FC<PropertyDetailModalProps> = ({
               aria-label="WhatsApp"
             >
               <MessageCircle className="w-5 h-5" />
+            </a>
+          )}
+
+          {property.contact.phoneLink && phoneActionHref(property.contact.phoneLink) && (
+            <a
+              href={phoneActionHref(property.contact.phoneLink)!}
+              onClick={(e) => {
+                onPhoneActionClick(e);
+                triggerHaptic('light');
+                try {
+                  captureEvent('contact_lead_clicked', { propertyId: property.id, channel: 'phone' });
+                } catch {
+                  // ignore
+                }
+              }}
+              className="p-3 bg-emerald-500 hover:bg-emerald-600 text-white rounded-xl shadow-md active:scale-95 transition-all flex items-center justify-center"
+              aria-label="Call"
+            >
+              <Phone className="w-5 h-5" />
             </a>
           )}
 

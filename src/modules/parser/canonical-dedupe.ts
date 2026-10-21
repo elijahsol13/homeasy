@@ -3,6 +3,10 @@ import type { DatabaseSync } from 'node:sqlite';
 import { computeHammingDistance } from './phash';
 import { ListingCandidateBuilder, type ListingCandidate, type ListingCandidatePhoto } from './listing-candidates';
 import { SourceIngestionRepository } from '../../database/repositories/source-ingestion.repo';
+import { CanonicalReviewAlertsRepository } from '../../database/repositories/canonical-review-alerts.repo';
+import { sourceListingFacts, validRoomCount } from './source-listing-facts';
+import { env } from '../../config/env';
+import { reviewDefaultPending } from './canonical-moderation-policy';
 
 export const CANONICAL_DEDUPE_VERSION = 'canonical-dedupe-v1';
 
@@ -48,6 +52,65 @@ export interface CanonicalShadowReport {
   largestOccurrencesPerListing: number;
   examples: Record<CanonicalDecision, Array<Record<string, unknown>>>;
 }
+
+export interface CanonicalScopedMutationReport {
+  sourceItemIds: number[];
+  globalCandidatesRead: number;
+  candidatePairsScored: number;
+  relatedCandidates: number;
+  decisionsWritten: number;
+  canonicalPropertiesCreated: number;
+  canonicalListingsCreated: number;
+  sourceOccurrencesCreated: number;
+  aliasesCreated: number;
+  mediaAssetsCreated: number;
+  mediaAssociationsCreated: number;
+  existingCanonicalObjectsMutated: Array<{
+    kind: 'canonical_property' | 'canonical_listing';
+    id: number;
+    sourceItemIds: number[];
+    reason: string;
+  }>;
+  unexpectedGlobalWrites: number;
+  diagnostics: ScopedMutationDiagnosticReport | null;
+}
+
+export interface CanonicalScopedReconciliationResult {
+  processed: number;
+  occurrencesAttached: number;
+  bindingsUpdated: number;
+  repurposed: number;
+  needsGlobalMatch: number;
+  inconsistencies: Array<{ sourceItemId: number; listingIds: number[] }>;
+  mutationReport: CanonicalScopedMutationReport;
+}
+
+export interface ScopedMutationDiffEntry {
+  table: string;
+  key: string;
+  operation: 'INSERT' | 'UPDATE' | 'DELETE';
+  beforeHash: string | null;
+  afterHash: string | null;
+  changedFields: string[];
+  sourceItemIds: number[];
+  reason: string;
+  allowed: boolean;
+}
+
+export interface ScopedMutationDiagnosticReport {
+  allowedWrites: ScopedMutationDiffEntry[];
+  observedWrites: ScopedMutationDiffEntry[];
+  unexpectedWrites: ScopedMutationDiffEntry[];
+}
+
+export class ScopedMutationViolationError extends Error {
+  constructor(readonly report: ScopedMutationDiagnosticReport) {
+    super(`Scoped canonical mutation guard rejected ${report.unexpectedWrites.length} out-of-scope writes: ${report.unexpectedWrites.map((entry) => `${entry.table}:${entry.key}(${entry.changedFields.join(',')})`).join('; ')}`);
+    this.name = 'ScopedMutationViolationError';
+  }
+}
+
+type ScopedMutationSnapshot = Map<string, Map<string, Record<string, unknown>>>;
 
 export interface CanonicalCalibrationPair {
   candidateA: string;
@@ -300,7 +363,7 @@ function getFactsForSourceItem(db: DatabaseSync, id: number): Record<string, unk
   if (!row) return {};
   let payload: Record<string, unknown> = {};
   try { payload = object(JSON.parse(row.raw_payload_json)); } catch { /* ignore malformed raw data */ }
-  return object(row.source_type === 'KHMER24' ? payload.listingFacts : payload.listingExtraction);
+  return sourceListingFacts(payload);
 }
 
 function observedTimestamps(db: DatabaseSync, id: number): { firstSeenAt: string; lastSeenAt: string } {
@@ -395,6 +458,368 @@ export class CanonicalShadowService {
     };
   }
 
+  /**
+   * Reconcile only changed/unbound source items. The full corpus is read for
+   * candidate retrieval, while persistence is limited to those items and any
+   * candidates that meet a canonical merge threshold with them.
+   */
+  reconcileSourceItemsScoped(sourceItemIds: number[], observedAt = new Date().toISOString()): CanonicalScopedReconciliationResult {
+    const baseline = this.captureScopedMutationSnapshot();
+    this.db.exec('SAVEPOINT scoped_source_reconciliation');
+    try {
+      const result = this.reconcileSourceItemsScopedUnsafe(sourceItemIds, observedAt, baseline);
+      this.db.exec('RELEASE scoped_source_reconciliation');
+      return result;
+    } catch (error) {
+      this.db.exec('ROLLBACK TO scoped_source_reconciliation');
+      this.db.exec('RELEASE scoped_source_reconciliation');
+      throw error;
+    }
+  }
+
+  private reconcileSourceItemsScopedUnsafe(
+    sourceItemIds: number[], observedAt: string, baseline: ScopedMutationSnapshot,
+  ): CanonicalScopedReconciliationResult {
+    const report: CanonicalScopedMutationReport = {
+      sourceItemIds: [...new Set(sourceItemIds)], globalCandidatesRead: 0, candidatePairsScored: 0,
+      relatedCandidates: 0, decisionsWritten: 0, canonicalPropertiesCreated: 0,
+      canonicalListingsCreated: 0, sourceOccurrencesCreated: 0, aliasesCreated: 0,
+      mediaAssetsCreated: 0, mediaAssociationsCreated: 0, existingCanonicalObjectsMutated: [],
+      unexpectedGlobalWrites: 0, diagnostics: null,
+    };
+    const result: CanonicalScopedReconciliationResult = {
+      processed: 0, occurrencesAttached: 0, bindingsUpdated: 0, repurposed: 0,
+      needsGlobalMatch: 0, inconsistencies: [], mutationReport: report,
+    };
+    const candidates = new ListingCandidateBuilder(this.db, this.repostAlgorithmVersion).build();
+    report.globalCandidatesRead = candidates.length;
+    const candidateByItem = new Map<number, ListingCandidate>();
+    for (const candidate of candidates) for (const id of candidate.sourceItemIds) candidateByItem.set(id, candidate);
+
+    const candidatesToMatch = new Map<string, ListingCandidate>();
+    const targetCandidates = new Map<string, ListingCandidate>();
+    const pendingScopedSourceItemIds = new Set<number>();
+    let rematchAfterRepurpose = 0;
+    for (const sourceItemId of report.sourceItemIds) {
+      const candidate = candidateByItem.get(sourceItemId);
+      if (!candidate) { result.needsGlobalMatch++; continue; }
+      const hasBinding = this.db.prepare(`SELECT 1 FROM canonical_listing_source_occurrences
+        WHERE source_item_id=? AND source_entity_key=? AND is_current=1 LIMIT 1`).get(sourceItemId, this.algorithmVersion);
+      if (hasBinding) {
+        const bound = this.reconcileBoundSourceItems([sourceItemId], observedAt);
+        result.processed += bound.processed;
+        result.occurrencesAttached += bound.occurrencesAttached;
+        result.bindingsUpdated += bound.bindingsUpdated;
+        result.repurposed += bound.repurposed;
+        result.needsGlobalMatch += bound.needsGlobalMatch;
+        result.inconsistencies.push(...bound.inconsistencies);
+        if (bound.needsGlobalMatch === 0 || bound.inconsistencies.length) continue;
+        rematchAfterRepurpose += bound.needsGlobalMatch;
+      }
+      targetCandidates.set(candidate.candidateId, candidate);
+      candidatesToMatch.set(candidate.candidateId, candidate);
+      pendingScopedSourceItemIds.add(sourceItemId);
+    }
+    if (!targetCandidates.size) {
+      const observedMediaUrls = new Set(report.sourceItemIds.flatMap((id) => candidateByItem.get(id)?.photoAssets
+        .filter((photo) => photo.sourceItemId === id).map((photo) => normalizedUrl(photo.sourceUrl)).filter((url): url is string => Boolean(url)) ?? []));
+      const diagnostic = this.verifyScopedMutationSnapshot(baseline, {
+        sourceItemIds: new Set(report.sourceItemIds), decisionItemIds: new Set(report.sourceItemIds),
+        propertyKeys: new Set(), listingKeys: new Set(), mediaUrls: observedMediaUrls, decisionPairs: new Set(),
+      });
+      report.diagnostics = diagnostic;
+      report.unexpectedGlobalWrites = diagnostic.unexpectedWrites.length;
+      if (diagnostic.unexpectedWrites.length) throw new ScopedMutationViolationError(diagnostic);
+      return result;
+    }
+
+    const facebook = candidates.filter((candidate) => candidate.sourceType === 'FACEBOOK_GROUP');
+    const khmer24 = candidates.filter((candidate) => candidate.sourceType === 'KHMER24');
+    const allPairs = this.retrieveCandidates(facebook, khmer24);
+    const decisions: PersistedDecision[] = [];
+    const relatedCandidateIds = new Set<string>(targetCandidates.keys());
+    for (const pair of allPairs.values()) {
+      const aIsTarget = targetCandidates.has(pair.a.candidateId);
+      const bIsTarget = targetCandidates.has(pair.b.candidateId);
+      if (!aIsTarget && !bIsTarget) continue;
+      report.candidatePairsScored++;
+      const scored = scorePair(pair.a, pair.b, pair.retrievedBy,
+        imageMatches(pair.a.photoAssets, pair.b.photoAssets));
+      const decision: PersistedDecision = { ...scored, a: pair.a, b: pair.b };
+      decisions.push(decision);
+      if (decision.decision === 'SAME_LISTING' || decision.decision === 'SAME_PROPERTY_DIFFERENT_LISTING') {
+        const related = aIsTarget ? pair.b : pair.a;
+        relatedCandidateIds.add(related.candidateId);
+        candidatesToMatch.set(related.candidateId, related);
+      }
+    }
+
+    const scopedCandidates = [...candidatesToMatch.values()].sort((a, b) => a.candidateId.localeCompare(b.candidateId));
+    report.relatedCandidates = scopedCandidates.length;
+    if (!scopedCandidates.length) return result;
+    const scopedIds = new Set(scopedCandidates.flatMap((candidate) => candidate.sourceItemIds));
+    const decisionIds = new Set([...targetCandidates.values()].map((candidate) => candidate.representativeSourceItemId));
+    const propertyUnion = new UnionFind();
+    const listingUnion = new UnionFind();
+    for (const candidate of scopedCandidates) {
+      propertyUnion.find(candidate.candidateId);
+      listingUnion.find(candidate.candidateId);
+    }
+    for (const decision of decisions) {
+      if (!relatedCandidateIds.has(decision.a.candidateId) || !relatedCandidateIds.has(decision.b.candidateId)) continue;
+      if (decision.decision === 'SAME_LISTING' || decision.decision === 'SAME_PROPERTY_DIFFERENT_LISTING') {
+        propertyUnion.union(decision.a.candidateId, decision.b.candidateId);
+      }
+      if (decision.decision === 'SAME_LISTING') listingUnion.union(decision.a.candidateId, decision.b.candidateId);
+    }
+    const properties = this.groups(scopedCandidates, propertyUnion);
+    const listings = this.groups(scopedCandidates, listingUnion);
+    const canonicalData = this.buildCanonicalGroups(scopedCandidates, properties, listings);
+
+    const before = this.scopedTableCounts();
+    const existingEntities = this.captureScopedExistingEntities(scopedIds, decisions);
+    this.db.exec('SAVEPOINT scoped_reconciliation_guard');
+    try {
+      this.persist(scopedCandidates, decisions, canonicalData, { sourceItemIds: scopedIds, decisionSourceItemIds: decisionIds });
+      const diagnostic = this.verifyScopedMutationSnapshot(baseline, {
+        sourceItemIds: scopedIds, decisionItemIds: decisionIds,
+        propertyKeys: new Set(canonicalData.properties.map((group) => group.key)),
+        listingKeys: new Set(canonicalData.listings.map((group) => group.key)),
+        mediaUrls: new Set(scopedCandidates.flatMap((candidate) => candidate.photoAssets.map((photo) => normalizedUrl(photo.sourceUrl)).filter((url): url is string => Boolean(url)))),
+        decisionPairs: new Set(decisions.map((entry) => {
+          const low = Math.min(entry.a.representativeSourceItemId, entry.b.representativeSourceItemId);
+          const high = Math.max(entry.a.representativeSourceItemId, entry.b.representativeSourceItemId);
+          return `${this.algorithmVersion}:SOURCE_ITEM:${low}:SOURCE_ITEM:${high}`;
+        })),
+      });
+      report.diagnostics = diagnostic;
+      report.unexpectedGlobalWrites = diagnostic.unexpectedWrites.length;
+      if (report.unexpectedGlobalWrites > 0) {
+        throw new ScopedMutationViolationError(diagnostic);
+      }
+      this.db.exec('RELEASE scoped_reconciliation_guard');
+    } catch (error) {
+      this.db.exec('ROLLBACK TO scoped_reconciliation_guard');
+      this.db.exec('RELEASE scoped_reconciliation_guard');
+      throw error;
+    }
+    const after = this.scopedTableCounts();
+    report.canonicalPropertiesCreated = Math.max(0, after.canonicalProperties - before.canonicalProperties);
+    report.canonicalListingsCreated = Math.max(0, after.canonicalListings - before.canonicalListings);
+    report.sourceOccurrencesCreated = Math.max(0, after.occurrences - before.occurrences);
+    report.aliasesCreated = Math.max(0, after.aliases - before.aliases);
+    report.mediaAssetsCreated = Math.max(0, after.mediaAssets - before.mediaAssets);
+    report.mediaAssociationsCreated = Math.max(0, after.mediaAssociations - before.mediaAssociations);
+    report.decisionsWritten = decisions.length;
+    report.existingCanonicalObjectsMutated = existingEntities;
+    result.processed += pendingScopedSourceItemIds.size;
+    result.needsGlobalMatch = Math.max(0, result.needsGlobalMatch - rematchAfterRepurpose);
+    result.occurrencesAttached += report.sourceOccurrencesCreated;
+    return result;
+  }
+
+  private scopedTableCounts(): Record<string, number> {
+    const count = (table: string): number => Number((this.db.prepare(`SELECT COUNT(*) AS n FROM ${table}`).get() as { n: number }).n);
+    return {
+      canonicalProperties: count('canonical_properties'), canonicalListings: count('canonical_listings'),
+      occurrences: count('canonical_listing_source_occurrences'), aliases: count('canonical_listing_aliases'),
+      mediaAssets: count('media_assets'), mediaAssociations: count('media_asset_source_occurrences'),
+    };
+  }
+
+  private captureScopedMutationSnapshot(): ScopedMutationSnapshot {
+    const tables: Array<{ name: string; key: (row: Record<string, unknown>) => string }> = [
+      { name: 'canonical_properties', key: (row) => String(row.id) },
+      { name: 'canonical_listings', key: (row) => String(row.id) },
+      { name: 'canonical_listing_source_occurrences', key: (row) => String(row.id) },
+      { name: 'dedupe_decisions', key: (row) => `${row.algorithm_version}:${row.candidate_a_type}:${row.candidate_a_id}:${row.candidate_b_type}:${row.candidate_b_id}` },
+      { name: 'canonical_listing_aliases', key: (row) => `${row.namespace}:${row.alias}` },
+      { name: 'canonical_listing_moderation', key: (row) => String(row.listing_id) },
+      { name: 'media_assets', key: (row) => String(row.id) },
+      { name: 'media_asset_source_occurrences', key: (row) => String(row.id) },
+    ];
+    return new Map(tables.map(({ name, key }) => [name, new Map(
+      (this.db.prepare(`SELECT * FROM ${name}`).all() as Array<Record<string, unknown>>).map((row) => [key(row), row]),
+    )]));
+  }
+
+  private verifyScopedMutationSnapshot(before: ScopedMutationSnapshot, scope: {
+    sourceItemIds: Set<number>; decisionItemIds: Set<number>; propertyKeys: Set<string>; listingKeys: Set<string>;
+    mediaUrls: Set<string>; decisionPairs: Set<string>;
+  }): ScopedMutationDiagnosticReport {
+    const sourceIds = [...scope.sourceItemIds];
+    // Freeze the pre-write closure. Never derive permission from rows after
+    // reconciliation, since a bad UPDATE could otherwise grant itself scope.
+    const preOccurrences = [...before.get('canonical_listing_source_occurrences')!.values()]
+      .filter((row) => sourceIds.includes(Number(row.source_item_id))
+        || scope.sourceItemIds.has(Number(row.source_item_id)));
+    const allowedOccurrenceIds = new Set(preOccurrences.map((row) => Number(row.id)));
+    const allowedListingIds = new Set(preOccurrences.flatMap((row) => row.listing_id == null ? [] : [Number(row.listing_id)]));
+    const preListings = [...before.get('canonical_listings')!.values()];
+    for (const row of preListings) if (scope.listingKeys.has(String(row.canonical_key))) allowedListingIds.add(Number(row.id));
+    const allowedPropertyIds = new Set(preListings.filter((row) => allowedListingIds.has(Number(row.id)) && row.property_id != null)
+      .map((row) => Number(row.property_id)));
+    for (const row of before.get('canonical_properties')!.values()) {
+      if (scope.propertyKeys.has(String(row.canonical_key))) allowedPropertyIds.add(Number(row.id));
+    }
+    const allowedAliasKeys = new Set([...before.get('canonical_listing_aliases')!.values()]
+      .filter((row) => allowedListingIds.has(Number(row.listing_id))).map((row) => `${row.namespace}:${row.alias}`));
+    const allowedModerationListingIds = new Set([...before.get('canonical_listing_moderation')!.values()]
+      .filter((row) => allowedListingIds.has(Number(row.listing_id))).map((row) => Number(row.listing_id)));
+    const allowedMediaAssociationIds = new Set([...before.get('media_asset_source_occurrences')!.values()]
+      .filter((row) => scope.sourceItemIds.has(Number(row.source_item_id))).map((row) => Number(row.id)));
+    const allowedMediaAssetIds = new Set([...before.get('media_assets')!.values()]
+      .filter((row) => scope.sourceItemIds.has(Number(row.source_item_id)) || scope.mediaUrls.has(String(row.normalized_url)))
+      .map((row) => Number(row.id)));
+    const allowedPairs = new Set(scope.decisionPairs);
+    const makeDecisionKey = (row: Record<string, unknown>) => `${row.algorithm_version}:${row.candidate_a_type}:${row.candidate_a_id}:${row.candidate_b_type}:${row.candidate_b_id}`;
+    const afterSnapshots = new Map([...before.keys()].map((table) => [table,
+      new Map((this.db.prepare(`SELECT * FROM ${table}`).all() as Array<Record<string, unknown>>).map((row) => {
+        const key = table === 'dedupe_decisions' ? makeDecisionKey(row)
+          : table === 'canonical_listing_aliases' ? `${row.namespace}:${row.alias}`
+            : table === 'canonical_listing_moderation' ? String(row.listing_id) : String(row.id);
+        return [key, row] as const;
+      }))]));
+    // A newly inserted canonical entity is admissible only by a planned key
+    // fixed in the scope before writes; its generated DB id then permits its
+    // directly linked aliases/moderation/media rows in this same batch.
+    for (const row of afterSnapshots.get('canonical_properties')!.values()) {
+      if (!before.get('canonical_properties')!.has(String(row.id)) && scope.propertyKeys.has(String(row.canonical_key))) {
+        allowedPropertyIds.add(Number(row.id));
+      }
+    }
+    for (const row of afterSnapshots.get('canonical_listings')!.values()) {
+      if (!before.get('canonical_listings')!.has(String(row.id)) && scope.listingKeys.has(String(row.canonical_key))) {
+        allowedListingIds.add(Number(row.id));
+      }
+    }
+    for (const listingId of allowedListingIds) allowedModerationListingIds.add(listingId);
+    const isAllowed = (table: string, prior: Record<string, unknown> | undefined, current: Record<string, unknown> | undefined,
+      key: string, operation: ScopedMutationDiffEntry['operation']): boolean => {
+      const row = current ?? prior!;
+      const update = operation === 'UPDATE';
+      if (table === 'canonical_properties') {
+        const relationAllowed = (candidate: Record<string, unknown>) => allowedPropertyIds.has(Number(candidate.id))
+          || scope.propertyKeys.has(String(candidate.canonical_key));
+        return relationAllowed(row) && (!update || (allowedPropertyIds.has(Number(prior!.id))
+          && relationAllowed(prior!) && relationAllowed(current!)));
+      }
+      if (table === 'canonical_listings') {
+        const relatedPropertyAllowed = (candidate: Record<string, unknown>) => {
+          if (candidate.property_id == null) return true;
+          if (allowedPropertyIds.has(Number(candidate.property_id))) return true;
+          const property = afterSnapshots.get('canonical_properties')!.get(String(candidate.property_id));
+          return Boolean(property && scope.propertyKeys.has(String(property.canonical_key)));
+        };
+        const relationAllowed = (candidate: Record<string, unknown>) => (allowedListingIds.has(Number(candidate.id))
+          || scope.listingKeys.has(String(candidate.canonical_key))) && relatedPropertyAllowed(candidate);
+        return relationAllowed(row) && (!update || (allowedListingIds.has(Number(prior!.id))
+          && relationAllowed(prior!) && relationAllowed(current!)));
+      }
+      if (table === 'canonical_listing_source_occurrences') {
+        const relationAllowed = (candidate: Record<string, unknown>) => scope.sourceItemIds.has(Number(candidate.source_item_id))
+          || allowedOccurrenceIds.has(Number(candidate.id));
+        return relationAllowed(row) && (!update || (allowedOccurrenceIds.has(Number(prior!.id))
+          && relationAllowed(prior!) && relationAllowed(current!)));
+      }
+      if (table === 'dedupe_decisions') {
+        const pairAllowed = (candidate: Record<string, unknown>) => allowedPairs.has(makeDecisionKey(candidate))
+          || (operation === 'DELETE' && (scope.decisionItemIds.has(Number(candidate.candidate_a_id))
+            || scope.decisionItemIds.has(Number(candidate.candidate_b_id))));
+        return pairAllowed(row) && (!update || pairAllowed(prior!) && pairAllowed(current!));
+      }
+      if (table === 'canonical_listing_aliases') {
+        const relationAllowed = (candidate: Record<string, unknown>) => allowedListingIds.has(Number(candidate.listing_id));
+        const stableIdentityAllowed = allowedAliasKeys.has(key) || operation === 'INSERT';
+        return stableIdentityAllowed && relationAllowed(row) && (!update || relationAllowed(prior!) && relationAllowed(current!));
+      }
+      if (table === 'canonical_listing_moderation') {
+        const relationAllowed = (candidate: Record<string, unknown>) => allowedModerationListingIds.has(Number(candidate.listing_id));
+        return relationAllowed(row) && (!update || relationAllowed(prior!) && relationAllowed(current!));
+      }
+      if (table === 'media_assets') {
+        const relationAllowed = (candidate: Record<string, unknown>) => scope.sourceItemIds.has(Number(candidate.source_item_id))
+          || (operation === 'INSERT' && scope.mediaUrls.has(String(candidate.normalized_url)))
+          || (operation !== 'INSERT' && allowedMediaAssetIds.has(Number(candidate.id)));
+        return relationAllowed(row) && (!update || (allowedMediaAssetIds.has(Number(prior!.id))
+          && relationAllowed(prior!) && relationAllowed(current!)));
+      }
+      if (table === 'media_asset_source_occurrences') {
+        const relationAllowed = (candidate: Record<string, unknown>) => scope.sourceItemIds.has(Number(candidate.source_item_id))
+          || allowedMediaAssociationIds.has(Number(candidate.id));
+        return relationAllowed(row) && (!update || (allowedMediaAssociationIds.has(Number(prior!.id))
+          && relationAllowed(prior!) && relationAllowed(current!)));
+      }
+      return false;
+    };
+    const allTables = [...before.keys()];
+    const allowedWrites: ScopedMutationDiffEntry[] = [];
+    const observedWrites: ScopedMutationDiffEntry[] = [];
+    const unexpectedWrites: ScopedMutationDiffEntry[] = [];
+    for (const table of allTables) {
+      const afterRows = afterSnapshots.get(table)!;
+      const priorRows = before.get(table)!;
+      for (const key of new Set([...priorRows.keys(), ...afterRows.keys()])) {
+        const prior = priorRows.get(key); const current = afterRows.get(key);
+        if (JSON.stringify(prior) === JSON.stringify(current)) continue;
+        const row = current ?? prior!;
+        let sourceItemIds: number[];
+        if (table === 'canonical_listing_source_occurrences' || table.startsWith('media_')) {
+          sourceItemIds = [Number(row.source_item_id)].filter(Number.isFinite);
+        } else if (table === 'dedupe_decisions') {
+          sourceItemIds = [Number(row.candidate_a_id), Number(row.candidate_b_id)].filter(Number.isFinite);
+        } else {
+          const relatedBefore = table === 'canonical_listings'
+            ? allowedListingIds.has(Number(row.id)) : allowedPropertyIds.has(Number(row.id));
+          sourceItemIds = relatedBefore ? [...scope.sourceItemIds] : [];
+        }
+        const fields = new Set([...Object.keys(prior ?? {}), ...Object.keys(current ?? {})]);
+        const changedFields = [...fields].filter((field) => JSON.stringify(prior?.[field]) !== JSON.stringify(current?.[field]));
+        const operation: ScopedMutationDiffEntry['operation'] = prior === undefined ? 'INSERT' : current === undefined ? 'DELETE' : 'UPDATE';
+        const entry: ScopedMutationDiffEntry = {
+          table, key, operation,
+          beforeHash: prior ? crypto.createHash('sha256').update(JSON.stringify(prior)).digest('hex') : null,
+          afterHash: current ? crypto.createHash('sha256').update(JSON.stringify(current)).digest('hex') : null,
+          changedFields, sourceItemIds, reason: sourceItemIds.length ? `Source item(s) ${sourceItemIds.join(', ')}` : 'No batch source item is linked to this row',
+          allowed: isAllowed(table, prior, current, key, operation),
+        };
+        observedWrites.push(entry);
+        (entry.allowed ? allowedWrites : unexpectedWrites).push(entry);
+      }
+    }
+    return { allowedWrites, observedWrites, unexpectedWrites };
+  }
+
+  private captureScopedExistingEntities(
+    sourceItemIds: Set<number>, decisions: PersistedDecision[],
+  ): CanonicalScopedMutationReport['existingCanonicalObjectsMutated'] {
+    if (!sourceItemIds.size) return [];
+    const ids = [...sourceItemIds];
+    const rows = this.db.prepare(`SELECT DISTINCT l.id AS listing_id,l.property_id,o.source_item_id
+      FROM canonical_listing_source_occurrences o JOIN canonical_listings l ON l.id=o.listing_id
+      WHERE o.source_entity_key=? AND o.is_current=1 AND o.source_item_id IN (${ids.map(() => '?').join(',')})`)
+      .all(this.algorithmVersion, ...ids) as Array<{ listing_id: number; property_id: number | null; source_item_id: number }>;
+    const mutated = new Map<string, CanonicalScopedMutationReport['existingCanonicalObjectsMutated'][number]>();
+    for (const row of rows) {
+      const entities: Array<{ kind: 'canonical_listing' | 'canonical_property'; id: number | null }> = [
+        { kind: 'canonical_listing', id: row.listing_id }, { kind: 'canonical_property', id: row.property_id },
+      ];
+      for (const { kind, id } of entities) {
+        if (id === null) continue;
+        const key = `${kind}:${id}`;
+        const matched = decisions.find((decision) => decision.a.sourceItemIds.includes(row.source_item_id)
+          || decision.b.sourceItemIds.includes(row.source_item_id));
+        const reason = matched
+          ? `Scoped ${matched.decision} match from source items ${matched.a.representativeSourceItemId} and ${matched.b.representativeSourceItemId}`
+          : `Scoped source item observation ${row.source_item_id}`;
+        const prior = mutated.get(key);
+        const memberIds = [...new Set([...(prior?.sourceItemIds ?? []), row.source_item_id])].sort((a, b) => a - b);
+        mutated.set(key, { kind, id, sourceItemIds: memberIds, reason: prior?.reason ?? reason });
+      }
+    }
+    return [...mutated.values()];
+  }
+
   /** Updates an existing canonical binding, or attaches a repost member to its cluster's sole binding. */
   reconcileBoundSourceItems(sourceItemIds:number[],observedAt=new Date().toISOString()):{
     processed:number;occurrencesAttached:number;bindingsUpdated:number;repurposed:number;needsGlobalMatch:number;inconsistencies:Array<{sourceItemId:number;listingIds:number[]}>;
@@ -419,11 +844,11 @@ export class CanonicalShadowService {
       const candidate=candidateByItem.get(sourceItemId);if(!candidate){out.needsGlobalMatch++;continue;}
       const memberIds=candidate.sourceItemIds;
       const bindings=this.db.prepare(`SELECT o.id AS occurrence_id,o.source_item_id,o.listing_id,l.property_id,l.primary_source_occurrence_id,
-        l.sangkat,l.city,l.property_type,l.category,l.bedrooms,l.listing_facts_json,l.availability_status
+        l.sangkat,l.city,l.property_type,l.category,l.bedrooms,l.bathrooms,l.listing_facts_json,l.availability_status
         FROM canonical_listing_source_occurrences o JOIN canonical_listings l ON l.id=o.listing_id
         WHERE o.source_entity_key=? AND o.is_current=1 AND o.source_item_id IN (${memberIds.map(()=>'?').join(',')})`)
         .all(this.algorithmVersion,...memberIds) as Array<{occurrence_id:number;source_item_id:number;listing_id:number;property_id:number|null;primary_source_occurrence_id:number|null;
-          sangkat:string|null;city:string|null;property_type:string|null;category:string|null;bedrooms:number|null;listing_facts_json:string|null;availability_status:string|null}>;
+          sangkat:string|null;city:string|null;property_type:string|null;category:string|null;bedrooms:number|null;bathrooms:number|null;listing_facts_json:string|null;availability_status:string|null}>;
       const listingIds=[...new Set(bindings.map((row)=>row.listing_id))];
       if(listingIds.length>1){out.inconsistencies.push({sourceItemId,listingIds});continue;}
       if(!listingIds.length){out.needsGlobalMatch++;continue;}
@@ -455,9 +880,9 @@ export class CanonicalShadowService {
       const priceCents=price===null?null:Math.round((currency==='KHR'?price/4000:price)*100);
       let occurrenceId=existing?.occurrence_id;
       if(existing){
-        this.db.prepare(`UPDATE canonical_listing_source_occurrences SET last_seen_at=?,content_hash=?,media_hash=?,price_seen=?,currency_seen=?,
-          updated_at=strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE id=? AND is_current=1`)
-          .run(source.last_seen_at,source.content_hash,source.media_hash,priceCents,currency,existing.occurrence_id);
+        this.db.prepare(`UPDATE canonical_listing_source_occurrences SET last_seen_at=MAX(last_seen_at,?),content_hash=?,media_hash=?,price_seen=?,currency_seen=?,
+          posted_at=COALESCE(?,posted_at),updated_at=strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE id=? AND is_current=1`)
+          .run(source.last_seen_at,source.content_hash,source.media_hash,priceCents,currency,source.published_at,existing.occurrence_id);
         out.bindingsUpdated++;
       }else{
         const cluster=this.db.prepare(`SELECT c.cluster_key FROM dedupe_clusters c JOIN dedupe_cluster_members m ON m.cluster_id=c.id
@@ -470,18 +895,38 @@ export class CanonicalShadowService {
         const row=this.db.prepare(`SELECT id FROM canonical_listing_source_occurrences WHERE source_item_id=? AND source_entity_key=? AND is_current=1`).get(sourceItemId,this.algorithmVersion) as {id:number};
         occurrenceId=row.id;out.occurrencesAttached++;
       }
-      const occurrenceCount=this.db.prepare(`SELECT COUNT(*) n FROM canonical_listing_source_occurrences WHERE listing_id=? AND source_entity_key=? AND is_current=1`).get(listingId,this.algorithmVersion) as {n:number};
-      const mayUpdateListing=occurrenceCount.n===1||listing.primary_source_occurrence_id===occurrenceId;
+      const primary=this.db.prepare(`SELECT o.id,o.source_item_id,s.last_seen_at FROM canonical_listing_source_occurrences o
+        JOIN source_items s ON s.id=o.source_item_id
+        WHERE o.listing_id=? AND o.source_entity_key=? AND o.is_current=1
+        ORDER BY COALESCE(julianday(o.posted_at),julianday(s.published_at)) IS NULL,
+          COALESCE(julianday(o.posted_at),julianday(s.published_at)),julianday(o.first_seen_at),o.id LIMIT 1`)
+        .get(listingId,this.algorithmVersion) as {id:number;source_item_id:number;last_seen_at:string};
+      if(primary.id!==listing.primary_source_occurrence_id){
+        this.db.prepare('UPDATE canonical_listings SET primary_source_occurrence_id=? WHERE id=?').run(primary.id,listingId);
+        this.db.prepare(`UPDATE canonical_listing_source_occurrences
+          SET discovery_credit=CASE WHEN id=? THEN 1 ELSE 0 END,
+            discovery_rank=CASE WHEN id=? THEN 1 ELSE NULL END WHERE listing_id=? AND source_entity_key=? AND is_current=1`)
+          .run(primary.id,primary.id,listingId,this.algorithmVersion);
+      }
+      const mayUpdateListing=primary.id===occurrenceId||primary.id!==listing.primary_source_occurrence_id;
       if(mayUpdateListing){
+        const primaryFacts=primary.source_item_id===sourceItemId?facts:getFactsForSourceItem(this.db,primary.source_item_id);
+        const primaryPrice=num(primaryFacts.price)??(primary.source_item_id===sourceItemId?price:null);
+        const primaryCurrency=asText(primaryFacts.currency)|| (primary.source_item_id===sourceItemId?currency:null);
+        const primaryPriceCents=primaryPrice===null?null:Math.round((primaryCurrency==='KHR'?primaryPrice/4000:primaryPrice)*100);
+        const primaryBeds=validRoomCount(primaryFacts.bedrooms)??validRoomCount(listing.bedrooms);
+        const primaryBaths=validRoomCount(primaryFacts.bathrooms)??validRoomCount(listing.bathrooms);
+        const mergedFacts={...primaryFacts,bedrooms:primaryBeds,bathrooms:primaryBaths};
         this.db.prepare(`UPDATE canonical_listings SET price=COALESCE(?,price),currency=COALESCE(?,currency),
-          title=COALESCE(?,title),description=COALESCE(?,description),listing_facts_json=?,last_seen_at=MAX(last_seen_at,?),
+          title=COALESCE(?,title),description=COALESCE(?,description),bedrooms=?,bathrooms=?,listing_facts_json=?,last_seen_at=MAX(last_seen_at,?),
           updated_at=strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE id=?`)
-          .run(priceCents,currency,asText(facts.title_en)||null,asText(facts.description_en)||null,JSON.stringify(facts),source.last_seen_at,listingId);
+          .run(primaryPriceCents,primaryCurrency,asText(primaryFacts.title_en)||null,asText(primaryFacts.description_en)||null,
+            primaryBeds,primaryBaths,JSON.stringify(mergedFacts),source.last_seen_at,listingId);
       }else this.db.prepare(`UPDATE canonical_listings SET last_seen_at=MAX(last_seen_at,?),updated_at=strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE id=?`).run(source.last_seen_at,listingId);
       if(listing.property_id!==null)this.db.prepare(`UPDATE canonical_properties SET
-        latitude=COALESCE(?,latitude),longitude=COALESCE(?,longitude),last_observed_at=MAX(COALESCE(last_observed_at,''),?),
+        last_observed_at=MAX(COALESCE(last_observed_at,''),?),
         updated_at=strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE id=?`)
-        .run(num(facts.latitude),num(facts.longitude),source.last_seen_at,listing.property_id);
+        .run(source.last_seen_at,listing.property_id);
       this.reconcileMediaForSourceItem(sourceItemId,occurrenceId??null,listingId,listing.property_id,candidate.photoAssets.filter((photo)=>photo.sourceItemId===sourceItemId),observedAt);
       out.processed++;
     }
@@ -603,9 +1048,31 @@ export class CanonicalShadowService {
     const rebindKey=(group:{key:string;candidates:ListingCandidate[]})=>{
       if(group.candidates.length!==1)return group.key;
       const candidate=group.candidates[0]!;
-      const historical=this.db.prepare(`SELECT 1 FROM canonical_listing_source_occurrences WHERE source_entity_key=? AND source_item_id IN (${candidate.sourceItemIds.map(()=>'?').join(',')}) AND is_current=0 LIMIT 1`)
-        .get(this.algorithmVersion,...candidate.sourceItemIds);
-      return historical?stableHash(`${group.key}|rebind:${candidate.contentHash??candidate.representativeSourceItemId}`):group.key;
+      const binding=this.db.prepare(`SELECT o.is_current,l.canonical_key,l.sangkat,l.property_type,l.category,l.bedrooms,l.listing_facts_json
+        FROM canonical_listing_source_occurrences o JOIN canonical_listings l ON l.id=o.listing_id
+        WHERE o.source_entity_key=? AND o.source_item_id IN (${candidate.sourceItemIds.map(()=>'?').join(',')})
+        ORDER BY o.is_current DESC,o.id DESC LIMIT 1`)
+        .get(this.algorithmVersion,...candidate.sourceItemIds) as {is_current:number;canonical_key:string|null;sangkat:string|null;
+          property_type:string|null;category:string|null;bedrooms:number|null;listing_facts_json:string|null}|undefined;
+      if(!binding)return group.key;
+      // Rebuilds and ordinary reappearances retain their original identity.
+      // Only a strong property-identity conflict justifies a different listing.
+      if(binding.is_current)return binding.canonical_key??group.key;
+      const previous=objectJson(binding.listing_facts_json);
+      const oldArea=norm(binding.sangkat);const newArea=norm(fact(candidate,'sangkat','explicit_location','location'));
+      const oldBeds=binding.bedrooms;const newBeds=num(fact(candidate,'bedrooms'));
+      const oldType=norm(binding.property_type??binding.category);
+      const newType=norm(fact(candidate,'property_type','category'));
+      const oldCode=norm(previous.property_code??previous.unit_identifier);
+      const newCode=norm(fact(candidate,'property_code','unit_identifier'));
+      const areaConflict=Boolean(oldArea&&newArea&&oldArea!==newArea&&!oldArea.includes(newArea)&&!newArea.includes(oldArea));
+      const bedsConflict=oldBeds!==null&&newBeds!==null&&Math.abs(oldBeds-newBeds)>=2;
+      const typeConflict=Boolean(oldType&&newType&&oldType!==newType);
+      const codeConflict=Boolean(oldCode&&newCode&&oldCode!==newCode);
+      if(!((codeConflict&&(areaConflict||bedsConflict||typeConflict))||(areaConflict&&bedsConflict&&typeConflict)))
+        return binding.canonical_key??group.key;
+      // The discriminant is stable across price/text edits, unlike contentHash.
+      return stableHash(`${group.key}|repurpose:${candidate.representativeSourceItemId}|${newCode}|${newArea}|${newType}|${newBeds??''}`);
     };
     const propertyGroups=properties.map((group)=>({...group,key:rebindKey(group)}));
     const listingGroups=listings.map((group)=>({...group,key:rebindKey(group)}));
@@ -638,14 +1105,14 @@ export class CanonicalShadowService {
     return result;
   }
 
-  private persist(candidates:ListingCandidate[],decisions:PersistedDecision[],data:ReturnType<CanonicalShadowService['buildCanonicalGroups']>):{canonicalProperties:number;canonicalListings:number;sourceOccurrences:number;mediaAssets:number}{
+  private persist(candidates:ListingCandidate[],decisions:PersistedDecision[],data:ReturnType<CanonicalShadowService['buildCanonicalGroups']>,
+    scope?:{sourceItemIds:Set<number>;decisionSourceItemIds:Set<number>}):{canonicalProperties:number;canonicalListings:number;sourceOccurrences:number;mediaAssets:number}{
     this.db.exec('SAVEPOINT canonical_shadow_build');
     try{
       const upsertProperty=this.db.prepare(`INSERT INTO canonical_properties
         (city,sangkat,canonical_address,explicit_location,latitude,longitude,property_type,bedrooms,bathrooms,building_name,unit_identifier,property_fingerprint,algorithm_version,canonical_key,first_observed_at,last_observed_at)
         VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(algorithm_version,canonical_key) WHERE canonical_key IS NOT NULL DO UPDATE SET
         city=excluded.city,sangkat=excluded.sangkat,canonical_address=excluded.canonical_address,explicit_location=excluded.explicit_location,
-        latitude=COALESCE(excluded.latitude,canonical_properties.latitude),longitude=COALESCE(excluded.longitude,canonical_properties.longitude),
         property_type=excluded.property_type,bedrooms=excluded.bedrooms,bathrooms=excluded.bathrooms,building_name=excluded.building_name,
         unit_identifier=excluded.unit_identifier,property_fingerprint=excluded.property_fingerprint,first_observed_at=excluded.first_observed_at,
         last_observed_at=excluded.last_observed_at,updated_at=strftime('%Y-%m-%dT%H:%M:%SZ','now')`);
@@ -661,7 +1128,7 @@ export class CanonicalShadowService {
           .all(this.algorithmVersion,...memberIds) as Array<{property_id:number}>;
         if(bound.length===1)this.db.prepare('UPDATE canonical_properties SET canonical_key=? WHERE id=?').run(group.key,bound[0]!.property_id);
         upsertProperty.run(city,sqlValue(fact(best,'sangkat','location')),sqlValue(fact(best,'explicit_location','location')),sqlValue(fact(best,'explicit_location')),
-          num(fact(best,'latitude')),num(fact(best,'longitude')),sqlValue(fact(best,'property_type')),num(fact(best,'bedrooms')),num(fact(best,'bathrooms')),
+          null,null,sqlValue(fact(best,'property_type')),num(fact(best,'bedrooms')),num(fact(best,'bathrooms')),
           sqlValue(fact(best,'building_name')),sqlValue(fact(best,'unit_identifier')),group.key,this.algorithmVersion,group.key,first,last);
       }
       const upsertListing=this.db.prepare(`INSERT INTO canonical_listings
@@ -677,7 +1144,21 @@ export class CanonicalShadowService {
         last_seen_at=excluded.last_seen_at,dedupe_confidence=excluded.dedupe_confidence,listing_facts_json=excluded.listing_facts_json,
         content_hash=excluded.content_hash,updated_at=strftime('%Y-%m-%dT%H:%M:%SZ','now')`);
       for(const group of data.listings){
-        const best=[...group.candidates].sort((a,b)=>representativeScore(b)-representativeScore(a)||a.representativeSourceItemId-b.representativeSourceItemId)[0]!;
+        const representative=[...group.candidates].sort((a,b)=>representativeScore(b)-representativeScore(a)||a.representativeSourceItemId-b.representativeSourceItemId)[0]!;
+        const memberIds=group.candidates.flatMap((candidate)=>candidate.sourceItemIds);
+        // The most complete repost helps matching, but only the earliest published
+        // source is authoritative for the public price, title and listing facts.
+        const original=this.db.prepare(`SELECT id,raw_text,content_hash FROM source_items WHERE id IN (${memberIds.map(()=>'?').join(',')})
+          ORDER BY julianday(published_at) IS NULL,julianday(published_at),julianday(first_seen_at),id LIMIT 1`)
+          .get(...memberIds) as {id:number;raw_text:string|null;content_hash:string|null};
+        const originalFacts=getFactsForSourceItem(this.db,original.id);
+        const originalPrice=num(originalFacts.price);
+        const originalCurrency=originalFacts.currency==='USD'||originalFacts.currency==='KHR'?originalFacts.currency:null;
+        const best:ListingCandidate=original.id===representative.representativeSourceItemId?representative:{
+          ...representative,representativeSourceItemId:original.id,facts:originalFacts,
+          price:originalPrice===null?null:originalCurrency==='KHR'?originalPrice/4000:originalPrice,
+          currency:originalCurrency,normalizedText:original.raw_text||'',contentHash:original.content_hash,
+        };
         const timestamps=group.candidates.flatMap((candidate)=>candidate.sourceItemIds.map((id)=>observedTimestamps(this.db,id)));
         const first=[...timestamps.map((x)=>x.firstSeenAt)].sort()[0]??best.firstSeenAt;const last=[...timestamps.map((x)=>x.lastSeenAt)].sort().at(-1)??best.lastSeenAt;
         const cityValue=norm(fact(best,'city'));const city=cityValue.includes('siem reap')||cityValue.includes('siem_reap')?'siem_reap':cityValue.includes('phnom penh')||cityValue.includes('phnom_penh')?'phnom_penh':null;
@@ -685,7 +1166,6 @@ export class CanonicalShadowService {
         const matched=decisions.filter((entry)=>group.candidates.some((c)=>c.candidateId===entry.a.candidateId)&&group.candidates.some((c)=>c.candidateId===entry.b.candidateId));
         const confidence=matched.length?Math.max(...matched.map((entry)=>entry.listingScore)):null;
         const facts=best.facts;
-        const memberIds=group.candidates.flatMap((candidate)=>candidate.sourceItemIds);
         const bound=this.db.prepare(`SELECT DISTINCT o.listing_id FROM canonical_listing_source_occurrences o
           WHERE o.source_entity_key=? AND o.is_current=1 AND o.source_item_id IN (${memberIds.map(()=>'?').join(',')}) AND o.listing_id IS NOT NULL ORDER BY o.listing_id`)
           .all(this.algorithmVersion,...memberIds) as Array<{listing_id:number}>;
@@ -743,8 +1223,18 @@ export class CanonicalShadowService {
         upsertDecision.run(aType,low,bType,high,entry.decision,entry.propertyScore,entry.listingScore,JSON.stringify(entry.reasons),JSON.stringify(details),this.algorithmVersion);
         const row=selectDecision.get(this.algorithmVersion,aType,low,bType,high) as {id:number};decisionIds.set(key,row.id);
       }
-      const oldDecisionRows=this.db.prepare('SELECT id,candidate_a_type,candidate_a_id,candidate_b_type,candidate_b_id FROM dedupe_decisions WHERE algorithm_version=?').all(this.algorithmVersion) as Array<{id:number;candidate_a_type:string;candidate_a_id:number;candidate_b_type:string;candidate_b_id:number}>;
-      const deleteDecision=this.db.prepare('DELETE FROM dedupe_decisions WHERE id=?');for(const row of oldDecisionRows)if(!liveDecisionKeys.has(`${row.candidate_a_type}:${row.candidate_a_id}:${row.candidate_b_type}:${row.candidate_b_id}`))deleteDecision.run(row.id);
+      const oldDecisionRows = scope
+        ? (scope.decisionSourceItemIds.size
+          ? this.db.prepare(`SELECT id,candidate_a_type,candidate_a_id,candidate_b_type,candidate_b_id FROM dedupe_decisions
+            WHERE algorithm_version=? AND candidate_a_type='SOURCE_ITEM' AND candidate_b_type='SOURCE_ITEM'
+            AND (candidate_a_id IN (${[...scope.decisionSourceItemIds].map(() => '?').join(',')})
+              OR candidate_b_id IN (${[...scope.decisionSourceItemIds].map(() => '?').join(',')}))`)
+            .all(this.algorithmVersion, ...scope.decisionSourceItemIds, ...scope.decisionSourceItemIds)
+          : []) as Array<{id:number;candidate_a_type:string;candidate_a_id:number;candidate_b_type:string;candidate_b_id:number}>
+        : this.db.prepare('SELECT id,candidate_a_type,candidate_a_id,candidate_b_type,candidate_b_id FROM dedupe_decisions WHERE algorithm_version=?')
+          .all(this.algorithmVersion) as Array<{id:number;candidate_a_type:string;candidate_a_id:number;candidate_b_type:string;candidate_b_id:number}>;
+      const deleteDecision=this.db.prepare('DELETE FROM dedupe_decisions WHERE id=?');
+      for(const row of oldDecisionRows)if(!liveDecisionKeys.has(`${row.candidate_a_type}:${row.candidate_a_id}:${row.candidate_b_type}:${row.candidate_b_id}`))deleteDecision.run(row.id);
       const occurrenceInsert=this.db.prepare(`INSERT INTO canonical_listing_source_occurrences
         (source_item_id,listing_id,source_registry_id,external_id,source_url,group_id,group_name,author_external_id,author_name,author_url,posted_at,first_seen_at,last_seen_at,content_hash,media_hash,price_seen,currency_seen,discovery_credit,discovery_rank,repost_cluster_id,dedupe_decision_id,dedupe_method,dedupe_score,source_entity_key,property_discovery_credit)
         VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(source_item_id,source_entity_key) WHERE is_current=1 DO UPDATE SET
@@ -757,14 +1247,19 @@ export class CanonicalShadowService {
         updated_at=strftime('%Y-%m-%dT%H:%M:%SZ','now')`);
       const sourceRows=this.db.prepare(`SELECT id,source_registry_id,external_id,canonical_url,source_url,group_id,group_name,author_external_id,author_name,author_url,published_at,content_hash,media_hash,raw_payload_json FROM source_items WHERE id=?`);
       const sourceOccurrenceIds=new Map<number,number>();
-      const occurrenceOrder=candidates.flatMap((candidate)=>candidate.sourceItemIds.map((sourceItemId)=>({candidate,sourceItemId,...observedTimestamps(this.db,sourceItemId)}))).sort((a,b)=>a.firstSeenAt.localeCompare(b.firstSeenAt)||a.sourceItemId-b.sourceItemId);
+      const occurrenceOrder=candidates.flatMap((candidate)=>candidate.sourceItemIds.map((sourceItemId)=>{
+        const source=sourceRows.get(sourceItemId) as Record<string,unknown>;
+        const publishedAt=typeof source.published_at==='string' ? Date.parse(source.published_at) : NaN;
+        return {candidate,sourceItemId,...observedTimestamps(this.db,sourceItemId),publishedAt};
+      })).sort((a,b)=>Number.isFinite(a.publishedAt)
+        ? Number.isFinite(b.publishedAt) ? a.publishedAt-b.publishedAt||a.sourceItemId-b.sourceItemId : -1
+        : Number.isFinite(b.publishedAt) ? 1 : a.firstSeenAt.localeCompare(b.firstSeenAt)||a.sourceItemId-b.sourceItemId);
       const propertyFirst=new Map<number,number>();const listingFirst=new Map<number,number>();
       for(const entry of occurrenceOrder){
         const propertyIdValue=propertyIdByCandidate.get(entry.candidate.candidateId)!;const listingIdValue=listingIdByCandidate.get(entry.candidate.candidateId)!;
         if(!propertyFirst.has(propertyIdValue))propertyFirst.set(propertyIdValue,entry.sourceItemId);if(!listingFirst.has(listingIdValue))listingFirst.set(listingIdValue,entry.sourceItemId);
       }
       const bestDecisionByCandidate=new Map<number,PersistedDecision>();for(const entry of decisions){for(const id of [entry.a.representativeSourceItemId,entry.b.representativeSourceItemId]){const prior=bestDecisionByCandidate.get(id);if(!prior||entry.propertyScore+entry.listingScore>prior.propertyScore+prior.listingScore)bestDecisionByCandidate.set(id,entry);}}
-      const occurrenceKeys=new Set<string>();
       for(const entry of occurrenceOrder){
         const sourceItemId=entry.sourceItemId;const candidate=entry.candidate;const source=sourceRows.get(sourceItemId) as Record<string,unknown>;
         const propertyIdValue=propertyIdByCandidate.get(candidate.candidateId)!;
@@ -784,7 +1279,29 @@ export class CanonicalShadowService {
       const staleOccurrences=this.db.prepare('SELECT source_item_id FROM canonical_listing_source_occurrences WHERE source_entity_key=? AND is_current=1 AND source_item_id NOT IN (SELECT id FROM source_items WHERE classification=\'HOUSING_SUPPLY\')').all(this.algorithmVersion) as Array<{source_item_id:number}>;
       const sourceRepo=new SourceIngestionRepository(this.db);
       for(const row of staleOccurrences)sourceRepo.closeCurrentCanonicalBindings(row.source_item_id,this.algorithmVersion,new Date().toISOString());
-      const updatePrimary=this.db.prepare(`UPDATE canonical_listings SET primary_source_occurrence_id=(SELECT o.id FROM canonical_listing_source_occurrences o WHERE o.listing_id=canonical_listings.id AND o.source_entity_key=? AND o.is_current=1 ORDER BY o.first_seen_at,o.id LIMIT 1) WHERE algorithm_version=?`);updatePrimary.run(this.algorithmVersion,this.algorithmVersion);
+      // Reopen only if the same source was genuinely seen again after its
+      // historical binding ended. Global rebuilds of stale data stay inactive;
+      // archived listings are never reopened and explicit rented/removed
+      // availability is retained independently of lifecycle status.
+      this.db.prepare(`UPDATE canonical_listings SET status='active',updated_at=strftime('%Y-%m-%dT%H:%M:%SZ','now')
+        WHERE algorithm_version=? AND status='inactive' AND EXISTS (
+          SELECT 1 FROM canonical_listing_source_occurrences current_o
+          JOIN source_items s ON s.id=current_o.source_item_id
+          WHERE current_o.listing_id=canonical_listings.id AND current_o.is_current=1
+            AND current_o.source_entity_key=? AND EXISTS (
+              SELECT 1 FROM canonical_listing_source_occurrences historical_o
+              WHERE historical_o.listing_id=current_o.listing_id AND historical_o.source_item_id=current_o.source_item_id
+                AND historical_o.is_current=0 AND historical_o.ended_at IS NOT NULL
+                AND julianday(s.last_seen_at)>julianday(historical_o.ended_at)
+            )
+        )`).run(this.algorithmVersion,this.algorithmVersion);
+      const updatePrimary=this.db.prepare(`UPDATE canonical_listings SET primary_source_occurrence_id=(
+        SELECT o.id FROM canonical_listing_source_occurrences o
+        JOIN source_items s ON s.id=o.source_item_id
+        WHERE o.listing_id=canonical_listings.id AND o.source_entity_key=? AND o.is_current=1
+        ORDER BY COALESCE(julianday(o.posted_at),julianday(s.published_at)) IS NULL,
+          COALESCE(julianday(o.posted_at),julianday(s.published_at)),julianday(o.first_seen_at),o.id LIMIT 1
+      ) WHERE algorithm_version=?`);updatePrimary.run(this.algorithmVersion,this.algorithmVersion);
       const upsertMedia=this.db.prepare(`INSERT INTO media_assets(source_item_id,source_occurrence_id,listing_id,property_id,source_url,normalized_url,perceptual_hash,hash_algorithm,hash_version,download_status,first_seen_at,last_seen_at)
         VALUES(?,?,?,?,?,?,?,'dhash',1,?,?,?) ON CONFLICT(normalized_url) WHERE normalized_url IS NOT NULL DO UPDATE SET
         perceptual_hash=COALESCE(media_assets.perceptual_hash,excluded.perceptual_hash),hash_algorithm='dhash',hash_version=1,
@@ -799,6 +1316,32 @@ export class CanonicalShadowService {
         upsertMedia.run(photo.sourceItemId,occurrenceId,listingIdValue,propertyIdValue,photo.sourceUrl,url,photo.perceptualHash,status,seen.firstSeenAt,seen.lastSeenAt);
         const media=this.db.prepare('SELECT id FROM media_assets WHERE normalized_url=?').get(url) as {id:number};mediaJoin.run(media.id,photo.sourceItemId,occurrenceId,listingIdValue,propertyIdValue);
       }}
+      // Final moderation status (including legacy alias conflicts) and source
+      // occurrence links are now persisted. Keep the review event in the same
+      // SAVEPOINT so failed canonical builds cannot leave orphan notifications.
+      reviewDefaultPending(this.db);
+      new CanonicalReviewAlertsRepository(this.db).recordNewPending();
+      if (env.CANONICAL_ALERTS_ENABLED) {
+        // Only a newly discovered source in a live DISCOVERY run may publish.
+        // Replay, manual backfill, recrawls and historical canonical rebuilds
+        // cannot turn the old catalog into unsolicited Telegram messages.
+        this.db.prepare(`INSERT OR IGNORE INTO canonical_publication_events(listing_id,event_kind)
+          SELECT DISTINCT l.id,'NEW_SOURCE'
+          FROM canonical_listings l
+          JOIN canonical_alert_rollout r ON r.id=1
+          JOIN canonical_listing_moderation m ON m.listing_id=l.id AND m.review_status='approved'
+          JOIN canonical_listing_source_occurrences o ON o.listing_id=l.id AND o.is_current=1
+          JOIN source_items s ON s.id=o.source_item_id AND s.classification='HOUSING_SUPPLY'
+          JOIN processing_runs pr ON pr.id=s.processing_run_id AND pr.run_type='DISCOVERY'
+          WHERE r.activated_at IS NOT NULL
+            AND l.id>r.listing_high_water AND s.id>r.source_item_high_water
+            AND julianday(s.created_at)>=julianday(strftime('%Y-%m-%dT%H:%M:%SZ',r.activated_at))
+            AND julianday(s.first_seen_at)>=julianday(strftime('%Y-%m-%dT%H:%M:%SZ',r.activated_at))
+            AND julianday(pr.started_at)>=julianday(strftime('%Y-%m-%dT%H:%M:%SZ',r.activated_at))
+            AND (s.published_at IS NULL OR julianday(s.published_at)>=julianday(r.activated_at)-30)
+            AND l.status='active'
+            AND COALESCE(l.availability_status,'unknown') NOT IN ('rented','removed')`).run();
+      }
       const counts={canonicalProperties:this.db.prepare('SELECT COUNT(*) n FROM canonical_properties WHERE algorithm_version=?').get(this.algorithmVersion) as {n:number},canonicalListings:this.db.prepare('SELECT COUNT(*) n FROM canonical_listings WHERE algorithm_version=?').get(this.algorithmVersion) as {n:number},sourceOccurrences:this.db.prepare('SELECT COUNT(*) n FROM canonical_listing_source_occurrences WHERE source_entity_key=? AND is_current=1').get(this.algorithmVersion) as {n:number},mediaAssets:this.db.prepare('SELECT COUNT(*) n FROM media_assets').get() as {n:number}};
       this.db.exec('RELEASE canonical_shadow_build');
       return{canonicalProperties:counts.canonicalProperties.n,canonicalListings:counts.canonicalListings.n,sourceOccurrences:counts.sourceOccurrences.n,mediaAssets:counts.mediaAssets.n};

@@ -27,7 +27,6 @@ describe('Metrics & Analytics Repositories', () => {
         inserted: 5,
         duplicates: 14,
         errors: 1,
-        proxy_used: null,
         duration_ms: 12000,
       });
 
@@ -46,7 +45,6 @@ describe('Metrics & Analytics Repositories', () => {
         inserted: 8,
         duplicates: 22,
         errors: 0,
-        proxy_used: 'http://***:***@93.190.141.105:9999',
         duration_ms: 45000,
       });
 

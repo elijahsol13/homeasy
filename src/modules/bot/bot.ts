@@ -8,10 +8,10 @@ import { createFavoritesHandler } from './handlers/favorites.handler';
 import { createAdminHandler } from './handlers/admin.handler';
 import { createCallbacksHandler } from './handlers/callbacks.handler';
 import { createNLSearchHandler } from './handlers/nl-search.handler';
-import { env } from '../../config/env';
+import { requireBotToken, env } from '../../config/env';
 
 export function createBot(container: AppContainer): Bot<MyContext> {
-  const bot = new Bot<MyContext>(env.BOT_TOKEN);
+  const bot = new Bot<MyContext>(requireBotToken());
 
   // ── Middleware stack ─────────────────────────────────────────────────────────
 
