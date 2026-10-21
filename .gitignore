@@ -47,6 +47,18 @@ task*.md
 scratch/
 
 # Database and backups
+*.db
+*.sqlite
+*.sqlite3
+*.db-wal
+*.db-shm
+*.db-journal
+*.sqlite-wal
+*.sqlite-shm
+*.sqlite-journal
+*.sqlite3-wal
+*.sqlite3-shm
+*.sqlite3-journal
 data/homeasy.db
 data/.backup-monitor-state.json
 data/.backup-monitor-telegram-*.json
