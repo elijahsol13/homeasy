@@ -9,6 +9,7 @@
  *  - Lease/electricity/water store what was written; assumptions belong to the matching layer.
  */
 import { findCanonicalLocation } from '../../config/locations';
+import { sourceRoomCounts } from './source-room-counts';
 
 export const LISTING_CATEGORIES = ['apartment', 'house', 'room', 'hotel'] as const;
 export const LISTING_PROPERTY_TYPES = [
@@ -79,6 +80,7 @@ Never invent missing information. Use null when a field is unknown. Unknown bool
 Translate descriptive text into English. Preserve proper nouns, place names, project names and business names (Wat Bo, Sala Kamreuk, DakaKun Realty).
 
 PROPERTY TYPE: one of Condo, Apartment, Studio, Room, Private Villa, Private House, Flat House (shophouse used as a residence), Hotel Room, or null.
+ROOM COUNTS: bedroom and bathroom totals are independent facts. Read the ENTIRE individual listing, including labels such as "Bedroom 02", "Bedrooms: 2", "2BR", and Khmer equivalents. 02 means 2. Never copy room counts from another item in the batch. Never count furniture ("2 beds") as bedrooms. If a count is unstated or contradictory use null; an unknown count must not by itself reject an otherwise clear residential rental. Ensure the number in title_en agrees with the source counts.
 Room = a bedroom in a shared property without a private self-contained kitchen. Studio = self-contained single unit with its own bathroom. Apartment/Condo = self-contained residential unit. Nearby hotels, schools or malls are landmarks, not the property type.
 category follows property_type: room -> Room; apartment -> Studio/Apartment/Condo; house -> Private Villa/Private House/Flat House; hotel -> Hotel Room. Otherwise null.
 
@@ -174,6 +176,43 @@ const CATEGORY_FROM_TYPE: Record<ListingPropertyType, ListingCategory> = {
   'Hotel Room': 'hotel',
 };
 
+const ROOM_NUMBER_TOKEN = '(?:\\d{1,2}|zero|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty(?:[ -](?:one|two|three|four|five|six|seven|eight|nine))?)';
+
+/** Keep generated room claims only when the original contains that same count. */
+function sanitizeGeneratedRoomClaims(text: string, rooms: ReturnType<typeof sourceRoomCounts>): string {
+  let sanitized = text;
+  for (const { noun, count } of [
+    { noun: '(?:bed\\s*rooms?|BR)', count: rooms.conflictingBedrooms ? null : rooms.bedrooms },
+    { noun: '(?:bath\\s*rooms?|baths?|BA)', count: rooms.conflictingBathrooms ? null : rooms.bathrooms },
+  ]) {
+    const pattern = new RegExp(
+      `\\b(${ROOM_NUMBER_TOKEN})[ \\t]*[-–]?[ \\t]*(${noun})\\b|\\b(${noun})[ \\t]*[:：=-]?[ \\t]*(${ROOM_NUMBER_TOKEN})\\b`,
+      'gi',
+    );
+    sanitized = sanitized.replace(pattern, (claim, leadingCount: string | undefined, _leadingNoun: string | undefined,
+      _trailingNoun: string | undefined, trailingCount: string | undefined) => {
+      const countText = leadingCount ?? trailingCount ?? '';
+      if (count === null) return '';
+      const index = claim.indexOf(countText);
+      return `${claim.slice(0, index)}${count}${claim.slice(index + countText.length)}`;
+    });
+  }
+  return sanitized
+    .replace(/[ \t]{2,}/g, ' ')
+    .replace(/\s+([,.;:!?])/g, '$1')
+    .replace(/([,;:])\s*([,;:])+/g, '$2')
+    .replace(/\(\s*\)/g, '')
+    .trim();
+}
+
+/** Sanitize generated room claims and discard sentence fragments left by removal. */
+function sanitizeGeneratedDescription(text: string, rooms: ReturnType<typeof sourceRoomCounts>): string {
+  const sentences = text.split(/(?<=[.!?])\s+|\r?\n+/);
+  return sentences.map(sentence => sanitizeGeneratedRoomClaims(sentence, rooms))
+    .filter(sentence => sentence && !/\b(?:has|with|including|features?)\s*[,.;:]?\s*$/i.test(sentence))
+    .join(' ').replace(/\s{2,}/g, ' ').trim();
+}
+
 /** Returns null when the payload is not an object (so the router can fall back to another provider). */
 export function sanitizeListingFacts(raw: unknown, sourceText: string): ListingExtraction | null {
   if (!raw || typeof raw !== 'object') return null;
@@ -189,18 +228,25 @@ export function sanitizeListingFacts(raw: unknown, sourceText: string): ListingE
 
   const currency = p.currency === 'USD' || p.currency === 'KHR' ? p.currency : null;
   const price = num(p.price, 0.000001);
+  const literalRooms = sourceRoomCounts(sourceText);
+  // These counts are easy for a model to hallucinate. An absent or ambiguous
+  // source count is simply unknown; it must not create a moderation hold alone.
+  const bedrooms = literalRooms.conflictingBedrooms ? null : literalRooms.bedrooms;
+  const bathrooms = literalRooms.conflictingBathrooms ? null : literalRooms.bathrooms;
+  const title = sanitizeGeneratedRoomClaims(str(p.title_en) ?? '', literalRooms);
+  const description = sanitizeGeneratedDescription(str(p.description_en) ?? '', literalRooms);
 
   return {
     is_supported_listing: bool(p.is_supported_listing),
     rejection_reason: str(p.rejection_reason),
-    title_en: str(p.title_en) ?? '',
-    description_en: str(p.description_en) ?? '',
+    title_en: title,
+    description_en: description,
     price,
     currency: price === null ? null : currency,
     category,
     property_type: propertyType,
-    bedrooms: num(p.bedrooms),
-    bathrooms: num(p.bathrooms),
+    bedrooms,
+    bathrooms,
     city: str(p.city),
     sangkat,
     explicit_location: str(p.explicit_location),

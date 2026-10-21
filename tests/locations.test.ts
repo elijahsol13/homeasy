@@ -133,6 +133,13 @@ describe('Cambodia Locations & Smart Google Maps Link Generator', () => {
       expect(coords?.longitude).toBeCloseTo(103.855555, 5);
     });
 
+    it('prefers a selected place pin over the camera centre and accepts URL-encoded pairs', () => {
+      const place = 'https://www.google.com/maps/place/House/@13.330000,103.830000,14z/data=!3d13.351234!4d103.864567';
+      expect(extractCoordinatesFromMapsUrl(place)).toEqual({ latitude: 13.351234, longitude: 103.864567 });
+      expect(extractCoordinatesFromMapsUrl('https://www.google.com/maps/search/?query=13.352345%2C103.865432'))
+        .toEqual({ latitude: 13.352345, longitude: 103.865432 });
+    });
+
     it('returns null for URLs without coordinates', () => {
       expect(extractCoordinatesFromMapsUrl('https://maps.google.com/')).toBeNull();
       expect(extractCoordinatesFromMapsUrl('')).toBeNull();

@@ -391,6 +391,22 @@ export function canonicalizeLocation(
   };
 }
 
+/** Expand a colloquial area to the known administrative area and its common labels.
+ * Search still uses the listing's displayed location, so this is an area-level
+ * approximation (e.g. Wat Bo => Sla Kram), not an exact neighborhood boundary. */
+export function locationSearchNames(location: string, city: CityKey): string[] {
+  const raw = location.trim();
+  if (!raw) return [];
+  const entry = findCanonicalLocation(raw, city);
+  if (!entry) return [raw];
+  return [...new Set([
+    raw,
+    entry.canonicalName,
+    `Sangkat ${entry.canonicalName}`,
+    ...entry.aliases,
+  ])];
+}
+
 /**
  * Builds an official Google Maps Place search URL that renders the administrative boundary
  * of the Sangkat/District/Khan instead of matching landmarks, temples, or businesses.
@@ -453,37 +469,39 @@ export function extractCoordinatesFromMapsUrl(
   url: string,
 ): { latitude: number; longitude: number } | null {
   if (!url) return null;
+  let decoded = url;
+  try { decoded = decodeURIComponent(url); } catch { /* Keep a malformed but still parsable URL. */ }
 
-  // 1. @lat,lng
-  const atMatch = /@(-?\d+\.\d+),(-?\d+\.\d+)/.exec(url);
-  if (atMatch) {
-    const lat = parseFloat(atMatch[1]);
-    const lng = parseFloat(atMatch[2]);
-    if (!isNaN(lat) && !isNaN(lng)) return { latitude: lat, longitude: lng };
+  // Google Maps place links can contain both @lat,lng (camera centre) and
+  // !3dlat!4dlng (the actual selected place). Prefer the selected place.
+  const protoMatch = /!3d(-?\d+\.\d+)!4d(-?\d+\.\d+)/.exec(decoded);
+  if (protoMatch) {
+    const lat = parseFloat(protoMatch[1]);
+    const lng = parseFloat(protoMatch[2]);
+    if (Number.isFinite(lat) && Number.isFinite(lng)) return { latitude: lat, longitude: lng };
   }
 
-  // 2. query=lat,lng or q=lat,lng
-  const qMatch = /[?&](?:query|q)=(-?\d+\.\d+),(-?\d+\.\d+)/.exec(url);
+  // Explicit search coordinates identify a location more reliably than the camera.
+  const qMatch = /[?&](?:query|q)=(-?\d+\.\d+),(-?\d+\.\d+)/.exec(decoded);
   if (qMatch) {
     const lat = parseFloat(qMatch[1]);
     const lng = parseFloat(qMatch[2]);
     if (!isNaN(lat) && !isNaN(lng)) return { latitude: lat, longitude: lng };
   }
 
-  // 3. ll=lat,lng
-  const llMatch = /[?&]ll=(-?\d+\.\d+),(-?\d+\.\d+)/.exec(url);
+  const llMatch = /[?&]ll=(-?\d+\.\d+),(-?\d+\.\d+)/.exec(decoded);
   if (llMatch) {
     const lat = parseFloat(llMatch[1]);
     const lng = parseFloat(llMatch[2]);
     if (!isNaN(lat) && !isNaN(lng)) return { latitude: lat, longitude: lng };
   }
 
-  // 4. Protobuf !3dlat!4dlng
-  const protoMatch = /!3d(-?\d+\.\d+)!4d(-?\d+\.\d+)/.exec(url);
-  if (protoMatch) {
-    const lat = parseFloat(protoMatch[1]);
-    const lng = parseFloat(protoMatch[2]);
-    if (!isNaN(lat) && !isNaN(lng)) return { latitude: lat, longitude: lng };
+  // The map camera is a fallback only; it can point at a nearby landmark.
+  const atMatch = /@(-?\d+\.\d+),(-?\d+\.\d+)/.exec(decoded);
+  if (atMatch) {
+    const lat = parseFloat(atMatch[1]);
+    const lng = parseFloat(atMatch[2]);
+    if (Number.isFinite(lat) && Number.isFinite(lng)) return { latitude: lat, longitude: lng };
   }
 
   return null;
@@ -493,44 +511,74 @@ export function extractCoordinatesFromMapsUrl(
  * Resolves short Google Maps URLs (maps.app.goo.gl or goo.gl/maps) by following HTTP redirects,
  * extracting canonical URL and coordinates if available.
  */
+/** Coordinates from a selected Maps place or explicit numeric search only.
+ * Camera centres (@lat,lng) and viewport coordinates (ll=lat,lng) are coarse. */
+export function extractPropertyPinCoordinatesFromMapsUrl(url: string): { latitude: number; longitude: number } | null {
+  let decoded = url;
+  try { decoded = decodeURIComponent(url); } catch { /* Use the original URL. */ }
+  if (!/!3d-?\d+\.\d{4,}!4d-?\d+\.\d{4,}/i.test(decoded)
+    && !/[?&](?:q|query)=-?\d+\.\d{4,},-?\d+\.\d{4,}(?:&|$)/i.test(decoded)) return null;
+  return extractCoordinatesFromMapsUrl(url);
+}
+
 export async function resolveGoogleMapsShortlink(
   shortUrl: string,
   timeoutMs = 4000,
+  fetchImpl: typeof fetch = fetch,
 ): Promise<{ resolvedUrl: string; coordinates: { latitude: number; longitude: number } | null }> {
   if (!shortUrl) return { resolvedUrl: shortUrl, coordinates: null };
 
-  // Only attempt network resolution for known shortlink patterns
-  if (!/(?:maps\.app\.goo\.gl|goo\.gl\/maps)/i.test(shortUrl)) {
-    return {
-      resolvedUrl: shortUrl,
-      coordinates: extractCoordinatesFromMapsUrl(shortUrl),
-    };
+  const isShortLink = (url: URL): boolean => url.protocol === 'https:'
+    && (url.hostname === 'maps.app.goo.gl'
+      || (url.hostname === 'goo.gl' && url.pathname.startsWith('/maps/')));
+  const isGoogleMapsDestination = (url: URL): boolean => {
+    if (url.protocol !== 'https:' || url.username || url.password) return false;
+    const host = url.hostname.toLowerCase();
+    const googleHost = host === 'google.com' || host === 'www.google.com' || host === 'maps.google.com'
+      || /^www\.google\.(?:[a-z]{2,3}|co\.[a-z]{2})$/.test(host)
+      || /^maps\.google\.(?:[a-z]{2,3}|co\.[a-z]{2})$/.test(host);
+    return googleHost && (url.pathname.startsWith('/maps') || url.pathname === '/');
+  };
+
+  let parsed: URL;
+  try { parsed = new URL(shortUrl); } catch { return { resolvedUrl: shortUrl, coordinates: null }; }
+  if (!isShortLink(parsed)) {
+    return { resolvedUrl: shortUrl, coordinates: extractPropertyPinCoordinatesFromMapsUrl(shortUrl) };
   }
 
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+    let current = parsed;
+    for (let redirects = 0; redirects <= 5; redirects++) {
+      const response = await fetchImpl(current.toString(), {
+        method: 'GET', redirect: 'manual', signal: controller.signal,
+        headers: { Accept: 'text/html,application/xhtml+xml' },
+      });
+      await response.body?.cancel().catch(() => {});
 
-    const response = await fetch(shortUrl, {
-      method: 'HEAD',
-      redirect: 'follow',
-      signal: controller.signal,
-      headers: {
-        'User-Agent':
-          'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
-      },
-    });
-    clearTimeout(timeoutId);
+      if (response.status >= 300 && response.status < 400) {
+        const location = response.headers.get('location');
+        if (!location || redirects === 5) break;
+        let destination: URL;
+        try { destination = new URL(location, current); } catch { break; }
+        if (!isGoogleMapsDestination(destination)) break;
+        current = destination;
+        continue;
+      }
 
-    const resolvedUrl = response.url || shortUrl;
-    const coords = extractCoordinatesFromMapsUrl(resolvedUrl);
-    return { resolvedUrl, coordinates: coords };
+      if (!response.ok || !isGoogleMapsDestination(current)) break;
+      const resolvedUrl = response.url && response.url !== shortUrl ? response.url : current.toString();
+      let finalUrl: URL;
+      try { finalUrl = new URL(resolvedUrl); } catch { break; }
+      if (!isGoogleMapsDestination(finalUrl)) break;
+      return { resolvedUrl, coordinates: extractPropertyPinCoordinatesFromMapsUrl(resolvedUrl) };
+    }
+    return { resolvedUrl: shortUrl, coordinates: null };
   } catch {
-    // If HEAD fails or timeouts, fallback to original
-    return {
-      resolvedUrl: shortUrl,
-      coordinates: extractCoordinatesFromMapsUrl(shortUrl),
-    };
+    return { resolvedUrl: shortUrl, coordinates: null };
+  } finally {
+    clearTimeout(timeoutId);
   }
 }
 

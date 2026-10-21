@@ -3,6 +3,10 @@ import type { DatabaseSync } from 'node:sqlite';
 import { computeHammingDistance } from './phash';
 import { ListingCandidateBuilder, type ListingCandidate, type ListingCandidatePhoto } from './listing-candidates';
 import { SourceIngestionRepository } from '../../database/repositories/source-ingestion.repo';
+import { CanonicalReviewAlertsRepository } from '../../database/repositories/canonical-review-alerts.repo';
+import { sourceListingFacts, validRoomCount } from './source-listing-facts';
+import { env } from '../../config/env';
+import { reviewDefaultPending } from './canonical-moderation-policy';
 
 export const CANONICAL_DEDUPE_VERSION = 'canonical-dedupe-v1';
 
@@ -359,7 +363,7 @@ function getFactsForSourceItem(db: DatabaseSync, id: number): Record<string, unk
   if (!row) return {};
   let payload: Record<string, unknown> = {};
   try { payload = object(JSON.parse(row.raw_payload_json)); } catch { /* ignore malformed raw data */ }
-  return object(row.source_type === 'KHMER24' ? payload.listingFacts : payload.listingExtraction);
+  return sourceListingFacts(payload);
 }
 
 function observedTimestamps(db: DatabaseSync, id: number): { firstSeenAt: string; lastSeenAt: string } {
@@ -719,7 +723,6 @@ export class CanonicalShadowService {
           && relationAllowed(prior!) && relationAllowed(current!)));
       }
       if (table === 'dedupe_decisions') {
-        const pair = makeDecisionKey(row);
         const pairAllowed = (candidate: Record<string, unknown>) => allowedPairs.has(makeDecisionKey(candidate))
           || (operation === 'DELETE' && (scope.decisionItemIds.has(Number(candidate.candidate_a_id))
             || scope.decisionItemIds.has(Number(candidate.candidate_b_id))));
@@ -754,9 +757,6 @@ export class CanonicalShadowService {
     const observedWrites: ScopedMutationDiffEntry[] = [];
     const unexpectedWrites: ScopedMutationDiffEntry[] = [];
     for (const table of allTables) {
-      const rowKey = (row: Record<string, unknown>): string => table === 'dedupe_decisions'
-        ? makeDecisionKey(row) : table === 'canonical_listing_aliases' ? `${row.namespace}:${row.alias}`
-          : table === 'canonical_listing_moderation' ? String(row.listing_id) : String(row.id);
       const afterRows = afterSnapshots.get(table)!;
       const priorRows = before.get(table)!;
       for (const key of new Set([...priorRows.keys(), ...afterRows.keys()])) {
@@ -844,11 +844,11 @@ export class CanonicalShadowService {
       const candidate=candidateByItem.get(sourceItemId);if(!candidate){out.needsGlobalMatch++;continue;}
       const memberIds=candidate.sourceItemIds;
       const bindings=this.db.prepare(`SELECT o.id AS occurrence_id,o.source_item_id,o.listing_id,l.property_id,l.primary_source_occurrence_id,
-        l.sangkat,l.city,l.property_type,l.category,l.bedrooms,l.listing_facts_json,l.availability_status
+        l.sangkat,l.city,l.property_type,l.category,l.bedrooms,l.bathrooms,l.listing_facts_json,l.availability_status
         FROM canonical_listing_source_occurrences o JOIN canonical_listings l ON l.id=o.listing_id
         WHERE o.source_entity_key=? AND o.is_current=1 AND o.source_item_id IN (${memberIds.map(()=>'?').join(',')})`)
         .all(this.algorithmVersion,...memberIds) as Array<{occurrence_id:number;source_item_id:number;listing_id:number;property_id:number|null;primary_source_occurrence_id:number|null;
-          sangkat:string|null;city:string|null;property_type:string|null;category:string|null;bedrooms:number|null;listing_facts_json:string|null;availability_status:string|null}>;
+          sangkat:string|null;city:string|null;property_type:string|null;category:string|null;bedrooms:number|null;bathrooms:number|null;listing_facts_json:string|null;availability_status:string|null}>;
       const listingIds=[...new Set(bindings.map((row)=>row.listing_id))];
       if(listingIds.length>1){out.inconsistencies.push({sourceItemId,listingIds});continue;}
       if(!listingIds.length){out.needsGlobalMatch++;continue;}
@@ -880,9 +880,9 @@ export class CanonicalShadowService {
       const priceCents=price===null?null:Math.round((currency==='KHR'?price/4000:price)*100);
       let occurrenceId=existing?.occurrence_id;
       if(existing){
-        this.db.prepare(`UPDATE canonical_listing_source_occurrences SET last_seen_at=?,content_hash=?,media_hash=?,price_seen=?,currency_seen=?,
-          updated_at=strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE id=? AND is_current=1`)
-          .run(source.last_seen_at,source.content_hash,source.media_hash,priceCents,currency,existing.occurrence_id);
+        this.db.prepare(`UPDATE canonical_listing_source_occurrences SET last_seen_at=MAX(last_seen_at,?),content_hash=?,media_hash=?,price_seen=?,currency_seen=?,
+          posted_at=COALESCE(?,posted_at),updated_at=strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE id=? AND is_current=1`)
+          .run(source.last_seen_at,source.content_hash,source.media_hash,priceCents,currency,source.published_at,existing.occurrence_id);
         out.bindingsUpdated++;
       }else{
         const cluster=this.db.prepare(`SELECT c.cluster_key FROM dedupe_clusters c JOIN dedupe_cluster_members m ON m.cluster_id=c.id
@@ -895,18 +895,38 @@ export class CanonicalShadowService {
         const row=this.db.prepare(`SELECT id FROM canonical_listing_source_occurrences WHERE source_item_id=? AND source_entity_key=? AND is_current=1`).get(sourceItemId,this.algorithmVersion) as {id:number};
         occurrenceId=row.id;out.occurrencesAttached++;
       }
-      const occurrenceCount=this.db.prepare(`SELECT COUNT(*) n FROM canonical_listing_source_occurrences WHERE listing_id=? AND source_entity_key=? AND is_current=1`).get(listingId,this.algorithmVersion) as {n:number};
-      const mayUpdateListing=occurrenceCount.n===1||listing.primary_source_occurrence_id===occurrenceId;
+      const primary=this.db.prepare(`SELECT o.id,o.source_item_id,s.last_seen_at FROM canonical_listing_source_occurrences o
+        JOIN source_items s ON s.id=o.source_item_id
+        WHERE o.listing_id=? AND o.source_entity_key=? AND o.is_current=1
+        ORDER BY COALESCE(julianday(o.posted_at),julianday(s.published_at)) IS NULL,
+          COALESCE(julianday(o.posted_at),julianday(s.published_at)),julianday(o.first_seen_at),o.id LIMIT 1`)
+        .get(listingId,this.algorithmVersion) as {id:number;source_item_id:number;last_seen_at:string};
+      if(primary.id!==listing.primary_source_occurrence_id){
+        this.db.prepare('UPDATE canonical_listings SET primary_source_occurrence_id=? WHERE id=?').run(primary.id,listingId);
+        this.db.prepare(`UPDATE canonical_listing_source_occurrences
+          SET discovery_credit=CASE WHEN id=? THEN 1 ELSE 0 END,
+            discovery_rank=CASE WHEN id=? THEN 1 ELSE NULL END WHERE listing_id=? AND source_entity_key=? AND is_current=1`)
+          .run(primary.id,primary.id,listingId,this.algorithmVersion);
+      }
+      const mayUpdateListing=primary.id===occurrenceId||primary.id!==listing.primary_source_occurrence_id;
       if(mayUpdateListing){
+        const primaryFacts=primary.source_item_id===sourceItemId?facts:getFactsForSourceItem(this.db,primary.source_item_id);
+        const primaryPrice=num(primaryFacts.price)??(primary.source_item_id===sourceItemId?price:null);
+        const primaryCurrency=asText(primaryFacts.currency)|| (primary.source_item_id===sourceItemId?currency:null);
+        const primaryPriceCents=primaryPrice===null?null:Math.round((primaryCurrency==='KHR'?primaryPrice/4000:primaryPrice)*100);
+        const primaryBeds=validRoomCount(primaryFacts.bedrooms)??validRoomCount(listing.bedrooms);
+        const primaryBaths=validRoomCount(primaryFacts.bathrooms)??validRoomCount(listing.bathrooms);
+        const mergedFacts={...primaryFacts,bedrooms:primaryBeds,bathrooms:primaryBaths};
         this.db.prepare(`UPDATE canonical_listings SET price=COALESCE(?,price),currency=COALESCE(?,currency),
-          title=COALESCE(?,title),description=COALESCE(?,description),listing_facts_json=?,last_seen_at=MAX(last_seen_at,?),
+          title=COALESCE(?,title),description=COALESCE(?,description),bedrooms=?,bathrooms=?,listing_facts_json=?,last_seen_at=MAX(last_seen_at,?),
           updated_at=strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE id=?`)
-          .run(priceCents,currency,asText(facts.title_en)||null,asText(facts.description_en)||null,JSON.stringify(facts),source.last_seen_at,listingId);
+          .run(primaryPriceCents,primaryCurrency,asText(primaryFacts.title_en)||null,asText(primaryFacts.description_en)||null,
+            primaryBeds,primaryBaths,JSON.stringify(mergedFacts),source.last_seen_at,listingId);
       }else this.db.prepare(`UPDATE canonical_listings SET last_seen_at=MAX(last_seen_at,?),updated_at=strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE id=?`).run(source.last_seen_at,listingId);
       if(listing.property_id!==null)this.db.prepare(`UPDATE canonical_properties SET
-        latitude=COALESCE(?,latitude),longitude=COALESCE(?,longitude),last_observed_at=MAX(COALESCE(last_observed_at,''),?),
+        last_observed_at=MAX(COALESCE(last_observed_at,''),?),
         updated_at=strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE id=?`)
-        .run(num(facts.latitude),num(facts.longitude),source.last_seen_at,listing.property_id);
+        .run(source.last_seen_at,listing.property_id);
       this.reconcileMediaForSourceItem(sourceItemId,occurrenceId??null,listingId,listing.property_id,candidate.photoAssets.filter((photo)=>photo.sourceItemId===sourceItemId),observedAt);
       out.processed++;
     }
@@ -1028,9 +1048,31 @@ export class CanonicalShadowService {
     const rebindKey=(group:{key:string;candidates:ListingCandidate[]})=>{
       if(group.candidates.length!==1)return group.key;
       const candidate=group.candidates[0]!;
-      const historical=this.db.prepare(`SELECT 1 FROM canonical_listing_source_occurrences WHERE source_entity_key=? AND source_item_id IN (${candidate.sourceItemIds.map(()=>'?').join(',')}) AND is_current=0 LIMIT 1`)
-        .get(this.algorithmVersion,...candidate.sourceItemIds);
-      return historical?stableHash(`${group.key}|rebind:${candidate.contentHash??candidate.representativeSourceItemId}`):group.key;
+      const binding=this.db.prepare(`SELECT o.is_current,l.canonical_key,l.sangkat,l.property_type,l.category,l.bedrooms,l.listing_facts_json
+        FROM canonical_listing_source_occurrences o JOIN canonical_listings l ON l.id=o.listing_id
+        WHERE o.source_entity_key=? AND o.source_item_id IN (${candidate.sourceItemIds.map(()=>'?').join(',')})
+        ORDER BY o.is_current DESC,o.id DESC LIMIT 1`)
+        .get(this.algorithmVersion,...candidate.sourceItemIds) as {is_current:number;canonical_key:string|null;sangkat:string|null;
+          property_type:string|null;category:string|null;bedrooms:number|null;listing_facts_json:string|null}|undefined;
+      if(!binding)return group.key;
+      // Rebuilds and ordinary reappearances retain their original identity.
+      // Only a strong property-identity conflict justifies a different listing.
+      if(binding.is_current)return binding.canonical_key??group.key;
+      const previous=objectJson(binding.listing_facts_json);
+      const oldArea=norm(binding.sangkat);const newArea=norm(fact(candidate,'sangkat','explicit_location','location'));
+      const oldBeds=binding.bedrooms;const newBeds=num(fact(candidate,'bedrooms'));
+      const oldType=norm(binding.property_type??binding.category);
+      const newType=norm(fact(candidate,'property_type','category'));
+      const oldCode=norm(previous.property_code??previous.unit_identifier);
+      const newCode=norm(fact(candidate,'property_code','unit_identifier'));
+      const areaConflict=Boolean(oldArea&&newArea&&oldArea!==newArea&&!oldArea.includes(newArea)&&!newArea.includes(oldArea));
+      const bedsConflict=oldBeds!==null&&newBeds!==null&&Math.abs(oldBeds-newBeds)>=2;
+      const typeConflict=Boolean(oldType&&newType&&oldType!==newType);
+      const codeConflict=Boolean(oldCode&&newCode&&oldCode!==newCode);
+      if(!((codeConflict&&(areaConflict||bedsConflict||typeConflict))||(areaConflict&&bedsConflict&&typeConflict)))
+        return binding.canonical_key??group.key;
+      // The discriminant is stable across price/text edits, unlike contentHash.
+      return stableHash(`${group.key}|repurpose:${candidate.representativeSourceItemId}|${newCode}|${newArea}|${newType}|${newBeds??''}`);
     };
     const propertyGroups=properties.map((group)=>({...group,key:rebindKey(group)}));
     const listingGroups=listings.map((group)=>({...group,key:rebindKey(group)}));
@@ -1071,7 +1113,6 @@ export class CanonicalShadowService {
         (city,sangkat,canonical_address,explicit_location,latitude,longitude,property_type,bedrooms,bathrooms,building_name,unit_identifier,property_fingerprint,algorithm_version,canonical_key,first_observed_at,last_observed_at)
         VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(algorithm_version,canonical_key) WHERE canonical_key IS NOT NULL DO UPDATE SET
         city=excluded.city,sangkat=excluded.sangkat,canonical_address=excluded.canonical_address,explicit_location=excluded.explicit_location,
-        latitude=COALESCE(excluded.latitude,canonical_properties.latitude),longitude=COALESCE(excluded.longitude,canonical_properties.longitude),
         property_type=excluded.property_type,bedrooms=excluded.bedrooms,bathrooms=excluded.bathrooms,building_name=excluded.building_name,
         unit_identifier=excluded.unit_identifier,property_fingerprint=excluded.property_fingerprint,first_observed_at=excluded.first_observed_at,
         last_observed_at=excluded.last_observed_at,updated_at=strftime('%Y-%m-%dT%H:%M:%SZ','now')`);
@@ -1087,7 +1128,7 @@ export class CanonicalShadowService {
           .all(this.algorithmVersion,...memberIds) as Array<{property_id:number}>;
         if(bound.length===1)this.db.prepare('UPDATE canonical_properties SET canonical_key=? WHERE id=?').run(group.key,bound[0]!.property_id);
         upsertProperty.run(city,sqlValue(fact(best,'sangkat','location')),sqlValue(fact(best,'explicit_location','location')),sqlValue(fact(best,'explicit_location')),
-          num(fact(best,'latitude')),num(fact(best,'longitude')),sqlValue(fact(best,'property_type')),num(fact(best,'bedrooms')),num(fact(best,'bathrooms')),
+          null,null,sqlValue(fact(best,'property_type')),num(fact(best,'bedrooms')),num(fact(best,'bathrooms')),
           sqlValue(fact(best,'building_name')),sqlValue(fact(best,'unit_identifier')),group.key,this.algorithmVersion,group.key,first,last);
       }
       const upsertListing=this.db.prepare(`INSERT INTO canonical_listings
@@ -1103,7 +1144,21 @@ export class CanonicalShadowService {
         last_seen_at=excluded.last_seen_at,dedupe_confidence=excluded.dedupe_confidence,listing_facts_json=excluded.listing_facts_json,
         content_hash=excluded.content_hash,updated_at=strftime('%Y-%m-%dT%H:%M:%SZ','now')`);
       for(const group of data.listings){
-        const best=[...group.candidates].sort((a,b)=>representativeScore(b)-representativeScore(a)||a.representativeSourceItemId-b.representativeSourceItemId)[0]!;
+        const representative=[...group.candidates].sort((a,b)=>representativeScore(b)-representativeScore(a)||a.representativeSourceItemId-b.representativeSourceItemId)[0]!;
+        const memberIds=group.candidates.flatMap((candidate)=>candidate.sourceItemIds);
+        // The most complete repost helps matching, but only the earliest published
+        // source is authoritative for the public price, title and listing facts.
+        const original=this.db.prepare(`SELECT id,raw_text,content_hash FROM source_items WHERE id IN (${memberIds.map(()=>'?').join(',')})
+          ORDER BY julianday(published_at) IS NULL,julianday(published_at),julianday(first_seen_at),id LIMIT 1`)
+          .get(...memberIds) as {id:number;raw_text:string|null;content_hash:string|null};
+        const originalFacts=getFactsForSourceItem(this.db,original.id);
+        const originalPrice=num(originalFacts.price);
+        const originalCurrency=originalFacts.currency==='USD'||originalFacts.currency==='KHR'?originalFacts.currency:null;
+        const best:ListingCandidate=original.id===representative.representativeSourceItemId?representative:{
+          ...representative,representativeSourceItemId:original.id,facts:originalFacts,
+          price:originalPrice===null?null:originalCurrency==='KHR'?originalPrice/4000:originalPrice,
+          currency:originalCurrency,normalizedText:original.raw_text||'',contentHash:original.content_hash,
+        };
         const timestamps=group.candidates.flatMap((candidate)=>candidate.sourceItemIds.map((id)=>observedTimestamps(this.db,id)));
         const first=[...timestamps.map((x)=>x.firstSeenAt)].sort()[0]??best.firstSeenAt;const last=[...timestamps.map((x)=>x.lastSeenAt)].sort().at(-1)??best.lastSeenAt;
         const cityValue=norm(fact(best,'city'));const city=cityValue.includes('siem reap')||cityValue.includes('siem_reap')?'siem_reap':cityValue.includes('phnom penh')||cityValue.includes('phnom_penh')?'phnom_penh':null;
@@ -1111,7 +1166,6 @@ export class CanonicalShadowService {
         const matched=decisions.filter((entry)=>group.candidates.some((c)=>c.candidateId===entry.a.candidateId)&&group.candidates.some((c)=>c.candidateId===entry.b.candidateId));
         const confidence=matched.length?Math.max(...matched.map((entry)=>entry.listingScore)):null;
         const facts=best.facts;
-        const memberIds=group.candidates.flatMap((candidate)=>candidate.sourceItemIds);
         const bound=this.db.prepare(`SELECT DISTINCT o.listing_id FROM canonical_listing_source_occurrences o
           WHERE o.source_entity_key=? AND o.is_current=1 AND o.source_item_id IN (${memberIds.map(()=>'?').join(',')}) AND o.listing_id IS NOT NULL ORDER BY o.listing_id`)
           .all(this.algorithmVersion,...memberIds) as Array<{listing_id:number}>;
@@ -1193,14 +1247,19 @@ export class CanonicalShadowService {
         updated_at=strftime('%Y-%m-%dT%H:%M:%SZ','now')`);
       const sourceRows=this.db.prepare(`SELECT id,source_registry_id,external_id,canonical_url,source_url,group_id,group_name,author_external_id,author_name,author_url,published_at,content_hash,media_hash,raw_payload_json FROM source_items WHERE id=?`);
       const sourceOccurrenceIds=new Map<number,number>();
-      const occurrenceOrder=candidates.flatMap((candidate)=>candidate.sourceItemIds.map((sourceItemId)=>({candidate,sourceItemId,...observedTimestamps(this.db,sourceItemId)}))).sort((a,b)=>a.firstSeenAt.localeCompare(b.firstSeenAt)||a.sourceItemId-b.sourceItemId);
+      const occurrenceOrder=candidates.flatMap((candidate)=>candidate.sourceItemIds.map((sourceItemId)=>{
+        const source=sourceRows.get(sourceItemId) as Record<string,unknown>;
+        const publishedAt=typeof source.published_at==='string' ? Date.parse(source.published_at) : NaN;
+        return {candidate,sourceItemId,...observedTimestamps(this.db,sourceItemId),publishedAt};
+      })).sort((a,b)=>Number.isFinite(a.publishedAt)
+        ? Number.isFinite(b.publishedAt) ? a.publishedAt-b.publishedAt||a.sourceItemId-b.sourceItemId : -1
+        : Number.isFinite(b.publishedAt) ? 1 : a.firstSeenAt.localeCompare(b.firstSeenAt)||a.sourceItemId-b.sourceItemId);
       const propertyFirst=new Map<number,number>();const listingFirst=new Map<number,number>();
       for(const entry of occurrenceOrder){
         const propertyIdValue=propertyIdByCandidate.get(entry.candidate.candidateId)!;const listingIdValue=listingIdByCandidate.get(entry.candidate.candidateId)!;
         if(!propertyFirst.has(propertyIdValue))propertyFirst.set(propertyIdValue,entry.sourceItemId);if(!listingFirst.has(listingIdValue))listingFirst.set(listingIdValue,entry.sourceItemId);
       }
       const bestDecisionByCandidate=new Map<number,PersistedDecision>();for(const entry of decisions){for(const id of [entry.a.representativeSourceItemId,entry.b.representativeSourceItemId]){const prior=bestDecisionByCandidate.get(id);if(!prior||entry.propertyScore+entry.listingScore>prior.propertyScore+prior.listingScore)bestDecisionByCandidate.set(id,entry);}}
-      const occurrenceKeys=new Set<string>();
       for(const entry of occurrenceOrder){
         const sourceItemId=entry.sourceItemId;const candidate=entry.candidate;const source=sourceRows.get(sourceItemId) as Record<string,unknown>;
         const propertyIdValue=propertyIdByCandidate.get(candidate.candidateId)!;
@@ -1217,15 +1276,32 @@ export class CanonicalShadowService {
           propertyFirst.get(propertyIdValue)===sourceItemId?1:0);
       const occurrence=this.db.prepare('SELECT id FROM canonical_listing_source_occurrences WHERE source_item_id=? AND source_entity_key=? AND is_current=1').get(sourceItemId,this.algorithmVersion) as {id:number};sourceOccurrenceIds.set(sourceItemId,occurrence.id);
       }
-      if (!scope) {
-        const staleOccurrences=this.db.prepare('SELECT source_item_id FROM canonical_listing_source_occurrences WHERE source_entity_key=? AND is_current=1 AND source_item_id NOT IN (SELECT id FROM source_items WHERE classification=\'HOUSING_SUPPLY\')').all(this.algorithmVersion) as Array<{source_item_id:number}>;
-        const sourceRepo=new SourceIngestionRepository(this.db);
-        for(const row of staleOccurrences)sourceRepo.closeCurrentCanonicalBindings(row.source_item_id,this.algorithmVersion,new Date().toISOString());
-      }
-      const affectedListingIds = [...listingIdByCandidate.values()];
-      const updatePrimarySql = `UPDATE canonical_listings SET primary_source_occurrence_id=(SELECT o.id FROM canonical_listing_source_occurrences o WHERE o.listing_id=canonical_listings.id AND o.source_entity_key=? AND o.is_current=1 ORDER BY o.first_seen_at,o.id LIMIT 1) WHERE algorithm_version=?${scope ? ` AND id IN (${affectedListingIds.map(() => '?').join(',')})` : ''}`;
-      const updatePrimary=this.db.prepare(updatePrimarySql);
-      updatePrimary.run(this.algorithmVersion,this.algorithmVersion,...(scope ? affectedListingIds : []));
+      const staleOccurrences=this.db.prepare('SELECT source_item_id FROM canonical_listing_source_occurrences WHERE source_entity_key=? AND is_current=1 AND source_item_id NOT IN (SELECT id FROM source_items WHERE classification=\'HOUSING_SUPPLY\')').all(this.algorithmVersion) as Array<{source_item_id:number}>;
+      const sourceRepo=new SourceIngestionRepository(this.db);
+      for(const row of staleOccurrences)sourceRepo.closeCurrentCanonicalBindings(row.source_item_id,this.algorithmVersion,new Date().toISOString());
+      // Reopen only if the same source was genuinely seen again after its
+      // historical binding ended. Global rebuilds of stale data stay inactive;
+      // archived listings are never reopened and explicit rented/removed
+      // availability is retained independently of lifecycle status.
+      this.db.prepare(`UPDATE canonical_listings SET status='active',updated_at=strftime('%Y-%m-%dT%H:%M:%SZ','now')
+        WHERE algorithm_version=? AND status='inactive' AND EXISTS (
+          SELECT 1 FROM canonical_listing_source_occurrences current_o
+          JOIN source_items s ON s.id=current_o.source_item_id
+          WHERE current_o.listing_id=canonical_listings.id AND current_o.is_current=1
+            AND current_o.source_entity_key=? AND EXISTS (
+              SELECT 1 FROM canonical_listing_source_occurrences historical_o
+              WHERE historical_o.listing_id=current_o.listing_id AND historical_o.source_item_id=current_o.source_item_id
+                AND historical_o.is_current=0 AND historical_o.ended_at IS NOT NULL
+                AND julianday(s.last_seen_at)>julianday(historical_o.ended_at)
+            )
+        )`).run(this.algorithmVersion,this.algorithmVersion);
+      const updatePrimary=this.db.prepare(`UPDATE canonical_listings SET primary_source_occurrence_id=(
+        SELECT o.id FROM canonical_listing_source_occurrences o
+        JOIN source_items s ON s.id=o.source_item_id
+        WHERE o.listing_id=canonical_listings.id AND o.source_entity_key=? AND o.is_current=1
+        ORDER BY COALESCE(julianday(o.posted_at),julianday(s.published_at)) IS NULL,
+          COALESCE(julianday(o.posted_at),julianday(s.published_at)),julianday(o.first_seen_at),o.id LIMIT 1
+      ) WHERE algorithm_version=?`);updatePrimary.run(this.algorithmVersion,this.algorithmVersion);
       const upsertMedia=this.db.prepare(`INSERT INTO media_assets(source_item_id,source_occurrence_id,listing_id,property_id,source_url,normalized_url,perceptual_hash,hash_algorithm,hash_version,download_status,first_seen_at,last_seen_at)
         VALUES(?,?,?,?,?,?,?,'dhash',1,?,?,?) ON CONFLICT(normalized_url) WHERE normalized_url IS NOT NULL DO UPDATE SET
         perceptual_hash=COALESCE(media_assets.perceptual_hash,excluded.perceptual_hash),hash_algorithm='dhash',hash_version=1,
@@ -1240,6 +1316,32 @@ export class CanonicalShadowService {
         upsertMedia.run(photo.sourceItemId,occurrenceId,listingIdValue,propertyIdValue,photo.sourceUrl,url,photo.perceptualHash,status,seen.firstSeenAt,seen.lastSeenAt);
         const media=this.db.prepare('SELECT id FROM media_assets WHERE normalized_url=?').get(url) as {id:number};mediaJoin.run(media.id,photo.sourceItemId,occurrenceId,listingIdValue,propertyIdValue);
       }}
+      // Final moderation status (including legacy alias conflicts) and source
+      // occurrence links are now persisted. Keep the review event in the same
+      // SAVEPOINT so failed canonical builds cannot leave orphan notifications.
+      reviewDefaultPending(this.db);
+      new CanonicalReviewAlertsRepository(this.db).recordNewPending();
+      if (env.CANONICAL_ALERTS_ENABLED) {
+        // Only a newly discovered source in a live DISCOVERY run may publish.
+        // Replay, manual backfill, recrawls and historical canonical rebuilds
+        // cannot turn the old catalog into unsolicited Telegram messages.
+        this.db.prepare(`INSERT OR IGNORE INTO canonical_publication_events(listing_id,event_kind)
+          SELECT DISTINCT l.id,'NEW_SOURCE'
+          FROM canonical_listings l
+          JOIN canonical_alert_rollout r ON r.id=1
+          JOIN canonical_listing_moderation m ON m.listing_id=l.id AND m.review_status='approved'
+          JOIN canonical_listing_source_occurrences o ON o.listing_id=l.id AND o.is_current=1
+          JOIN source_items s ON s.id=o.source_item_id AND s.classification='HOUSING_SUPPLY'
+          JOIN processing_runs pr ON pr.id=s.processing_run_id AND pr.run_type='DISCOVERY'
+          WHERE r.activated_at IS NOT NULL
+            AND l.id>r.listing_high_water AND s.id>r.source_item_high_water
+            AND julianday(s.created_at)>=julianday(strftime('%Y-%m-%dT%H:%M:%SZ',r.activated_at))
+            AND julianday(s.first_seen_at)>=julianday(strftime('%Y-%m-%dT%H:%M:%SZ',r.activated_at))
+            AND julianday(pr.started_at)>=julianday(strftime('%Y-%m-%dT%H:%M:%SZ',r.activated_at))
+            AND (s.published_at IS NULL OR julianday(s.published_at)>=julianday(r.activated_at)-30)
+            AND l.status='active'
+            AND COALESCE(l.availability_status,'unknown') NOT IN ('rented','removed')`).run();
+      }
       const counts={canonicalProperties:this.db.prepare('SELECT COUNT(*) n FROM canonical_properties WHERE algorithm_version=?').get(this.algorithmVersion) as {n:number},canonicalListings:this.db.prepare('SELECT COUNT(*) n FROM canonical_listings WHERE algorithm_version=?').get(this.algorithmVersion) as {n:number},sourceOccurrences:this.db.prepare('SELECT COUNT(*) n FROM canonical_listing_source_occurrences WHERE source_entity_key=? AND is_current=1').get(this.algorithmVersion) as {n:number},mediaAssets:this.db.prepare('SELECT COUNT(*) n FROM media_assets').get() as {n:number}};
       this.db.exec('RELEASE canonical_shadow_build');
       return{canonicalProperties:counts.canonicalProperties.n,canonicalListings:counts.canonicalListings.n,sourceOccurrences:counts.sourceOccurrences.n,mediaAssets:counts.mediaAssets.n};

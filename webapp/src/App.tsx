@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useLayoutEffect, useCallback, useRef } from 'react';
 import type {
   ActiveTab,
   FilterMetadata,
@@ -11,6 +11,7 @@ import {
   fetchFilterMetadata,
   fetchFavorites,
   fetchMe,
+  fetchPropertyById,
   reviewProperty,
   recordListingView,
   recordTelegramContactDispatched,
@@ -23,33 +24,49 @@ import { Header } from './components/Header';
 import { PropertyCard } from './components/PropertyCard';
 import { PropertyDetailModal } from './components/PropertyDetailModal';
 import { FilterDrawer } from './components/FilterDrawer';
-import { MapView } from './components/MapView';
 import { BottomNav } from './components/BottomNav';
 import { Loader2, AlertCircle, Heart, Inbox } from 'lucide-react';
+import { INITIAL_FILTERS, normalizeStoredFilters } from './filter-storage';
 
-const INITIAL_FILTERS: FilterState = {
-  city: 'siem_reap',
-  locations: [],
-  type: 'rent',
-  sort: 'newest',
-};
+// Leaflet is only needed on the map tab, never on the initial feed load.
+const MapView = React.lazy(async () => ({
+  default: (await import('./components/MapView')).MapView,
+}));
 
 export const App: React.FC = () => {
   // Telegram initialization + tracked-link attribution bootstrap
-  const trackingBootstrapDone = React.useRef(false);
+  // Reuse the in-flight request across React StrictMode effect replays.
+  // Each effect attaches its own cancellable UI continuation.
+  const trackingBootstrap = useRef<ReturnType<typeof trackMiniAppOpen> | null>(null);
   const [attribution, setAttribution] = useState<TrackingAttribution | null>(null);
+  const [selectedProperty, setSelectedProperty] = useState<PropertyDTO | null>(null);
+  const detailRequestVersion = useRef(0);
 
   useEffect(() => {
     initTelegramWebApp();
 
-    if (trackingBootstrapDone.current) return;
-    const startParam = getTelegramStartParam();
-    if (!startParam) return;
-
-    trackingBootstrapDone.current = true;
-    trackMiniAppOpen(startParam)
-      .then((res) => setAttribution(res.attribution))
-      .catch((err) => console.error('[Tracking] Failed to report Mini App open:', err));
+    if (!trackingBootstrap.current) {
+      const startParam = getTelegramStartParam();
+      if (!startParam) return;
+      trackingBootstrap.current = trackMiniAppOpen(startParam);
+    }
+    let active = true;
+    trackingBootstrap.current
+      .then(async (res) => {
+        if (!active) return;
+        setAttribution(res.attribution);
+        if (res.listingTarget === null || res.listingTarget === undefined) return;
+        try {
+          const property = await fetchPropertyById(res.listingTarget);
+          if (active) setSelectedProperty(property);
+        } catch (err) {
+          console.warn('[Tracking] Linked listing unavailable:', err);
+        }
+      })
+      .catch((err) => {
+        if (active) console.error('[Tracking] Failed to report Mini App open:', err);
+      });
+    return () => { active = false; };
   }, []);
 
   // Navigation & Filter states
@@ -72,10 +89,7 @@ export const App: React.FC = () => {
     try {
       const saved = localStorage.getItem('homeasy_filters');
       if (saved) {
-        const parsed = JSON.parse(saved);
-        if (parsed && typeof parsed === 'object') {
-          setFilters((prev) => ({ ...prev, ...parsed }));
-        }
+        setFilters(normalizeStoredFilters(JSON.parse(saved)));
       }
     } catch {
       // ignore
@@ -103,12 +117,41 @@ export const App: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const queryGeneration = useRef(0);
+  const loadMoreRequest = useRef<{ id: number; generation: number } | null>(null);
+  const loadMoreRequestId = useRef(0);
+
+  // Invalidate pagination synchronously when filters change so an old request
+  // cannot append results between the render and the next fetch effect.
+  useLayoutEffect(() => {
+    queryGeneration.current += 1;
+    loadMoreRequest.current = null;
+  }, [filters]);
 
   // Modal & Favorites
-  const [selectedProperty, setSelectedProperty] = useState<PropertyDTO | null>(null);
   const [mapReturnProperty, setMapReturnProperty] = useState<PropertyDTO | null>(null);
   const [mapFocusRequest, setMapFocusRequest] = useState<MapFocusRequest | null>(null);
   const [favorites, setFavorites] = useState<PropertyDTO[]>([]);
+
+  // Feed, map and favorites contain a short photo preview. Hydrate the detail
+  // modal on selection while guarding against late responses from older opens.
+  const openProperty = (property: PropertyDTO) => {
+    const version = ++detailRequestVersion.current;
+    setSelectedProperty(property);
+    fetchPropertyById(property.publicRef ?? property.id)
+      .then((detail) => {
+        if (detailRequestVersion.current !== version) return;
+        setSelectedProperty((current) => current && current.id === property.id
+          ? { ...detail, isFavorite: current.isFavorite ?? detail.isFavorite }
+          : current);
+      })
+      .catch((err) => console.warn('[Property] Full detail unavailable:', err));
+  };
+
+  const closeProperty = () => {
+    detailRequestVersion.current += 1;
+    setSelectedProperty(null);
+  };
 
   // Count active non-default filters
   const activeFilterCount = [
@@ -150,7 +193,9 @@ export const App: React.FC = () => {
   useEffect(() => {
     if (!isStorageReady) return;
     let active = true;
+    const generation = queryGeneration.current;
     setLoading(true);
+    setLoadingMore(false);
     setError(null);
     setPage(1);
 
@@ -158,14 +203,14 @@ export const App: React.FC = () => {
       () => {
         fetchProperties(filters, 1, 20)
           .then((res) => {
-            if (!active) return;
+            if (!active || queryGeneration.current !== generation) return;
             setProperties(res.items);
             setTotal(res.total);
             setTotalPages(res.totalPages);
             setLoading(false);
           })
           .catch((err) => {
-            if (!active) return;
+            if (!active || queryGeneration.current !== generation) return;
             console.error('Failed to fetch properties:', err);
             setError(err.message || 'Failed to load properties');
             setLoading(false);
@@ -178,40 +223,58 @@ export const App: React.FC = () => {
       active = false;
       clearTimeout(timer);
     };
-  }, [filters]);
+  }, [filters, isStorageReady]);
 
   // Load more pages
   const handleLoadMore = async () => {
     if (loadingMore || page >= totalPages) return;
+    const generation = queryGeneration.current;
+    if (loadMoreRequest.current?.generation === generation) return;
+    const requestId = ++loadMoreRequestId.current;
+    loadMoreRequest.current = { id: requestId, generation };
     setLoadingMore(true);
     try {
       const nextPage = page + 1;
       const res = await fetchProperties(filters, nextPage, 20);
+      if (
+        queryGeneration.current !== generation ||
+        loadMoreRequest.current?.id !== requestId
+      ) return;
       setProperties((prev) => [...prev, ...res.items]);
       setPage(nextPage);
     } catch (err) {
-      console.error('Failed to load more:', err);
+      if (queryGeneration.current === generation) {
+        console.error('Failed to load more:', err);
+      }
     } finally {
-      setLoadingMore(false);
+      if (loadMoreRequest.current?.id === requestId) {
+        loadMoreRequest.current = null;
+        setLoadingMore(false);
+      }
     }
   };
 
   // Admin review action (approve/reject pending listings)
-  const handleReview = async (propertyId: number, action: 'approve' | 'reject') => {
+  const handleReview = async (listing: PropertyDTO, action: 'approve' | 'reject') => {
+    // A pending detail fetch must not replace the moderation result.
+    const version = ++detailRequestVersion.current;
     try {
-      const res = await reviewProperty(propertyId, action);
+      const res = await reviewProperty(listing.publicRef ?? listing.id, action);
       const updated = res.property;
-      if (updated) {
-        if (filters.reviewStatus === 'pending') {
-          setProperties((prev) => prev.filter((p) => p.id !== propertyId));
-          setTotal((t) => Math.max(0, t - 1));
-          setSelectedProperty(null);
-        } else {
-          setProperties((prev) => prev.map((p) => (p.id === propertyId ? updated : p)));
-          setSelectedProperty(updated);
-        }
-      } else {
-        setSelectedProperty(null);
+      if (filters.reviewStatus === 'pending' || action === 'reject') {
+        setProperties((prev) => prev.filter((p) => p.id !== listing.id));
+        setTotal((count) => Math.max(0, count - 1));
+      } else if (updated) {
+        setProperties((prev) => prev.map((p) => (p.id === listing.id
+          ? { ...updated, isFavorite: p.isFavorite ?? updated.isFavorite }
+          : p)));
+      }
+      // A close or newer selection during the review must remain untouched.
+      if (detailRequestVersion.current === version) {
+        setSelectedProperty((current) => current?.id === listing.id && updated
+          && filters.reviewStatus !== 'pending' && action !== 'reject'
+          ? { ...updated, isFavorite: current.isFavorite ?? updated.isFavorite }
+          : current?.id === listing.id ? null : current);
       }
     } catch (err) {
       console.error('Review failed:', err);
@@ -221,8 +284,9 @@ export const App: React.FC = () => {
 
   // Toggle favorite
   const handleShowOnMap = (property: PropertyDTO) => {
+    detailRequestVersion.current += 1;
     setMapReturnProperty(property);
-    setFilters((previous) => ({ ...previous, city: property.city as FilterState['city'], locations: [] }));
+    setFilters((previous) => ({ ...previous, city: property.city as FilterState['city'], locations: [], mapClusterKey: undefined }));
     setMapFocusRequest({
       propertyId: property.id,
       city: property.city as MapFocusRequest['city'],
@@ -266,12 +330,12 @@ export const App: React.FC = () => {
       .catch((err) => console.error('[Interest] Failed to record Telegram contact:', err));
   }, [filters]);
 
-  const handleSelectProperty = useCallback((property: PropertyDTO) => {
-    setSelectedProperty(property);
+  const handleSelectProperty = (property: PropertyDTO) => {
+    openProperty(property);
     if (!property.publicRef) return;
     void recordListingView(property.publicRef)
       .catch((err) => console.error('[Interest] Failed to record listing view:', err));
-  }, []);
+  };
 
   return (
     <div className="min-h-screen bg-zinc-50 dark:bg-zinc-950 text-zinc-900 dark:text-zinc-100 flex flex-col font-sans transition-colors">
@@ -292,7 +356,7 @@ export const App: React.FC = () => {
       {/* Top Header with City switcher & search */}
       <Header
         filters={filters}
-        onFilterChange={setFilters}
+        onFilterChange={(nextFilters) => setFilters({ ...nextFilters, mapClusterKey: undefined })}
         onOpenFilterDrawer={() => setIsFilterOpen(true)}
         activeFilterCount={activeFilterCount}
       />
@@ -301,6 +365,37 @@ export const App: React.FC = () => {
       <main className="flex-1 max-w-lg w-full mx-auto pb-24">
         {activeTab === 'feed' && (
           <div className="px-4 py-3 space-y-4">
+            <div className="space-y-2">
+              <span id="feed-sort-label" className="px-1 text-xs font-bold uppercase tracking-wider text-zinc-400">
+                Sort listings
+              </span>
+              <div role="group" aria-labelledby="feed-sort-label" className="grid grid-cols-3 gap-2">
+                {[
+                  { value: 'newest' as const, label: 'Newest' },
+                  { value: 'price_asc' as const, label: 'Cheapest' },
+                  { value: 'price_desc' as const, label: 'Most expensive' },
+                ].map((option) => (
+                  <button
+                    key={option.value}
+                    type="button"
+                    aria-pressed={filters.sort === option.value}
+                    onClick={() => setFilters((previous) => (
+                      previous.sort === option.value
+                        ? previous
+                        : { ...previous, sort: option.value }
+                    ))}
+                    className={`py-2.5 rounded-xl text-xs font-semibold border transition-colors ${
+                      filters.sort === option.value
+                        ? 'bg-sky-500 text-white border-sky-500'
+                        : 'bg-white dark:bg-zinc-800 text-zinc-600 dark:text-zinc-300 border-zinc-200 dark:border-zinc-700 hover:bg-zinc-100 dark:hover:bg-zinc-700'
+                    }`}
+                  >
+                    {option.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
             {/* Status bar */}
             {!loading && !error && (
               <div className="flex items-center justify-between text-xs text-zinc-500 dark:text-zinc-400 px-1">
@@ -370,7 +465,7 @@ export const App: React.FC = () => {
             )}
 
             {/* Feed Cards */}
-            {!loading && properties.length > 0 && (
+            {!loading && !error && properties.length > 0 && (
               <div className="space-y-4">
                 {properties.map((property) => (
                   <PropertyCard
@@ -409,17 +504,25 @@ export const App: React.FC = () => {
 
         {/* Map Tab */}
         {activeTab === 'map' && (
-          <MapView
-            city={filters.city}
-            onSelectProperty={handleSelectProperty}
-            focusRequest={mapFocusRequest}
-            onFocusHandled={() => setMapFocusRequest(null)}
-            onBackToProperty={mapReturnProperty ? () => setSelectedProperty(mapReturnProperty) : undefined}
-            onSelectLocation={(locationName) => {
-              setFilters((prev) => ({ ...prev, locations: [locationName] }));
-              setActiveTab('feed');
-            }}
-          />
+          <React.Suspense fallback={
+            <div role="status" className="flex items-center justify-center gap-2 py-16 text-sm text-zinc-500">
+              <Loader2 className="w-5 h-5 animate-spin" /> Loading map…
+            </div>
+          }>
+            <MapView
+              city={filters.city}
+              onSelectProperty={openProperty}
+              focusRequest={mapFocusRequest}
+              onFocusHandled={() => setMapFocusRequest(null)}
+              onBackToProperty={mapReturnProperty ? () => openProperty(mapReturnProperty) : undefined}
+              onSelectLocation={(locationNames, clusterKey) => {
+                // The map deliberately ignores feed filters. Start from that same
+                // cohort to make the cluster count equal the resulting list total.
+                setFilters({ ...INITIAL_FILTERS, city: filters.city, locations: locationNames, mapClusterKey: clusterKey ?? undefined });
+                setActiveTab('feed');
+              }}
+            />
+          </React.Suspense>
         )}
 
         {/* Saved / Favorites Tab */}
@@ -471,7 +574,7 @@ export const App: React.FC = () => {
       {/* Property Detail Modal */}
       <PropertyDetailModal
         property={selectedProperty}
-        onClose={() => setSelectedProperty(null)}
+        onClose={closeProperty}
         onToggleFavorite={handleToggleFavorite}
         onShowOnMap={handleShowOnMap}
         onTelegramContactDispatched={handleTelegramContactDispatched}
@@ -480,14 +583,16 @@ export const App: React.FC = () => {
       />
 
       {/* Filter Drawer */}
-      <FilterDrawer
-        isOpen={isFilterOpen}
-        onClose={() => setIsFilterOpen(false)}
-        filters={filters}
-        metadata={metadata}
-        onApply={(newFilters) => setFilters(newFilters)}
-        isAdmin={isAdmin}
-      />
+      {isFilterOpen && (
+        <FilterDrawer
+          isOpen={isFilterOpen}
+          onClose={() => setIsFilterOpen(false)}
+          filters={filters}
+          metadata={metadata}
+          onApply={(newFilters) => setFilters({ ...newFilters, mapClusterKey: undefined })}
+          isAdmin={isAdmin}
+        />
+      )}
 
       {/* Bottom Navigation */}
       <BottomNav

@@ -86,7 +86,7 @@ export class LegacyKhmer24BackfillAdapter implements SourceAdapter<LegacyPropert
       group.push(row);
       grouped.set(assessment.externalId, group);
     }
-    for (const [externalId, duplicates] of [...grouped.entries()].sort(([a], [b]) => a.localeCompare(b))) {
+    for (const [, duplicates] of [...grouped.entries()].sort(([a], [b]) => a.localeCompare(b))) {
       const ordered = [...duplicates].sort((a, b) => completeness(b) - completeness(a) || a.id - b.id);
       const selected = { ...ordered[0]!, __legacyDuplicateRows: duplicates };
       // The adapter selects one deterministic snapshot per portal ad ID. Extra legacy rows

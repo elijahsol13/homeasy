@@ -35,11 +35,11 @@
                                 │    (homeasy-scraper)     │
                                 │ GraphQL Relay · Stealth  │
                                 └─────────────┬────────────┘
-                                              │ Proxy Tunnel
+                                              │ Direct host internet
                                               ▼
                                 ┌──────────────────────────┐
-                                │ Cambodian Resident Proxy │
-                                │   (FB_PROXY / K24 Proxy) │
+                                │  Residential connection  │
+                                │ MacBook → home CGNAT host │
                                 └──────────────────────────┘
 ```
 
@@ -47,18 +47,12 @@
 
 ## 🛡️ Core Engineering Highlights
 
-### 0. ⚡ IRONCLAD RULE: RESIDENTIAL PROXY BANDWIDTH PRESERVATION
-> ⚠️ **CRITICAL INVARIANT**: Residential proxy bandwidth is metered and costly ($2–$10+/GB).  
-> **ALWAYS ACTIVELY SEEK, PROPOSE, AND IMPLEMENT BANDWIDTH-SAVING STRATEGIES ACROSS ALL PROXY CODE.**  
-> Wasting proxy bandwidth on media downloads or unfiltered page contexts is treated as a critical regression.
->
-> 1. **No Unfiltered Contexts**: Never initialize Chromium and navigate (`page.goto`) without active route interception (`page.route` / `attachTrafficGuard`).
-> 2. **100% Binary Media Blocking**: Photo URLs are parsed as strings from GraphQL/REST JSON or DOM attributes. The browser **must NEVER download binary images or videos** over the proxy (saving 85%–95% of bandwidth).
-> 3. **Block Fonts, Styles & Telemetry**: Stylesheets, web fonts, and tracking beacons (`facebook.com/ajax/bz`, `pixel`, analytics, falco, speed telemetry) must be aborted unconditionally.
-> 4. **Pinned Device Identity**: Facebook login and scraping reuse one host-specific Camoufox fingerprint and storage state; each browser run starts with a cold HTTP cache.
-> 5. **Round-Robin Group Rotation**: Scrapes a sliding window of 5 groups per cycle (tracked via `data/scraper_state.json`) with an extended 110-minute inter-cycle pause (~12 cycles/day).
-> 6. **Intelligent Early Exit**: Chronologically halts pagination (`FB_EARLY_EXIT_THRESHOLD=3`) upon encountering consecutive posts already present in the database, with maximum 1 scroll per group (`FB_MAX_SCROLLS_PER_GROUP=1`).
-> 7. **Selective Proxying**: Only proxy domains that are geo-restricted (Facebook). Khmer24, internal services, AI models, and Telegram API never pass through paid proxies.
+### 0. Scraper runtime and efficiency
+
+- Scrapers use the host's ordinary residential internet connection, on MacBook/Docker now and a home server behind CGNAT later.
+- Install `attachTrafficGuard` before browser navigation; extract photo URLs from GraphQL/REST/DOM without downloading unnecessary image/media/font binaries or telemetry in headless scraping. Attended visual login can load required resources.
+- Facebook uses a pinned host-specific Camoufox fingerprint and saved session; authentication remains manual, with session and concurrency safety locks.
+- The existing Facebook scheduler rotates groups, defaults to a 110-minute cycle pause, and exits early on previously seen posts. Do not change scraping cadence without a separate reason.
 
 ### 1. Trio-Container Architecture
 - **`homeasy-bot`**: Telegram Bot UI powered by `grammY`, natural language search (voice note / text query parsing with Gemini), interactive 8-step manual filter wizard, subscriptions, instant push alerts with multi-photo albums (up to 3 photos), and button-driven Admin Dashboard (`/admin`).
@@ -121,7 +115,7 @@ homeasy/
 │   │   ├── api/             # Fastify REST API for Mini App & WebSocket Screencast
 │   │   ├── bot/             # Telegram bot (grammY): NL search, wizard, alerts, admin panel
 │   │   ├── matcher/         # Subscription scoring and matching engine
-│   │   └── parser/          # Scrapers (GraphQL FB, Khmer24 Stealth), extractors, proxy
+│   │   └── parser/          # Scrapers (GraphQL FB, Khmer24), extractors and traffic guard
 │   └── services/
 │       ├── alert.service.ts # In-App Admin Alerting Service (Telegram delivery)
 │       ├── nl-search.service.ts # Natural language query parsing via Gemini

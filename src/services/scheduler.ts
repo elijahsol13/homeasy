@@ -1,11 +1,10 @@
 import fs from 'node:fs';
 import { runKhmer24Scraper } from '../modules/parser/khmer24.scraper';
+import type { RunKhmer24Options } from '../modules/parser/khmer24.scraper';
 import { runFacebookScraper } from '../modules/parser/facebook.scraper';
 import { createDatabaseBackup } from '../database/backup';
-import { runEnrichment } from '../database/enrich-properties';
 import type { AppContainer } from '../container';
 import { env } from '../config/env';
-import { parseProxyConfig } from '../modules/parser/proxy';
 import { getScraperSettings } from './settings';
 import { loadFacebookSafetyState } from '../modules/parser/fb-runtime';
 
@@ -22,21 +21,28 @@ export interface ScraperHeartbeatStats {
   facebook: ScraperCategoryStats;
 }
 
+/** Optional bounds for an attended worker verification. Defaults retain normal scheduling. */
+export interface ScraperWorkerOptions {
+  khmer24?: RunKhmer24Options;
+  maxCycles?: number;
+  skipFacebook?: boolean;
+}
+
 /**
  * Sequential Scraper Worker & Queue
  *
  * Replaces cron jobs with a deterministic sequential loop:
  *  1. Khmer24 scrape -> cooldown (20s) + forced GC
  *  2. Facebook scrape -> cooldown (20s) + forced GC
- *  3. Daily maintenance check (backup + enrichment + optimize)
- *  4. Inter-cycle pause (10–15 min) -> repeats
+ *  3. Daily maintenance check (backup + optimize)
+ *  4. Configured inter-cycle pause (110 min by default) -> repeats
  *
- * Guarantees that two Chromium instances NEVER run concurrently,
- * preventing OOM crashes on RAM-constrained VPS environments (AWS t3.micro).
+ * Runs browser scraping sequentially to avoid concurrent browser memory spikes.
  */
 export class ScraperWorker {
   private isRunning = false;
   private isWorking = false;
+  private completedCycles = 0;
   private sleepTimeout: NodeJS.Timeout | null = null;
   private resolveSleep: (() => void) | null = null;
   private lastMaintenanceAt = 0;
@@ -53,8 +59,13 @@ export class ScraperWorker {
 
   constructor(
     private readonly container: AppContainer,
-    private readonly cyclePauseMs = (env.SCRAPER_CYCLE_PAUSE_MINUTES ?? 110) * 60 * 1000, // 110 minutes default (~2 hours) for proxy conservation
-  ) {}
+    private readonly cyclePauseMs = (env.SCRAPER_CYCLE_PAUSE_MINUTES ?? 110) * 60 * 1000, // configurable scraper cycle cadence
+    private readonly options: ScraperWorkerOptions = {},
+  ) {
+    if (options.maxCycles !== undefined && (!Number.isSafeInteger(options.maxCycles) || options.maxCycles < 1)) {
+      throw new Error('maxCycles must be a positive safe integer');
+    }
+  }
 
   private triggerGc(taskName: string): void {
     if (typeof global.gc === 'function') {
@@ -127,27 +138,16 @@ export class ScraperWorker {
       }
       console.log(`✅ [Worker] Backup verified: ${backupResult.filename} (${Math.round((backupResult.sizeBytes ?? 0) / 1024)} KB)`);
 
-      // Step 2: Enrichment & spam filtering
-      console.log('🔍 [Worker] Running database enrichment and spam filtering...');
-      const enrichStats = runEnrichment(undefined, this.container.alertService);
-      console.log(`✅ [Worker] Enrichment complete. Enriched: ${enrichStats.totalUpdated}, Spam culled: ${enrichStats.deactivatedSpam}`);
-
-      // Step 3: Smart-Queue Re-Verification (age-based cadence: 12h/72h/7d)
-      console.log('🔗 [Worker] Running smart-queue listing verification...');
-      const verifyStats = await this.container.linkVerifierService.verifyBatch(60);
-      console.log(
-        `✅ [Worker] Verification complete: ${verifyStats.checked} checked, ` +
-        `${verifyStats.deactivated} deactivated, ${verifyStats.updated} price updates, ${verifyStats.reingested} re-parsed.`,
-      );
-
-      // Step 4: SQLite Query Planner Optimization
+      // Step 2: SQLite Query Planner Optimization.
+      // Legacy enrichment and link verification target main.properties and must
+      // not run after the canonical ingestion/read cutover.
       try {
         this.container.db.exec('PRAGMA optimize;');
       } catch (e) {
         console.warn('⚠️ [Worker] PRAGMA optimize warning:', e);
       }
 
-      // Step 5: Daily parse-issues report to admins
+      // Step 3: Daily parse-issues report to admins
       await this.sendParseIssuesReport();
 
       this.lastMaintenanceAt = Date.now();
@@ -180,7 +180,7 @@ export class ScraperWorker {
         console.log(`\n⏰ [Worker] Starting Khmer24 scrape at ${new Date().toISOString()}...`);
         const k24Start = Date.now();
         try {
-          const k24Stats = await runKhmer24Scraper(this.container);
+          const k24Stats = await runKhmer24Scraper(this.container, this.options.khmer24);
           const durationMs = Date.now() - k24Start;
           if (k24Stats) {
             this.hourlyStats.khmer24.scraped += k24Stats.totalScraped;
@@ -196,7 +196,6 @@ export class ScraperWorker {
                 inserted: k24Stats.inserted,
                 duplicates: k24Stats.duplicates,
                 errors: k24Stats.errors,
-                proxy_used: null,
                 duration_ms: durationMs,
               });
             } catch (err) {
@@ -223,7 +222,7 @@ export class ScraperWorker {
         // ── 3. Facebook Scraper ─────────────────────────────────────────────
         const settings = getScraperSettings();
         const safetyState = loadFacebookSafetyState();
-        if (!settings.facebookEnabled) {
+        if (this.options.skipFacebook || !settings.facebookEnabled) {
           console.log(`\n⏰ [Worker] Skipping Facebook scrape (disabled in settings).`);
         } else if (safetyState.status === 'blocked') {
           console.log(`\n⛔ [Worker] Skipping Facebook scrape (safety-locked: ${safetyState.reason ?? 'manual login required'}).`);
@@ -240,7 +239,6 @@ export class ScraperWorker {
 
           const fbStats = await runFacebookScraper(this.container);
           const durationMs = Date.now() - fbStart;
-          const proxyInfo = env.FB_PROXY_ENABLED ? (parseProxyConfig(env.FB_PROXY)?.masked ?? null) : null;
 
           if (fbStats) {
             this.hourlyStats.facebook.scraped += fbStats.totalScraped;
@@ -263,7 +261,6 @@ export class ScraperWorker {
                 inserted: fbStats.inserted,
                 duplicates: fbStats.duplicates,
                 errors: fbStats.errors,
-                proxy_used: proxyInfo,
                 duration_ms: durationMs,
               });
             } catch (err) {
@@ -281,29 +278,19 @@ export class ScraperWorker {
         }
 
         this.hourlyStats.cyclesCompleted++;
+        this.completedCycles++;
 
-        // ── 4. Continuous Re-Verification (smart queue, small per-cycle quota) ─
-        // Age cadence is enforced inside findDueForVerification: fresh ads get
-        // re-checked ~twice a day across cycles, old ones weekly.
-        try {
-          const verify = await this.container.linkVerifierService.verifyBatch(15);
-          if (verify.deactivated > 0 || verify.updated > 0 || verify.reingested > 0) {
-            console.log(
-              `🔗 [Worker] Verify cycle: ${verify.checked} checked, ${verify.deactivated} dead, ` +
-              `${verify.updated} price updates, ${verify.reingested} re-parsed.`,
-            );
-          }
-        } catch (err) {
-          console.warn('⚠️ [Worker] Verify cycle failed:', err instanceof Error ? err.message : String(err));
-        }
-
-        // ── 5. Hourly Heartbeat Notification ────────────────────────────────
+        // ── 4. Hourly Heartbeat Notification ────────────────────────────────
         await this.checkAndSendHeartbeat();
       } catch (fatalCycleError: unknown) {
         const msg = fatalCycleError instanceof Error ? fatalCycleError.message : String(fatalCycleError);
         console.error(`💥 [Worker] Unexpected worker cycle failure: ${msg}`);
       } finally {
         this.isWorking = false;
+      }
+
+      if (this.options.maxCycles !== undefined && this.completedCycles >= this.options.maxCycles) {
+        this.stop();
       }
 
       if (!this.isRunning) break;
@@ -332,8 +319,6 @@ export class ScraperWorker {
       const rssMb = Math.round(mem.rss / 1024 / 1024);
       const heapUsedMb = Math.round(mem.heapUsed / 1024 / 1024);
 
-      const proxy = env.FB_PROXY_ENABLED ? parseProxyConfig(env.FB_PROXY) : undefined;
-      const proxyStatus = proxy ? `Enabled (${proxy.masked})` : 'Direct connection';
 
       // Usage analytics query
       let analyticsText = '';
@@ -385,7 +370,7 @@ export class ScraperWorker {
         `  • New inserted: <b>+${this.hourlyStats.facebook.inserted}</b>\n` +
         `  • Duplicates: <b>${this.hourlyStats.facebook.duplicates}</b>\n` +
         `  • Errors: <b>${this.hourlyStats.facebook.errors}</b>\n` +
-        `  • Proxy: <code>${proxyStatus}</code>\n\n` +
+        `\n` +
         analyticsText +
         allTimeText +
         `📊 <b>RAM:</b> RSS ${rssMb}MB | Heap ${heapUsedMb}MB\n` +
@@ -505,6 +490,7 @@ export class ScraperWorker {
 // ── Global Worker Instance for Convenience & Backward Compatibility ──────────
 
 let activeWorkerInstance: ScraperWorker | null = null;
+let activeWorkerTask: Promise<void> | null = null;
 
 /**
  * Starts the sequential scraper worker.
@@ -518,10 +504,18 @@ export function startWorker(container: AppContainer, pauseMinutes = env.SCRAPER_
 
   const worker = new ScraperWorker(container, pauseMinutes * 60 * 1000);
   activeWorkerInstance = worker;
-  // Start in background without awaiting to allow caller to proceed
-  worker.start().catch((err) => {
-    console.error('💥 [Worker] Unhandled error in worker:', err);
-  });
+  // The caller can continue startup, but graceful shutdown must retain the
+  // worker promise until all in-flight scraper/maintenance DB writes finish.
+  activeWorkerTask = worker.start()
+    .catch((err) => {
+      console.error('💥 [Worker] Unhandled error in worker:', err);
+    })
+    .finally(() => {
+      if (activeWorkerInstance === worker) {
+        activeWorkerInstance = null;
+        activeWorkerTask = null;
+      }
+    });
 
   return worker;
 }
@@ -532,8 +526,13 @@ export function startWorker(container: AppContainer, pauseMinutes = env.SCRAPER_
 export function stopWorker(): void {
   if (activeWorkerInstance) {
     activeWorkerInstance.stop();
-    activeWorkerInstance = null;
   }
+}
+
+/** Stop scheduling new work, and wait for the current operation to settle before closing SQLite. */
+export async function stopWorkerAndWait(): Promise<void> {
+  stopWorker();
+  if (activeWorkerTask) await activeWorkerTask;
 }
 
 /** Legacy alias for startWorker */

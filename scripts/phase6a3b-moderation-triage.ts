@@ -6,6 +6,7 @@ import crypto from 'node:crypto';
 import { createDatabase, closeDatabase } from '../src/database/db';
 import { runMigrations } from '../src/database/migrate';
 import { CanonicalListingRepository } from '../src/database/repositories/canonical-listing.repo';
+import { assessSiemReapGeography } from '../src/modules/parser/source-geography';
 
 const checkpoint = process.env.PHASE6A_DB ?? 'data/rebuild/phase6a-checkpoint-20261007.db';
 const preview = path.join(tmpdir(), `homeasy-phase6a3b-${crypto.randomUUID()}.db`);
@@ -21,8 +22,6 @@ type Candidate = {
 };
 
 const re = {
-  contradiction: /\b(phnom\s*penh|kandal|battambang|poipet|kampong\s*(?:cham|thom|speu)|sihanoukville|takeo|kampot|kep|pursat|prey\s*veng|svay\s*rieng|ratanakiri|mondulkiri|stung\s*treng|kratie|oddar\s*meanchey|តាកែវ|កណ្ដាល|ភ្នំពេញ|បាត់ដំបង)\b/i,
-  siemReap: /\b(siem\s*reap|siemreap|sala\s*kamreuk|sala\s*komreuk|svay\s*dangkum|slor\s*kram|siem\s*reap\s*(?:town|city))\b|សៀមរាប/i,
   sale: /\b(for\s+sale|house\s+for\s+sale|land\s+for\s+sale|ขาย|sale\s+only|sell(?:ing)?\s+(?:my|the|this))\b|លក់/i,
   rent: /\b(for\s+rent|rent(?:al)?|lease|monthly\s+rent|to\s+let)\b|ជួល/i,
   inactive: /\b(rented|already\s+rent(?:ed)?|no\s+longer\s+available|removed|unavailable|closed)\b/i,
@@ -48,10 +47,11 @@ function classify(c:Candidate){
   const sourceText=[c.title,c.description,c.raw_text].map(v=>String(v??'')).join('\n');
   const headline=[c.title,c.description].map(clean).join(' ');
   const primaryListingText=`${headline} ${String(c.raw_text??'').slice(0,350)}`;
-  const local=[c.sangkat,c.explicit_location].map(clean).join(' ');
-  const hasContradiction=re.contradiction.test(local)||re.contradiction.test(text);
-  const hasKhmerContradiction=/(?:តាកែវ|ខេត្តកណ្ដាល|ភ្នំពេញ|បាត់ដំបង|កំពង់ចាម|កំពង់ធំ|កំពង់ស្ពឺ|ព្រះសីហនុ)/.test(local+' '+text);
-  const geographyConflict=hasContradiction||hasKhmerContradiction;
+  const geography=assessSiemReapGeography({
+    rawText:c.raw_text,title:c.title,description:c.description,city:c.city,
+    propertyCity:c.property_city,sangkat:c.sangkat,explicitLocation:c.explicit_location,
+    sourceCity:c.source_city,
+  });
   const structuredOffer=String(c.offer_type??'').toLowerCase();
   // Marketing footers can mention buying/selling on otherwise valid rental posts.
   // Require sale language in the listing's own title/description before treating
@@ -61,9 +61,7 @@ function classify(c:Candidate){
     ||/(?:លក់ដី|ដីលក់|លក់ផ្ទះ|ផ្ទះលក់|លក់អចលនទ្រព្យ|សម្រាប់លក់)/.test(primaryListingText);
   const explicitSale=sourceSale||structuredOffer==='sale';
   const explicitRent=re.rent.test(primaryListingText)||structuredOffer==='rent';
-  const explicitCity=re.siemReap.test(local)||re.siemReap.test(text);
-  const districtEvidence=/\b(wat\s*bo|wat\s*damnak|sala\s*kam(?:reuk|roek)|svay\s*dangkum|slor\s*kram|slorkram|chreav|krous|bakong|prasat\s*bakong)\b/i.test(local+' '+text);
-  const geoTier=geographyConflict?'CONTRADICTION_CITY':explicitCity?'EXACT_CITY':districtEvidence||c.source_city?.toLowerCase().includes('siem')?'PROBABLE_CITY':'UNKNOWN_CITY';
+  const geoTier=geography.tier;
   const explicitSaleOnly=explicitSale&&!explicitRent&&structuredOffer!=='rent_or_sale'&&structuredOffer!=='mixed'&&structuredOffer!=='rent_and_sale';
   const offerTier=explicitSale&&explicitRent?'MIXED_RENT_SALE':explicitSaleOnly?'EXPLICIT_SALE':explicitRent?'RENT_EVIDENCE':'UNKNOWN_OFFER';
   const flags:string[]=[];
@@ -84,11 +82,11 @@ function classify(c:Candidate){
   if(c.price!==null&&c.price>0&&monthlyPrices.length===0)flags.push('PRICE_NOT_EXPLICITLY_SUPPORTED');
   else if(c.price!==null&&c.price>0){const price=Number(c.price);const agrees=monthlyPrices.some(expected=>Math.abs(price-expected*100)<=Math.max(500,expected*5));if(!agrees)flags.push('PRICE_CONTRADICTS_SOURCE');}
   if(c.status==='inactive'||c.availability_status==='rented'||c.availability_status==='unavailable'||re.inactive.test(text))flags.push('INACTIVE_OR_RENTED');
-  if(geographyConflict)flags.push('GEOGRAPHY_CONTRADICTION');
+  flags.push(...geography.flags);
   if(explicitSaleOnly)flags.push('EXPLICIT_SALE_ONLY');
   if(explicitSale&&explicitRent)flags.push('MIXED_RENT_SALE_REQUIRES_REVIEW');
   if(re.safety.test(text))flags.push('CONTENT_REVIEW_FLAG');
-  const tier=flags.length===0?'AUTO_APPROVE_CANDIDATE':flags.some(f=>['INVALID_SOURCE_URL','NO_CARD_CONTENT','NO_HOUSING_TYPE','CONTENT_REVIEW_FLAG','DUPLICATE_CURRENT_BINDING','SOURCE_URL_BOUND_TO_MULTIPLE_LISTINGS','MIXED_RENT_SALE_REQUIRES_REVIEW','BEDROOMS_CONTRADICT_SOURCE','PRICE_CONTRADICTS_SOURCE','PRICE_NOT_EXPLICITLY_SUPPORTED','LEGACY_IDENTITY_ALIAS_CONFLICT','PRIOR_POLICY_MANUAL_REVIEW'].includes(f))?'MANUAL_REVIEW':flags.includes('GEOGRAPHY_CONTRADICTION')||flags.includes('EXPLICIT_SALE_ONLY')||flags.includes('INACTIVE_OR_RENTED')?'REJECT':'MANUAL_REVIEW';
+  const tier=flags.length===0?'AUTO_APPROVE_CANDIDATE':flags.some(f=>['INVALID_SOURCE_URL','NO_CARD_CONTENT','NO_HOUSING_TYPE','CONTENT_REVIEW_FLAG','DUPLICATE_CURRENT_BINDING','SOURCE_URL_BOUND_TO_MULTIPLE_LISTINGS','MIXED_RENT_SALE_REQUIRES_REVIEW','BEDROOMS_CONTRADICT_SOURCE','PRICE_CONTRADICTS_SOURCE','PRICE_NOT_EXPLICITLY_SUPPORTED','LEGACY_IDENTITY_ALIAS_CONFLICT','PRIOR_POLICY_MANUAL_REVIEW','GEOGRAPHY_NEEDS_SOURCE_REVIEW','PROBABLE_CITY_REQUIRES_REVIEW','INSUFFICIENT_SOURCE_GEOGRAPHY'].includes(f))?'MANUAL_REVIEW':flags.includes('SOURCE_OUTSIDE_CITY')||flags.includes('EXPLICIT_SALE_ONLY')||flags.includes('INACTIVE_OR_RENTED')?'REJECT':'MANUAL_REVIEW';
   return {geoTier,offerTier,explicitRent,explicitSale,flags,triage:tier};
 }
 
@@ -161,7 +159,7 @@ function main(){
       pendingAuto.find(c=>c.price===null||c.price===0),
       pendingAuto.find(c=>c.bedrooms===null),
       pendingAuto.find(c=>!hasDirectContact(c)),
-    ].filter((x):x is Candidate=>Boolean(x));
+    ].filter((x):x is (typeof pendingAuto)[number]=>x!==undefined);
     for(const c of auditMustInclude){if(!selected.has(c.listing_id)){sample.push(c);selected.add(c.listing_id);}}
     for(const c of [...pendingAuto].sort((a,b)=>String(a.public_ref).localeCompare(String(b.public_ref)))){
       if(sample.length>=40)break;
@@ -185,13 +183,18 @@ function main(){
         contradictoryGeographyIncluded:searchRows.filter(c=>c.geoTier==='CONTRADICTION_CITY').length},
       currentVisibleExceptions:currentVisible.filter(c=>c.flags.length>0).map(c=>({listing_id:c.listing_id,title:c.title,source:c.source_type,flags:c.flags,geoTier:c.geoTier,offerTier:c.offerTier,source_url:c.source_url,raw_text:clean(c.raw_text).slice(0,800)})),
       searchExcludedConflicts:classified.filter(c=>!c.in_search&&c.geoTier==='CONTRADICTION_CITY').map(c=>({listing_id:c.listing_id,title:c.title,source:c.source_type,flags:c.flags,source_url:c.source_url})),
-      policy:{version:'INGESTION_VALIDATED_V1',sampleFalseApprovalCount:0,sampleFalseApprovalRate:0,
-        sampleRead:'40/40 Facebook candidates were plausible current housing supply; no geography contradiction, sale-only conflict, source URL collision, price/bedroom conflict or prohibited content found. All in-search Khmer24 canonical-only rows were routed to manual review by explicit flags, so Khmer24 has no auto-approval sample and no Khmer24 false-approval rate is claimed.',
+      policy:{version:'SOURCE_FIRST_GEOGRAPHY_V2',sampleFalseApprovalCount:null,sampleFalseApprovalRate:null,
+        sampleRead:'Automated geography triage is provisional. Generated city claims and incidental outside-city mentions require manual review; only an unambiguous outside-city assertion in the original source may trigger geography rejection. The sample needs new human verification before measuring its false-approval rate.',
         missingPriceBedroomsOrDirectContactAreNotStandaloneBlockers:true},
       sourceCounts:count('source_type'),flags:classified.flatMap(c=>c.flags).reduce((a,f)=>{a[f]=(a[f]??0)+1;return a;},{} as Record<string,number>),
       sample:{target:40,actual:sample.length,selection:'stratified canonical-only AUTO_APPROVE_CANDIDATE sample; includes no-price, no-bedroom and no-direct-contact cases where present; Khmer24 has no auto-approve candidate after deterministic checks',rows:sample.map(c=>({...c,description:clean(c.description).slice(0,500),raw_text:clean(c.raw_text).slice(0,1200)}))},
       allRows:classified.filter(c=>c.moderation==='pending'&&!db.prepare("SELECT 1 FROM canonical_listing_aliases WHERE listing_id=? AND namespace='legacy_property_id'").get(c.listing_id)).map(c=>({...c,description:clean(c.description).slice(0,500),raw_text:clean(c.raw_text).slice(0,1200)}))};
-    writeFileSync(out,JSON.stringify(report,null,2)+'\n');
+    // Some historical Facebook posts contain unpaired UTF-16 surrogates.
+    // Replace only malformed halves so strict JSON readers (jq, Python) can
+    // consume the audit without changing valid emoji surrogate pairs.
+    const safeJson=JSON.stringify(report,(_key,value:unknown)=>typeof value==='string'
+      ?value.replace(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g,'\uFFFD'):value,2);
+    writeFileSync(out,safeJson+'\n');
     console.log(JSON.stringify({out,candidateCount:report.candidateCount,canonicalOnly:report.canonicalOnly,triageCounts:report.triageCounts,geoCounts:report.geoCounts,offerCounts:report.offerCounts,sourceCounts:report.sourceCounts,flags:report.flags,sampleCount:sample.length},null,2));
   }finally{closeDatabase(db);try{unlinkSync(preview)}catch{}}
 }

@@ -6,29 +6,35 @@ import { ReplayAdapter } from '../src/modules/parser/replay-adapter';
 import type { SourceRunContext } from '../src/modules/parser/ingestion-contracts';
 import { DatabaseSync } from 'node:sqlite';
 import { env } from '../src/config/env';
+import { assertReplayCommitSafe } from './replay-commit-guard';
 
-function parseArgs(args: string[]): { input: string; dryRun: boolean } {
+function parseArgs(args: string[]): { input: string; dryRun: boolean; allowLiveDb: boolean } {
   let input = '';
   let dryRun = false;
   let commit = false;
+  let allowLiveDb = false;
   for (let i = 0; i < args.length; i++) {
     const arg = args[i]!;
     if (arg === '--input') input = args[++i] ?? '';
     else if (arg === '--dry-run') dryRun = true;
     else if (arg === '--commit') commit = true;
+    else if (arg === '--allow-live-db') allowLiveDb = true;
     else throw new Error(`Unknown argument: ${arg}`);
   }
   if (!input) throw new Error('Usage: npm run ingestion:replay -- --input <classified.json> (--dry-run | --commit)');
   if (dryRun === commit) throw new Error('Pass exactly one of --dry-run or --commit');
-  return { input: path.resolve(input), dryRun };
+  if (dryRun && allowLiveDb) throw new Error('--allow-live-db is only valid with --commit');
+  return { input: path.resolve(input), dryRun, allowLiveDb };
 }
 
 async function main(): Promise<void> {
-  const { input, dryRun } = parseArgs(process.argv.slice(2));
+  const { input, dryRun, allowLiveDb } = parseArgs(process.argv.slice(2));
   if (!fs.existsSync(input)) throw new Error(`Replay input does not exist: ${input}`);
   const dump = JSON.parse(fs.readFileSync(input, 'utf8')) as {
     runId?: string; totalRaw?: number; classificationCounts?: Record<string, number>; posts?: unknown[];
   };
+  // Guard must run before createDatabase() opens a writable SQLite/WAL handle.
+  if (!dryRun) assertReplayCommitSafe(path.resolve(env.DATABASE_PATH), { allowLiveDb });
   const db = dryRun
     ? new DatabaseSync(path.resolve(env.DATABASE_PATH), { readOnly: true })
     : createDatabase();

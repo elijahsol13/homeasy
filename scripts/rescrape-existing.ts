@@ -10,7 +10,7 @@
  *   npx tsx scripts/rescrape-existing.ts [--source=khmer24|facebook|all] [--limit=N] [--no-llm]
  *
  * Notes:
- *  - Khmer24 needs no proxy. Facebook anonymous fetches may hit login walls
+ *  - Facebook anonymous fetches may hit login walls
  *    depending on egress IP — failures are logged, never fatal.
  *  - Photos are NOT downloaded (URLs only) — image/media/font requests are
  *    blocked by the traffic guard.

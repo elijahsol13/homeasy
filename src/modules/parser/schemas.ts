@@ -10,6 +10,10 @@ export const RawListingSchema = z.object({
   description: z.string().optional(),
   price: z.union([z.string(), z.number()]).optional(),
   currency: z.string().optional(),
+  /** Asking price read directly from the Khmer24 detail page before AI enrichment. */
+  source_price: z.number().positive().optional(),
+  source_price_currency: z.enum(['USD', 'KHR']).optional(),
+  source_price_origin: z.enum(['khmer24_json_ld_offer', 'khmer24_dom_header']).optional(),
   type: z.string().optional(),
   category: z.enum(['apartment', 'house', 'room', 'hotel']).or(z.string()).nullish(),
   bedrooms: z.union([z.string(), z.number()]).optional(),
@@ -20,6 +24,8 @@ export const RawListingSchema = z.object({
   location: z.string().optional(),
   city: z.string().optional(),
   maps_url: z.string().optional(),
+  /** Original, explicitly labelled map URL used to validate a resolved Facebook map. */
+  source_map_url: z.string().optional(),
   source_url: z.string().optional(),
   photos: z.array(z.string()).optional().default([]),
   phone: z.string().optional(),
@@ -39,6 +45,10 @@ export const RawListingSchema = z.object({
   marketing_landmarks: z.array(z.string()).optional(),
   /** Original post text before AI normalization — preserved for re-parsing. */
   raw_text: z.string().optional(),
+  /** Verbatim page heading, captured before AI translates or rewrites the title. */
+  source_title: z.string().optional(),
+  /** Stable numeric Facebook post ID from structured platform data. */
+  facebook_post_id: z.string().regex(/^\d+$/).optional(),
   /** Structured price from platform metadata (e.g. FB GroupCommerceProductItem). */
   price_hint: z.number().optional(),
   price_hint_currency: z.string().optional(),

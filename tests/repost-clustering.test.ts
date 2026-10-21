@@ -1,7 +1,12 @@
 import { DatabaseSync } from 'node:sqlite';
 import { runMigrations } from '../src/database/migrate';
 import { SourceIngestionRepository } from '../src/database/repositories/source-ingestion.repo';
-import { RepostClusteringService } from '../src/modules/parser/repost-clustering';
+import { RepostClusteringService, normalizeRepostText } from '../src/modules/parser/repost-clustering';
+
+it('excludes Telegram handles with Unicode letters from repost fingerprints', () => {
+  expect(normalizeRepostText('Rent @myAgent_42 in Wat Bo')).toBe('rent in wat bo');
+  expect(normalizeRepostText('Rent @агент_42 in Wat Bo')).toBe('rent in wat bo');
+});
 
 describe('RepostClusteringService', () => {
   let db: DatabaseSync;

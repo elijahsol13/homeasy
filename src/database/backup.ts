@@ -2,15 +2,17 @@
  * HomEasy Database Backup Service
  *
  * Provides safe, online, point-in-time snapshots of the SQLite database:
- *  - Forces a WAL checkpoint to flush uncommitted WAL pages to the main DB.
- *  - Uses SQLite's `VACUUM INTO` command to generate an ultra-clean, defragmented backup copy.
- *  - Verifies the integrity of the newly created backup with `PRAGMA quick_check`.
- *  - Automatically rotates backups, keeping the last N snapshots (default: 7).
+ *  - Uses SQLite's `VACUUM INTO` command to create a consistent snapshot without
+ *    forcing a checkpoint on other database connections.
+ *  - Verifies the snapshot with `PRAGMA quick_check` and `PRAGMA foreign_key_check`.
+ *  - Automatically rotates backups, keeping the last N snapshots (default: 21).
  */
 
+import 'dotenv/config';
 import { DatabaseSync } from 'node:sqlite';
 import path from 'path';
 import fs from 'fs';
+import { randomUUID } from 'node:crypto';
 
 export interface BackupOptions {
   dbPath?: string;
@@ -30,7 +32,9 @@ export interface BackupResult {
 
 export const DEFAULT_DB_PATH = path.join(process.cwd(), 'data', 'homeasy.db');
 export const DEFAULT_BACKUP_DIR = path.join(process.cwd(), 'data', 'backups');
-export const DEFAULT_MAX_RETAINED = 7;
+// Dedicated 12-hour snapshots coexist with the daily pre-maintenance backup
+// and occasional manual snapshots. Keep about a week of recovery points.
+export const DEFAULT_MAX_RETAINED = 21;
 
 /**
  * Creates a formatted timestamp string: YYYY-MM-DD_HHmmss
@@ -50,11 +54,17 @@ function getTimestampString(date = new Date()): string {
  * Creates a verified point-in-time backup snapshot of the SQLite database.
  */
 export function createDatabaseBackup(options: BackupOptions = {}): BackupResult {
-  const dbPath = options.dbPath ?? DEFAULT_DB_PATH;
-  const backupDir = options.backupDir ?? DEFAULT_BACKUP_DIR;
+  // The worker, bot and API all use DATABASE_PATH; backing up a hard-coded
+  // default here could silently snapshot a different database after migration.
+  const dbPath = options.dbPath ?? process.env.DATABASE_PATH ?? DEFAULT_DB_PATH;
+  const backupDir = options.backupDir ?? path.join(path.dirname(path.resolve(dbPath)), 'backups');
   const maxRetained = options.maxRetained ?? DEFAULT_MAX_RETAINED;
+  let pendingPath: string | undefined;
 
   try {
+    if (!Number.isSafeInteger(maxRetained) || maxRetained < 1) {
+      return { success: false, error: 'maxRetained must be a positive safe integer' };
+    }
     // 1. Ensure source database exists
     if (!fs.existsSync(dbPath)) {
       return { success: false, error: `Source database not found at: ${dbPath}` };
@@ -65,54 +75,60 @@ export function createDatabaseBackup(options: BackupOptions = {}): BackupResult 
       fs.mkdirSync(backupDir, { recursive: true });
     }
 
-    // 3. Open connection to flush WAL and execute VACUUM INTO
-    const filename = `homeasy_backup_${getTimestampString()}.db`;
-    const targetPath = path.join(backupDir, filename);
-
-    // If a backup file already exists with this exact second, append a short random token
-    const finalTargetPath = fs.existsSync(targetPath)
-      ? path.join(backupDir, `homeasy_backup_${getTimestampString()}_${Math.random().toString(36).slice(2, 6)}.db`)
-      : targetPath;
-    const finalFilename = path.basename(finalTargetPath);
+    // 3. Create a snapshot. VACUUM INTO reads a consistent transaction view in
+    // WAL mode; forcing a WAL checkpoint first is unnecessary and may block
+    // ongoing writers or readers.
+    // Write to a unique, non-rotatable name. Only publish a .db after verification;
+    // a failed VACUUM or process crash must never look like a usable backup.
+    const finalFilename = `homeasy_backup_${getTimestampString()}_${randomUUID()}.db`;
+    const finalTargetPath = path.join(backupDir, finalFilename);
+    pendingPath = path.join(backupDir, `.${finalFilename}.partial`);
 
     const sourceDb = new DatabaseSync(dbPath);
 
     try {
-      // Force WAL checkpoint to flush all uncommitted journal frames
-      sourceDb.exec('PRAGMA wal_checkpoint(TRUNCATE);');
-
-      // Use VACUUM INTO for a non-blocking, safe online snapshot
+      sourceDb.exec('PRAGMA busy_timeout = 5000');
+      // Use VACUUM INTO for an online, consistent snapshot.
       // Escape single quotes in path if any
-      const escapedPath = finalTargetPath.replace(/'/g, "''");
+      const escapedPath = pendingPath.replace(/'/g, "''");
       sourceDb.exec(`VACUUM INTO '${escapedPath}';`);
     } finally {
       sourceDb.close();
     }
 
     // 4. Verify the backup file exists and has content
-    if (!fs.existsSync(finalTargetPath)) {
-      return { success: false, error: `Backup file was not created at ${finalTargetPath}` };
+    if (!fs.existsSync(pendingPath)) {
+      throw new Error(`Backup file was not created at ${pendingPath}`);
     }
 
-    const stat = fs.statSync(finalTargetPath);
+    const stat = fs.statSync(pendingPath);
     if (stat.size === 0) {
-      fs.unlinkSync(finalTargetPath);
-      return { success: false, error: 'Backup file was created with 0 bytes' };
+      throw new Error('Backup file was created with 0 bytes');
     }
 
-    // 5. Verify backup database integrity
-    const backupDb = new DatabaseSync(finalTargetPath);
+    // 5. Verify both physical consistency and referential integrity.
+    const backupDb = new DatabaseSync(pendingPath, { readOnly: true });
+    let verificationError: string | null = null;
     try {
       const checkRow = backupDb.prepare('PRAGMA quick_check;').get() as { quick_check?: string } | undefined;
-      const integrityOk = checkRow?.quick_check === 'ok';
-      if (!integrityOk) {
-        backupDb.close();
-        fs.unlinkSync(finalTargetPath);
-        return { success: false, error: `Backup file failed integrity check: ${checkRow?.quick_check}` };
+      if (checkRow?.quick_check !== 'ok') {
+        verificationError = `Backup file failed integrity check: ${checkRow?.quick_check}`;
+      } else {
+        const violations = backupDb.prepare('PRAGMA foreign_key_check;').all();
+        if (violations.length > 0) {
+          verificationError = `Backup file contains ${violations.length} foreign key violation(s)`;
+        }
       }
     } finally {
       backupDb.close();
     }
+    if (verificationError) {
+      throw new Error(verificationError);
+    }
+
+    // Same-directory rename publishes a complete, verified recovery point.
+    fs.renameSync(pendingPath, finalTargetPath);
+    pendingPath = undefined;
 
     // 6. Prune older backups keeping maxRetained
     const { retained, pruned } = pruneOldBackups(backupDir, maxRetained);
@@ -127,6 +143,14 @@ export function createDatabaseBackup(options: BackupOptions = {}): BackupResult 
     };
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
+    if (pendingPath) {
+      try {
+        fs.rmSync(pendingPath, { force: true });
+      } catch (cleanupError: unknown) {
+        const cleanupMsg = cleanupError instanceof Error ? cleanupError.message : String(cleanupError);
+        return { success: false, error: `Failed to create database backup: ${msg}; incomplete snapshot cleanup failed: ${cleanupMsg}` };
+      }
+    }
     return { success: false, error: `Failed to create database backup: ${msg}` };
   }
 }
@@ -135,6 +159,9 @@ export function createDatabaseBackup(options: BackupOptions = {}): BackupResult 
  * Keeps the most recent `maxRetained` backups in `backupDir` and deletes the rest.
  */
 export function pruneOldBackups(backupDir: string, maxRetained = DEFAULT_MAX_RETAINED): { retained: number; pruned: number } {
+  if (!Number.isSafeInteger(maxRetained) || maxRetained < 1) {
+    throw new Error('maxRetained must be a positive safe integer');
+  }
   if (!fs.existsSync(backupDir)) return { retained: 0, pruned: 0 };
 
   const files = fs

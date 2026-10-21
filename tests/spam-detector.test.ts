@@ -25,4 +25,14 @@ describe('Non-real-estate spam detector', () => {
       isNonRealEstateSpam('1 bedroom apartment with PCX parking available', '$300 per month, 1BR').isSpam,
     ).toBe(false);
   });
+
+  test('Khmer house sale with a car-related landmark is not mistaken for vehicle spam', () => {
+    const title = 'ផ្ទះដីលក់បន្ទាន់ ជិតឆៀកឡាន វត្តស្វាយធំ';
+    const description = 'ទីតាំងដី: ផ្ទះនៅជិតឆៀកឡាន និងវត្តស្វាយធំ';
+    expect(isNonRealEstateSpam(title, description).isSpam).toBe(false);
+  });
+
+  test('a real Khmer vehicle advert is still filtered', () => {
+    expect(isNonRealEstateSpam('លក់ឡាន', 'មានការគ្រី និង ស្លាកលេខ').isSpam).toBe(true);
+  });
 });

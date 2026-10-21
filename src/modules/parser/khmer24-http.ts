@@ -1,6 +1,8 @@
 import * as cheerio from 'cheerio';
 import type { RawListing } from './schemas';
 import type { PropertyCategory } from '../../config/settings';
+import { calculateDistanceKm, extractCoordinatesFromMapsUrl, isCoordinateInSanityBounds } from '../../config/locations';
+import { isKnownKhmer24AdministrativePin } from './source-geography';
 
 export interface Khmer24HttpTarget {
   category: PropertyCategory;
@@ -234,12 +236,176 @@ function parsePrice(value: unknown): number | undefined {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
 }
 
+/** Keep a source-provided publication timestamp as written; do not infer a timezone. */
+export function khmer24PublishedAt(value: unknown): string | undefined {
+  if (typeof value !== 'string') return undefined;
+  const date = value.trim();
+  if (!/^\d{4}-\d{2}-\d{2}(?:[ T]\d{2}:\d{2}(?::\d{2})?(?:Z|[+-]\d{2}:\d{2})?)?$/.test(date)) return undefined;
+  return Number.isFinite(Date.parse(date)) ? date : undefined;
+}
+
+/** Nuxt's detail payload holds the ORIGINAL publication date separately from
+ * renew_date, which may be an automatic bump and must not reset freshness. */
+function khmer24DetailPost(payload: string, url: string): {
+  post: Record<string, unknown>; resolve: (value: unknown) => unknown;
+} | null {
+  const adId = /-adid-(\d+)(?:\/?(?:[?#]|$))/.exec(url)?.[1];
+  if (!adId || !payload) return null;
+  try {
+    const nodes: unknown = JSON.parse(payload);
+    if (!Array.isArray(nodes)) return null;
+    const resolve = (value: unknown): unknown => typeof value === 'number' &&
+      Number.isSafeInteger(value) && value >= 0 && value < nodes.length ? nodes[value] : value;
+    for (const node of nodes) {
+      if (!node || typeof node !== 'object' || Array.isArray(node)) continue;
+      const post = node as Record<string, unknown>;
+      if (String(resolve(post.id)) !== adId ||
+          !('posted_date' in post || 'renew_date' in post || 'photos' in post || 'specs' in post)) continue;
+      return { post, resolve };
+    }
+  } catch { /* Invalid or missing Nuxt detail payload. */ }
+  return null;
+}
+
+export function khmer24OriginalPostedAt(payload: string, url: string): string | undefined {
+  const detail = khmer24DetailPost(payload, url);
+  return detail ? khmer24PublishedAt(detail.resolve(detail.post.posted_date)) : undefined;
+}
+
+/** Khmer24's 'last-7-days' feed includes renewed ads with old original dates.
+ * Source timestamps without an offset are local Cambodian time (UTC+07).
+ * Missing / unparseable dates are left for the ordinary moderation path. */
+export function isStaleKhmer24Original(postedAt: string | undefined, now = Date.now()): boolean {
+  if (!postedAt || !khmer24PublishedAt(postedAt)) return false;
+  const normalized = postedAt.trim().replace(' ', 'T');
+  const sourceTime = /(?:Z|[+-]\d{2}:\d{2})$/i.test(normalized)
+    ? normalized
+    : `${normalized.length === 10 ? normalized + 'T00:00:00' : normalized}+07:00`;
+  const publishedMs = Date.parse(sourceTime);
+  return Number.isFinite(publishedMs) && now - publishedMs > 30 * 24 * 60 * 60 * 1000;
+}
+
+type SourceGeo = Partial<Pick<RawListing, 'latitude' | 'longitude' | 'maps_url'>>;
+
+function googleMapsLink(value: unknown): string | undefined {
+  if (typeof value !== 'string') return undefined;
+  const link = value.trim().replace(/[),.;]+$/, '');
+  try {
+    const url = new URL(link);
+    if (url.protocol !== 'https:' && url.protocol !== 'http:') return undefined;
+    const hostname = url.hostname.toLowerCase();
+    if (hostname === 'maps.app.goo.gl' || hostname === 'goo.gl' && url.pathname.startsWith('/maps/') ||
+        /^(?:(?:www|maps)\.)?google\.(?:com(?:\.[a-z]{2})?|co\.[a-z]{2}|[a-z]{2,3})$/.test(hostname) &&
+        (url.pathname.startsWith('/maps') || hostname.startsWith('maps.') && url.pathname === '/' &&
+          ['q', 'query', 'll'].some((key) => url.searchParams.has(key)))) return url.toString();
+  } catch { /* Ignore text that is not a direct Google Maps URL. */ }
+  return undefined;
+}
+
+/** Only literal, property-labelled map links; never infer a pin from "5 minutes to Pub Street". */
+function propertyMapFromText(description: string): string | undefined {
+  for (const line of description.split(/\r?\n/)) {
+    const match = /https?:\/\/[^\s<>"']+/i.exec(line);
+    if (!match) continue;
+    const link = googleMapsLink(match[0]);
+    if (!link) continue;
+    const before = line.slice(0, match.index).trim();
+    if (/\b(?:\d+\s*(?:min(?:ute)?s?|km|meters?)\b|near|close to|walking distance|landmark|pub street)\b/i.test(before)) continue;
+    if (/(?:exact |property |house |villa |apartment )?(?:location|address|pin|google maps?|map link)\s*[:\-–]?\s*$/i.test(before) ||
+        /(?:ទីតាំង(?:ផ្ទះ)?|អាសយដ្ឋាន|ផែនទី)\s*[:៖\-–]?\s*$/.test(before)) return link;
+  }
+  return undefined;
+}
+
+/** A Maps camera centre (@lat,lng) is not evidence of the property's position.
+ * Only a selected Maps place or explicit coordinate search can supply a pin. */
+function propertyPinFromMapsLink(url: string): { latitude: number; longitude: number } | null {
+  let decoded = url;
+  try { decoded = decodeURIComponent(url); } catch { /* Ignore malformed URL encoding. */ }
+  if (!/!3d-?\d+\.\d{4,}!4d-?\d+\.\d{4,}|[?&](?:q|query)=-?\d+\.\d{4,},-?\d+\.\d{4,}/i.test(decoded)) {
+    return null;
+  }
+  return extractCoordinatesFromMapsUrl(url);
+}
+
+/** Only ad-specific GPS and explicitly labelled property maps are exact.
+ * Khmer24's post.location.map belongs to an administrative location; the
+ * same coordinates can occur in unrelated listings and must remain coarse. */
+export function khmer24SourceLocation(
+  payload: string, url: string, city: Khmer24HttpTarget['city'], description = '',
+): SourceGeo {
+  const detail = khmer24DetailPost(payload, url);
+  const resolve = detail?.resolve ?? ((value: unknown) => value);
+  const post = detail?.post ?? {};
+  const asRecord = (value: unknown): Record<string, unknown> => {
+    const resolved = resolve(value);
+    return resolved && typeof resolved === 'object' && !Array.isArray(resolved)
+      ? resolved as Record<string, unknown> : {};
+  };
+  const map = asRecord(post.map);
+  // post.location.map is part of the administrative-area object, not an
+  // ad-specific marker. Multiple unrelated Siem Reap listings share its x/y
+  // (including homes in different districts); never promote it to house GPS.
+  const nested = [map, asRecord(post.geo), asRecord(post.coordinates), asRecord(post.map_location)];
+  const candidates = detail ? [post, ...nested] : [];
+  let pin: { latitude: number; longitude: number } | undefined;
+  for (const candidate of candidates) {
+    const rawLat = resolve(candidate.latitude ?? candidate.lat ?? candidate.map_latitude ?? candidate.map_lat);
+    const rawLng = resolve(candidate.longitude ?? candidate.lng ?? candidate.lon ?? candidate.map_longitude ?? candidate.map_lng);
+    const lat = typeof rawLat === 'number' || typeof rawLat === 'string' ? Number(rawLat) : NaN;
+    const lng = typeof rawLng === 'number' || typeof rawLng === 'string' ? Number(rawLng) : NaN;
+    // Four decimal places or better: do not mislabel coarse districts as an exact property pin.
+    if (!/^-?\d+\.\d{4,}$/.test(String(rawLat)) || !/^-?\d+\.\d{4,}$/.test(String(rawLng))) continue;
+    if (Number.isFinite(lat) && Number.isFinite(lng) && isCoordinateInSanityBounds(lat, lng, city)
+        && !isKnownKhmer24AdministrativePin(lat, lng)) {
+      pin = { latitude: lat, longitude: lng };
+      break;
+    }
+  }
+  const urlValues = [post.maps_url, post.map_url, post.google_maps_url, post.google_map_url,
+    map.url, map.link, map.maps_url, map.google_maps_url];
+  const textMap = propertyMapFromText(description);
+  const sourceMaps = urlValues.map(resolve).map(googleMapsLink).filter((value): value is string => Boolean(value));
+  // A camera-only/coarse/contradictory source URL must not mask a valid
+  // property-labelled map link found in the description.
+  const mapCandidates = [...new Set([...sourceMaps, ...(textMap ? [textMap] : [])])];
+  let validMapsUrl: string | undefined;
+  let selectedPin = pin;
+  let coordinateFreeMapUrl: string | undefined;
+  for (const mapsUrl of mapCandidates) {
+    const anyMapCoordinates = extractCoordinatesFromMapsUrl(mapsUrl);
+    const urlPin = propertyPinFromMapsLink(mapsUrl);
+    const safeUrlPin = urlPin && isCoordinateInSanityBounds(urlPin.latitude, urlPin.longitude, city)
+      && !isKnownKhmer24AdministrativePin(urlPin.latitude, urlPin.longitude) ? urlPin : null;
+    // A URL with camera-only (@/ll), imprecise or out-of-city coordinates
+    // cannot be passed through: canonical ingestion would mark them exact.
+    if (anyMapCoordinates && !safeUrlPin) continue;
+    if (pin && safeUrlPin &&
+        calculateDistanceKm(pin.latitude, pin.longitude, safeUrlPin.latitude, safeUrlPin.longitude) >= 0.25) continue;
+    if (safeUrlPin) {
+      validMapsUrl = mapsUrl;
+      selectedPin = pin ?? safeUrlPin;
+      break;
+    }
+    // Keep a Google Maps shortlink or place URL without coordinates for
+    // navigation, but continue looking for an explicit GPS link.
+    coordinateFreeMapUrl ??= mapsUrl;
+  }
+  validMapsUrl ??= coordinateFreeMapUrl;
+  return {
+    ...(selectedPin ? { latitude: selectedPin.latitude, longitude: selectedPin.longitude } : {}),
+    ...(validMapsUrl ? { maps_url: validMapsUrl } : {}),
+  };
+}
+
 export function parseKhmer24DetailHtml(
   html: string,
   url: string,
   target: Khmer24HttpTarget,
 ): RawListing {
   const $ = cheerio.load(html);
+  const nuxtPayload = $('#__NUXT_DATA__').text();
+  const originalPostedAt = khmer24OriginalPostedAt(nuxtPayload, url);
   for (const element of $('script[type="application/ld+json"]').toArray()) {
     try {
       const raw = JSON.parse($(element).text()) as unknown;
@@ -263,11 +429,23 @@ export function parseKhmer24DetailHtml(
         const images = Array.isArray(item.image) ? item.image.map(String) : item.image ? [String(item.image)] : [];
         const phone = phones.find((entry: string) => !entry.toUpperCase().includes('X')) ?? phones[0];
         const description = String(item.description ?? '');
+        const sourceLocation = khmer24SourceLocation(nuxtPayload, url, target.city, description);
+        const postedAt = originalPostedAt ?? khmer24PublishedAt(item.datePublished)
+          ?? khmer24PublishedAt($('meta[property="article:published_time"]').attr('content'))
+          ?? khmer24PublishedAt($('meta[itemprop="datePublished"]').attr('content'))
+          ?? khmer24PublishedAt($('meta[name="datePublished"]').attr('content'));
         return {
           title: String(item.name),
+          source_title: String(item.name),
           description,
           raw_text: description,
           price: parsePrice(offer.price),
+          source_price: parsePrice(offer.price),
+          ...(parsePrice(offer.price) ? {
+            source_price_currency: offer.priceCurrency === 'KHR' ? 'KHR' as const :
+              offer.priceCurrency === 'USD' ? 'USD' as const : undefined,
+            source_price_origin: 'khmer24_json_ld_offer' as const,
+          } : {}),
           currency: offer.priceCurrency === 'KHR' ? 'KHR' : 'USD',
           type: target.type ?? 'rent',
           category: target.category,
@@ -275,6 +453,8 @@ export function parseKhmer24DetailHtml(
           city: target.city,
           photos: images,
           phone: phone || undefined,
+          posted_at: postedAt,
+          ...sourceLocation,
           url,
           source_url: url,
         };

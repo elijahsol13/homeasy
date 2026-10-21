@@ -460,13 +460,6 @@
 - **Изменения 2026-10-07 (tracking service):** вынесен `TrackingLinkService` (`src/services/tracking.service.ts`) — используется и API-роутом, и CLI. Добавлены dev/admin CLI: `npm run tracking:mint` и `npm run tracking:inspect`. CLI работают напрямую с БД/сервисом, не требуют Telegram initData.
 - **Следующие шаги:** реальный E2E-тест: `tracking:mint` → открыть ссылку в Telegram → Mini App → `tracking:inspect`; генерация tracked links из реальных outbound-потоков (Facebook reply при demand outreach, share-кнопка в Mini App).
 
-### 2026-10-09 — Консолидация Phase 6A и граница contact bug
-
-- **Стадия:** принятые изменения canonical ingestion/read path, identity, tracking и Mini App собраны в отдельной локальной integration-ветке для воспроизводимой проверки; production merge/deploy не выполнялся.
-- **Продуктовое решение:** основной путь остаётся browse/search-first. CTA «Мне интересно» должен создавать лёгкую цепочку `Request → Match/Offer → ContactGrant`, после которой раскрываются Chat и Call. Demand scraping остаётся дополнительным acquisition-каналом.
-- **Известный баг:** разрешение Telegram-аккаунта по камбоджийскому телефонному номеру зависит от представления локального номера. Для реального короткого номера ручной `t.me` URL и Mini App bridge показывали разное поведение. Текущий Telegram formatter и regression tests сохранены, временный diagnostic UI удалён. Новые эвристики до отдельного воспроизводимого исследования не добавляются.
-- **Граница релиза:** API, canary allowlist и глобальный `LISTING_READ_PATH=legacy` не меняются. Ветка сначала должна пройти полный test/build/integrity/parity gate и ревью состава файлов.
-
 ---
 
 ## Шаблон новой записи

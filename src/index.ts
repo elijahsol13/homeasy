@@ -5,7 +5,7 @@ import { createContainer } from './container';
 import { createBot } from './modules/bot/bot';
 import { USER_COMMANDS } from './modules/bot/commands';
 import { runMigrations } from './database/migrate';
-import { startWorker, stopWorker } from './services/scheduler';
+import { startWorker, stopWorkerAndWait } from './services/scheduler';
 import { closeDatabase } from './database/db';
 import { env } from './config/env';
 
@@ -58,8 +58,9 @@ async function main(): Promise<void> {
 
   const shutdown = async (signal: string) => {
     console.log(`\n⚡ Received ${signal} — shutting down gracefully...`);
-    stopWorker();
+    await stopWorkerAndWait();
     bot.stop();
+    await container.canonicalReviewAlertsService.stop();
     await container.analyticsRepo.shutdown();
     closeDatabase(container.db);
     console.log('✅ Bye!');
@@ -72,6 +73,7 @@ async function main(): Promise<void> {
   console.log('🤖 Starting bot in polling mode...');
   await bot.start({
     onStart: (info) => {
+      if (env.ADMIN_REVIEW_ALERTS_ENABLED) container.canonicalReviewAlertsService.start();
       console.log(`✅ Bot @${info.username} is running`);
       console.log('   Press Ctrl+C to stop.\n');
     },

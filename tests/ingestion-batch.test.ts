@@ -2,7 +2,8 @@ import { DatabaseSync } from 'node:sqlite';
 import { createContainer } from '../src/container';
 import { runMigrations } from '../src/database/migrate';
 import type { SourceAdapter, SourceRunContext, NormalizedSourceItem } from '../src/modules/parser/ingestion-contracts';
-import { FacebookLiveAdapter } from '../src/modules/parser/live-source-adapters';
+import { FacebookLiveAdapter, Khmer24LiveAdapter, facebookGroupEnvelope } from '../src/modules/parser/live-source-adapters';
+import { ReplayAdapter, type ClassifiedReplayPost } from '../src/modules/parser/replay-adapter';
 import { RepostClusteringService } from '../src/modules/parser/repost-clustering';
 import { CanonicalShadowService } from '../src/modules/parser/canonical-dedupe';
 
@@ -37,6 +38,80 @@ describe('IngestionService.ingestBatch', () => {
 
   const context = (ingestionMethod: SourceRunContext['ingestionMethod']): SourceRunContext => ({
     runType: 'REPLAY', ingestionMethod, observedAt: '2026-10-07T00:00:00.000Z',
+  });
+
+  it('persists and reconciles Khmer24 room counts without losing them on a partial refresh', async () => {
+    const adapter = (rawText:string, rooms?:{bedrooms:number; bathrooms:number}, fromJson?:{bedrooms:number; bathrooms:number}) =>
+      new Khmer24LiveAdapter(async function* () {
+        yield {sourceId:'siem-reap',sourceName:'Khmer24',classification:'HOUSING_SUPPLY' as const,listing:{
+          title:'Apartment Wat Bo',description:'For rent $450 monthly',raw_text:rawText,
+          source_url:'https://www.khmer24.com/en/apartment-adid-991123',city:'siem_reap' as const,
+          photos:[],price:450,currency:'USD' as const,category:'apartment' as const,property_type:'Apartment',
+          ...rooms,listing_facts_json:JSON.stringify({title_en:'Apartment Wat Bo',description_en:'For rent $450 monthly',
+            price:450,currency:'USD',category:'apartment',property_type:'Apartment',city:'siem_reap',sangkat:'Wat Bo',offer_type:'rent',...fromJson}),
+        }};
+      });
+    const run = (rawText:string, rooms?:{bedrooms:number; bathrooms:number}, fromJson?:{bedrooms:number; bathrooms:number},
+      observedAt='2026-10-07T00:00:00Z') => ingestion.ingestBatch(adapter(rawText,rooms,fromJson),{...context('KHMER24_SCRAPER'),runType:'DISCOVERY',observedAt});
+
+    await run('Apartment Wat Bo for rent $450 3 bedrooms 2 bathrooms',undefined,{bedrooms:3,bathrooms:2});
+    const initial = db.prepare('SELECT id,property_id,bedrooms,bathrooms,listing_facts_json FROM canonical_listings').get() as {
+      id:number;property_id:number;bedrooms:number|null;bathrooms:number|null;listing_facts_json:string;
+    };
+    expect(initial).toMatchObject({bedrooms:3,bathrooms:2});
+    expect(JSON.parse(initial.listing_facts_json)).toMatchObject({bedrooms:3,bathrooms:2});
+
+    const updated = await run('Apartment Wat Bo for rent $450 now 4 bedrooms 3 bathrooms',{bedrooms:4,bathrooms:3},
+      {bedrooms:3,bathrooms:2},'2026-10-08T00:00:00Z');
+    expect(updated).toMatchObject({updatedSourceItems:1,canonicalBindingsUpdated:1});
+    expect(db.prepare('SELECT id,property_id,bedrooms,bathrooms FROM canonical_listings').get()).toEqual({
+      id:initial.id,property_id:initial.property_id,bedrooms:4,bathrooms:3,
+    });
+
+    const partial = await run('Apartment Wat Bo for rent $450 refresh missing room counts',undefined,undefined,'2026-10-09T00:00:00Z');
+    expect(partial).toMatchObject({updatedSourceItems:1,canonicalBindingsUpdated:1});
+    const after = db.prepare('SELECT id,property_id,bedrooms,bathrooms,listing_facts_json FROM canonical_listings').get() as typeof initial;
+    expect(after).toMatchObject({id:initial.id,property_id:initial.property_id,bedrooms:4,bathrooms:3});
+    expect(JSON.parse(after.listing_facts_json)).toMatchObject({bedrooms:4,bathrooms:3});
+    expect(db.prepare('SELECT COUNT(*) n FROM canonical_listing_source_occurrences WHERE is_current=1').get()).toEqual({n:1});
+  });
+
+  it('publishes a newly verified Khmer24 map pin without a text/media edit or extra AI processing', async () => {
+    let aiCalls = 0;
+    const ingest = (latitude?: number, longitude?: number, observedAt = '2026-10-07T00:00:00Z') =>
+      ingestion.ingestBatch(new Khmer24LiveAdapter(async function* () {
+        yield { sourceId: 'siem-reap', sourceName: 'Khmer24', classification: 'HOUSING_SUPPLY' as const,
+          listing: { title: 'Villa for rent in Sala Kamreuk', description: 'Villa for $700 monthly',
+            raw_text: 'Villa for $700 monthly 3 bedrooms 4 bathrooms',
+            source_url: 'https://www.khmer24.com/en/villa-for-rent-adid-14071624',
+            city: 'siem_reap' as const, location: 'Sala Kamreuk', price: 700, currency: 'USD' as const,
+            category: 'house' as const, property_type: 'Villa', bedrooms: 3, bathrooms: 4,
+            photos: ['https://example.com/villa.jpg'], latitude, longitude,
+            listing_facts_json: JSON.stringify({ offer_type: 'rent', sangkat: 'Sala Kamreuk' }),
+          },
+        };
+      }, async (_raw, item) => { aiCalls++; return item; }),
+      { ...context('KHMER24_SCRAPER'), runType: 'DISCOVERY', observedAt });
+
+    const first = await ingest();
+    expect(first.newSourceItems).toBe(1);
+    const initial = db.prepare('SELECT id,listing_facts_json FROM canonical_listings').get() as {id:number;listing_facts_json:string};
+    expect(JSON.parse(initial.listing_facts_json).latitude).toBeUndefined();
+    const added = await ingest(13.360123, 103.862345, '2026-10-08T00:00:00Z');
+    expect(added).toMatchObject({ unchangedSourceItems: 1, canonicalBindingsUpdated: 1 });
+    let row = db.prepare('SELECT id,listing_facts_json FROM canonical_listings').get() as typeof initial;
+    expect(row.id).toBe(initial.id);
+    expect(JSON.parse(row.listing_facts_json)).toMatchObject({ latitude: 13.360123, longitude: 103.862345 });
+    const absent = await ingest(undefined, undefined, '2026-10-09T00:00:00Z');
+    expect(absent).toMatchObject({ unchangedSourceItems: 1, canonicalBindingsUpdated: 0 });
+    row = db.prepare('SELECT id,listing_facts_json FROM canonical_listings').get() as typeof initial;
+    expect(JSON.parse(row.listing_facts_json)).toMatchObject({ latitude: 13.360123, longitude: 103.862345 });
+    const moved = await ingest(13.360223, 103.862445, '2026-10-10T00:00:00Z');
+    expect(moved).toMatchObject({ unchangedSourceItems: 1, canonicalBindingsUpdated: 1 });
+    row = db.prepare('SELECT id,listing_facts_json FROM canonical_listings').get() as typeof initial;
+    expect(JSON.parse(row.listing_facts_json)).toMatchObject({ latitude: 13.360223, longitude: 103.862445 });
+    expect(aiCalls).toBe(1);
+    expect(db.prepare('SELECT COUNT(*) n FROM source_item_versions').get()).toEqual({ n: 1 });
   });
 
   it('keeps one source item and preserves the previous version after an edit', async () => {
@@ -295,6 +370,55 @@ describe('IngestionService.ingestBatch', () => {
     expect(db.prepare('SELECT COUNT(*) count FROM processing_run_sources').get()).toEqual({ count: 2 });
   });
 
+  it('identifies Camoufox and BrightData sightings as the same post, including rotating signed media URLs', async () => {
+    const target = { name: 'Siem Reap Rentals', url: 'https://www.facebook.com/groups/654321/' };
+    const postUrl = 'https://www.facebook.com/groups/654321/posts/123456/';
+    const camoufoxUrl = 'https://www.facebook.com/share/p/opaque-share-token/';
+    const rawText = '  Apartment for rent $400 monthly\nContact owner\n';
+    const photoA = 'https://scontent-a.fbcdn.net/v/t39.30808-6/photo.jpg?sig=one';
+    const photoB = 'https://scontent-b.fbcdn.net/v/t39.30808-6/photo.jpg?sig=two';
+    const live = new FacebookLiveAdapter(async function* () {
+      yield facebookGroupEnvelope({ source_url: camoufoxUrl, facebook_post_id: '123456', title: 'Translated apartment',
+        raw_text: rawText, city: 'siem_reap', is_real_estate: true, photos: [photoA] }, target);
+    });
+    const post: ClassifiedReplayPost = { id: '123456', groupUrl: target.url, groupName: target.name,
+      postUrl, content: rawText, classification: 'HOUSING_SUPPLY', photos: [photoB] };
+    class FixtureReplay extends ReplayAdapter {
+      async *fetchNewItems(_ctx: SourceRunContext): AsyncIterable<ClassifiedReplayPost> { yield post; }
+    }
+    const replay = new FixtureReplay('fixture-not-read');
+    const firstNormalized = live.normalize(facebookGroupEnvelope({ source_url: camoufoxUrl, facebook_post_id: '123456',
+      raw_text: rawText, city: 'siem_reap', photos: [photoA] }, target));
+    const secondNormalized = replay.normalize(post);
+    expect(firstNormalized.sourceIdentity.externalSourceId).toBe(secondNormalized.sourceIdentity.externalSourceId);
+    expect(firstNormalized.externalId).toBe(secondNormalized.externalId);
+    expect(firstNormalized.rawText).toBe(rawText);
+    expect(firstNormalized.contentHash).toBe(secondNormalized.contentHash);
+    expect(firstNormalized.mediaHash).toBe(secondNormalized.mediaHash);
+
+    const first = await ingestion.ingestBatch(live, {
+      ...context('CAMOUFOX'), runType: 'DISCOVERY', observedAt: '2026-10-07T00:00:00Z',
+    });
+    const second = await ingestion.ingestBatch(replay, {
+      ...context('BRIGHTDATA'), runType: 'DISCOVERY', observedAt: '2026-10-08T00:00:00Z',
+    });
+    expect(first.newSourceItems).toBe(1);
+    expect(second).toMatchObject({ newSourceItems: 0, unchangedSourceItems: 1 });
+    expect(db.prepare('SELECT COUNT(*) n FROM source_registry').get()).toEqual({ n: 1 });
+    expect(db.prepare('SELECT COUNT(*) n FROM source_items').get()).toEqual({ n: 1 });
+    expect(db.prepare('SELECT raw_text FROM source_item_versions ORDER BY id').all()).toEqual([{ raw_text: rawText }]);
+    expect(db.prepare('SELECT last_seen_at FROM source_items').get()).toEqual({ last_seen_at: '2026-10-08T00:00:00Z' });
+
+    post.content = `${rawText}Price updated`;
+    const updated = await ingestion.ingestBatch(replay, {
+      ...context('BRIGHTDATA'), runType: 'DISCOVERY', observedAt: '2026-10-09T00:00:00Z',
+    });
+    expect(updated).toMatchObject({ newSourceItems: 0, updatedSourceItems: 1 });
+    expect(db.prepare('SELECT raw_text FROM source_item_versions ORDER BY id').all()).toEqual([
+      { raw_text: rawText }, { raw_text: `${rawText}Price updated` },
+    ]);
+  });
+
   it('dry-run validates and counts without changing the database', async () => {
     const before = db.prepare('SELECT COUNT(*) count FROM source_registry').get();
     const result = await ingestion.ingestBatch(new FixtureAdapter({ id: 'x', text: 'Phone: 012 345 678' }), {
@@ -310,7 +434,7 @@ describe('IngestionService.ingestBatch', () => {
     let processCalls = 0;
     const fetcher = async function* () {
       yield { sourceId: 'group-1', sourceName: 'Group 1', groupId: 'group-1', groupName: 'Group 1',
-        listing: { title: '2BR apartment Wat Bo', description: 'For rent $400 monthly', raw_text: 'For rent $400 monthly',
+        listing: { title: '2BR apartment Wat Bo', description: 'For rent $400 monthly', raw_text: 'For rent $400 monthly', is_real_estate: true,
           source_url: 'https://facebook.com/groups/group-1/posts/123', city: 'siem_reap', photos: ['https://img.example/a.jpg'] } };
     };
     const adapter = new FacebookLiveAdapter(fetcher, async (_raw, item) => {
@@ -366,7 +490,7 @@ describe('IngestionService.ingestBatch', () => {
     let processCalls = 0;
     const fetcher = async function* (photo: string) {
       yield { sourceId: 'group-media', sourceName: 'Media Group', groupId: 'group-media',
-        listing: { title: '2BR apartment Wat Bo', description: 'For rent $400 monthly', raw_text: 'For rent $400 monthly',
+        listing: { title: '2BR apartment Wat Bo', description: 'For rent $400 monthly', raw_text: 'For rent $400 monthly', is_real_estate: true,
           source_url: 'https://facebook.com/groups/group-media/posts/777', city: 'siem_reap', photos: [photo] } };
     };
     const adapter = (photo: string) => new FacebookLiveAdapter((ctx) => fetcher(photo), async (_raw, item) => {
@@ -424,7 +548,7 @@ describe('IngestionService.ingestBatch', () => {
   it('ingests a new repost into the existing repost cluster and canonical Listing', async () => {
     const fetcher = async function* (externalId: string) {
       yield { sourceId:'fb-repost-group',sourceName:'FB Reposts',groupId:'fb-repost-group',groupName:'FB Reposts',
-        listing:{title:'2BR apartment Wat Bo',description:'For rent $400 monthly, property code WAT-42, phone 012 345 678',
+        listing:{title:'2BR apartment Wat Bo',description:'For rent $400 monthly, property code WAT-42, phone 012 345 678',is_real_estate:true,
           raw_text:'2BR apartment Wat Bo for rent $400 monthly property code WAT-42 phone 012 345 678',
           source_url:`https://facebook.com/groups/fb-repost-group/posts/${externalId}`,city:'siem_reap',photos:['https://img.example/repost.jpg'],
           price:400,currency:'USD',category:'apartment',property_type:'Apartment',bedrooms:2,location:'Wat Bo',
@@ -458,7 +582,7 @@ describe('IngestionService.ingestBatch', () => {
     let extractionCalls=0;
     const fetcher = async function* (price:number) {
       yield {sourceId:'fb-price-group',sourceName:'Price Group',groupId:'fb-price-group',groupName:'Price Group',
-        listing:{title:'2BR apartment Wat Bo',description:`For rent $${price} monthly`,raw_text:`2BR apartment Wat Bo for rent $${price} monthly`,
+        listing:{title:'2BR apartment Wat Bo',description:`For rent $${price} monthly`,raw_text:`2BR apartment Wat Bo for rent $${price} monthly`,is_real_estate:true,
           source_url:'https://facebook.com/groups/fb-price-group/posts/price-123',city:'siem_reap',price,currency:'USD',category:'apartment',property_type:'Apartment',bedrooms:2,
           photos:[],location:'Wat Bo',listing_facts_json:JSON.stringify({title_en:'2BR apartment Wat Bo',description_en:`For rent $${price} monthly`,price,currency:'USD',
             category:'apartment',property_type:'Apartment',bedrooms:2,city:'siem_reap',sangkat:'Wat Bo',offer_type:'rent'})}};
@@ -491,7 +615,7 @@ describe('IngestionService.ingestBatch', () => {
 
   it('recovers after an interruption immediately after SourceItem persistence', async () => {
     const fetcher=async function*(){yield {sourceId:'recovery-group',sourceName:'Recovery',groupId:'recovery-group',groupName:'Recovery',
-      listing:{title:'2BR apartment Wat Bo',description:'For rent $400 monthly',raw_text:'2BR apartment Wat Bo for rent $400 monthly',
+      listing:{title:'2BR apartment Wat Bo',description:'For rent $400 monthly',raw_text:'2BR apartment Wat Bo for rent $400 monthly',is_real_estate:true,
         source_url:'https://facebook.com/groups/recovery-group/posts/1',city:'siem_reap',photos:[]}};};
     const adapter=new FacebookLiveAdapter(fetcher);
     const failOnce=jest.spyOn(RepostClusteringService.prototype,'runIncremental').mockImplementationOnce(()=>{throw new Error('simulated interruption');});
@@ -511,7 +635,7 @@ describe('IngestionService.ingestBatch', () => {
 
   it('recovers after repost assignment when canonical occurrence materialization is interrupted', async () => {
     const fetcher=async function*(){yield {sourceId:'canonical-recovery',sourceName:'Canonical Recovery',groupId:'canonical-recovery',groupName:'Canonical Recovery',
-      listing:{title:'2BR apartment Wat Bo',description:'For rent $400 monthly',raw_text:'2BR apartment Wat Bo for rent $400 monthly',
+      listing:{title:'2BR apartment Wat Bo',description:'For rent $400 monthly',raw_text:'2BR apartment Wat Bo for rent $400 monthly',is_real_estate:true,
         source_url:'https://facebook.com/groups/canonical-recovery/posts/1',city:'siem_reap',photos:[]}};};
     const adapter=new FacebookLiveAdapter(fetcher);
     const failOnce=jest.spyOn(CanonicalShadowService.prototype,'reconcileSourceItemsScoped').mockImplementationOnce(()=>{throw new Error('simulated occurrence interruption');});

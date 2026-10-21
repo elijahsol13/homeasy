@@ -3,6 +3,7 @@ import { writeFileSync } from 'node:fs';
 import { PropertiesRepository, type Property, type PropertyFilterOptions } from '../src/database/repositories/properties.repo';
 import { CanonicalListingRepository } from '../src/database/repositories/canonical-listing.repo';
 import { snapshotLegacyProperties } from '../src/database/legacy-write-guard';
+import { measureAliasIdentityCoverage } from '../src/database/canonical-alias-parity';
 
 const dbPath = process.env.PHASE6A_DB ?? 'data/rebuild/phase6a-checkpoint-20261007.db';
 const db = new DatabaseSync(dbPath, { readOnly: true });
@@ -57,16 +58,31 @@ function matchScore(a: Property, b: Property): number {
 }
 function compare(a: Property[], b: Property[]) {
   const unmatched = new Set(b.map((_, i) => i)); const pairs: Array<[number, number, number]> = [];
+  const matchedLegacy = new Set<number>();
+  // Reserve exact source matches across the entire dataset before approximate matching.
+  // Otherwise an early phone/title match can consume the exact candidate of a later row.
+  const byIdentity = new Map<string, number[]>();
+  b.forEach((item, index) => {
+    const identity = sourceIdentity(item.original_url||item.source_url);
+    if (identity) byIdentity.set(identity, [...(byIdentity.get(identity)??[]), index]);
+  });
   for (let ai=0; ai<a.length; ai++) {
     const identity=sourceIdentity(a[ai].original_url||a[ai].source_url);
-    const exact=identity ? b.findIndex((item)=>sourceIdentity(item.original_url||item.source_url)===identity) : -1;
-    if (exact>=0) { pairs.push([ai,exact,1.1]); unmatched.delete(exact); continue; }
+    const exact=identity ? (byIdentity.get(identity)??[]).find((bi)=>unmatched.has(bi)) : undefined;
+    if (exact!==undefined) { pairs.push([ai,exact,1.1]); unmatched.delete(exact); matchedLegacy.add(ai); }
+  }
+  for (let ai=0; ai<a.length; ai++) {
+    if (matchedLegacy.has(ai)) continue;
     let best = -1; let bestScore = 0;
     for (const bi of unmatched) { const score = matchScore(a[ai], b[bi]); if (score > bestScore) { best=bi; bestScore=score; } }
-    if (best >= 0 && bestScore >= 0.55) { pairs.push([ai,best,bestScore]); unmatched.delete(best); }
+    if (best >= 0 && bestScore >= 0.55) { pairs.push([ai,best,bestScore]); unmatched.delete(best); matchedLegacy.add(ai); }
   }
-  const matchedA = new Set(pairs.map(([ai]) => ai));
-  return { pairs, legacyOnly: a.filter((_,i)=>!matchedA.has(i)), canonicalOnly: [...unmatched].map(i=>b[i]) };
+  const legacyOnly = a.filter((_,i)=>!matchedLegacy.has(i));
+  const canonicalOnly = [...unmatched].map(i=>b[i]);
+  if (pairs.length + legacyOnly.length !== a.length || pairs.length + canonicalOnly.length !== b.length) {
+    throw new Error('Parity comparison violated one-to-one identity matching');
+  }
+  return { pairs, legacyOnly, canonicalOnly };
 }
 function summary(property: Property) {
   const dto = { id:property.id, title:property.title, price:property.price, category:property.category, bedrooms:property.bedrooms,
@@ -90,9 +106,11 @@ const queryResults = queries.map(({name,options}) => {
   for(let i=0;i<5;i++){const started=performance.now();c=canonical.searchProperties({...options,limit:500});canonicalTimes.push({wall:performance.now()-started,diagnostics:{...canonical.lastDiagnostics}});}
   const canonicalDiag=canonicalTimes[Math.floor(canonicalTimes.length/2)]!.diagnostics;
   const comparison=compare(l.items,c.items);
+  const aliasIdentityCoverage=measureAliasIdentityCoverage(db,l.items.map(item=>item.id),c.items.map(item=>item.id));
   return { name, legacy:{count:l.total, returned:l.items.length, latencyMs:+median(legacyTimes).toFixed(2),runs:legacyTimes.map(x=>+x.toFixed(2))},
     canonical:{count:c.total, returned:c.items.length, matchTiers:c.items.reduce((acc,item)=>{const tier=item.match_tier??'UNKNOWN';acc[tier]++;return acc;},{EXACT:0,PROBABLE:0,UNKNOWN:0} as Record<'EXACT'|'PROBABLE'|'UNKNOWN',number>),cityTiers:c.items.reduce((acc,item)=>{const tier=item.city_tier??'UNKNOWN_CITY';acc[tier]++;return acc;},{EXACT_CITY:0,PROBABLE_CITY:0,UNKNOWN_CITY:0} as Record<'EXACT_CITY'|'PROBABLE_CITY'|'UNKNOWN_CITY',number>),latencyMs:+median(canonicalTimes.map(x=>x.wall)).toFixed(2),runs:canonicalTimes.map(x=>({wallMs:+x.wall.toFixed(2),...x.diagnostics})),...canonicalDiag},
     overlap:comparison.pairs.length, overlapPercent:l.items.length ? +(comparison.pairs.length/l.items.length*100).toFixed(1) : null,
+    aliasIdentityCoverage,
     canonicalOnlyCount:comparison.canonicalOnly.length, legacyOnlyCount:comparison.legacyOnly.length,
     top10Differences:{legacyOnly:comparison.legacyOnly.slice(0,10).map(summary),canonicalOnly:comparison.canonicalOnly.slice(0,10).map(summary)},
     sampledCanonicalOnly:comparison.canonicalOnly.slice(0,10).map(summary),
@@ -116,6 +134,13 @@ const allLegacy=legacy.searchProperties({city:'siem_reap',type:'rent',limit:100}
 const allCanonical=canonical.searchProperties({city:'siem_reap',type:'rent',limit:500});
 const cityCandidates=canonical.searchProperties({city:'siem_reap',limit:500});
 const overall=compare(allLegacy.items,allCanonical.items);
+const overallAliasIdentityCoverage=measureAliasIdentityCoverage(db,allLegacy.items.map(item=>item.id),allCanonical.items.map(item=>item.id));
+const claimedSourceIdentities = new Map<string, number[]>();
+for (const [legacyIndex] of overall.pairs) {
+  const item = allLegacy.items[legacyIndex];
+  const identity = sourceIdentity(item.original_url||item.source_url);
+  if (identity) claimedSourceIdentities.set(identity,[...(claimedSourceIdentities.get(identity)??[]),item.id]);
+}
 const legacyOnlyAudit=overall.legacyOnly.map((property)=>{
   const identity=sourceIdentity(property.original_url||property.source_url);
   let sourceItems:Record<string,unknown>[]=[];
@@ -126,13 +151,15 @@ const legacyOnlyAudit=overall.legacyOnly.map((property)=>{
     FROM canonical_listing_source_occurrences o LEFT JOIN canonical_listings l ON l.id=o.listing_id WHERE o.source_item_id IN (${ids.map(()=>'?').join(',')}) ORDER BY o.is_current DESC,o.id`).all(...ids) as Record<string,unknown>[]:[];
   const identityCanonicalCandidates=allCanonical.items.filter((x)=>identity&&sourceIdentity(x.original_url||x.source_url)===identity).map((x)=>x.id);
   const currentCanonicalCandidates=occurrences.filter((x)=>Number(x.is_current)===1).map((x)=>Number(x.listing_id));
+  const claimedByLegacyIds = identity ? (claimedSourceIdentities.get(identity)??[]) : [];
   const classification=sourceItems.some((x)=>x.classification==='IRRELEVANT')?'IRRELEVANT'
     :sourceItems.length===0?'NO_SOURCE_ITEM'
-      :identityCanonicalCandidates.length?'COMPARATOR_MISMATCH'
+      :identityCanonicalCandidates.length && claimedByLegacyIds.length?'DUPLICATE_LEGACY_SOURCE_NEEDS_REVIEW'
+        :identityCanonicalCandidates.length?'COMPARATOR_MISMATCH'
         :occurrences.some((x)=>Number(x.is_current)===1)?'CORRECTLY_EXCLUDED'
           :occurrences.length?'CLOSED_OCCURRENCE':'MATERIALIZATION_GAP';
   return {legacyId:property.id,title:property.title,sourceUrl:property.original_url||property.source_url,sourceIdentity:identity,category:classification,
-    sourceItems:sourceItems.map((x)=>({id:x.id,classification:x.classification,source_type:x.source_type,external_id:x.external_id,group_id:x.group_id,canonical_url:x.canonical_url})),
+    claimedByLegacyIds,sourceItems:sourceItems.map((x)=>({id:x.id,classification:x.classification,source_type:x.source_type,external_id:x.external_id,group_id:x.group_id,canonical_url:x.canonical_url})),
     occurrences,identityCanonicalCandidates,currentCanonicalCandidates,
     clusterMemberships:ids.length?db.prepare(`SELECT cm.source_item_id,cm.cluster_id,cm.occurrence_id,cm.occurrence_type,cm.score,cm.reason FROM dedupe_cluster_members cm WHERE cm.source_item_id IN (${ids.map(()=>'?').join(',')})`).all(...ids):[],
     decisionIds:occurrences.map((x)=>x.dedupe_decision_id).filter(Boolean)};
@@ -163,6 +190,7 @@ const report = {
   legacyOnlyAudit,
   canonicalOnlyAudit,
   overallSiemReapRent:{legacyReturned:allLegacy.items.length,canonicalReturned:allCanonical.items.length,
+    aliasIdentityCoverage:overallAliasIdentityCoverage,
     semanticOverlap:overall.pairs.length,legacyOnly:overall.legacyOnly.length,canonicalOnly:overall.canonicalOnly.length,
     cityTiers:cityCandidates.items.reduce((acc,p)=>{const tier=p.city_tier??'UNKNOWN_CITY';acc[tier]++;return acc;},{EXACT_CITY:0,PROBABLE_CITY:0,UNKNOWN_CITY:0} as Record<'EXACT_CITY'|'PROBABLE_CITY'|'UNKNOWN_CITY',number>),
     offerTiers:cityCandidates.items.reduce((acc,p)=>{const tier=p.match_tier??'UNKNOWN';acc[tier]++;return acc;},{EXACT:0,PROBABLE:0,UNKNOWN:0} as Record<'EXACT'|'PROBABLE'|'UNKNOWN',number>),cityOfferCrossTab:matchTopology,
@@ -180,17 +208,18 @@ const report = {
     rules:['explicit sale and unknown sale-only evidence are excluded from rent search','confirmed rent ranks EXACT; rental language or mixed offer ranks PROBABLE; unclear offer ranks UNKNOWN','unknown price remains eligible and ranks below priced matches when budget filters are present','unknown bedrooms remain eligible and rank below exact bedroom matches','explicit contradictory geography remains excluded'],
   },
   readSurfaceInventory:{
-    listSearch:'GET /api/v1/properties uses legacy by default; canonical read shadow runs only when LISTING_READ_SHADOW=true; canonical serving requires LISTING_READ_PATH=canonical.',
-    detail:'GET /api/v1/properties/:id switches with LISTING_READ_PATH; canonical IDs are not yet compatible with saved legacy favorite IDs.',
-    map:'GET /api/v1/properties/map remains on PropertiesRepository legacy IDs.',
-    favorites:'Favorites list/toggle storage and lookup remain legacy property IDs.',
-    moderation:'Admin review actions and moderation reads remain tied to legacy properties.review_status.',
-    tracking:'Tracking/contact analytics references property/listing identifiers; canonical compatibility mapping is not yet established.',
+    listSearch:'GET /api/v1/properties switches by per-user listingReadPathForUser, with optional legacy/canonical shadow comparison.',
+    detail:'GET /api/v1/properties/:id accepts canonical public_ref and resolves legacy IDs via canonical_listing_aliases on canonical read path.',
+    map:'GET /api/v1/properties/map serves canonical markers and area clusters on canonical read path; canary shadows legacy markers.',
+    favorites:'Canonical path uses canonical_user_favorites and legacy_property_id aliases for listing/toggle/lookup; migration and parity require canary checks.',
+    moderation:'Canonical moderation reads are enforced; admins on the canonical read path (including allowlisted canaries with global legacy mode) review pending listings by opaque public_ref. Approval is blocked for inactive/rented/removed listings; moderation transitions are pending-only.',
+    tracking:'Canonical canary tracking resolves legacy IDs/public refs and checks moderation before redirect; end-to-end parity still requires validation.',
     productionCutover:false},
-  acceptance:{unexpectedMissing:legacyOnlyAudit.filter((x)=>!['CORRECTLY_EXCLUDED','NO_SOURCE_ITEM','CLOSED_OCCURRENCE','IRRELEVANT','COMPARATOR_MISMATCH','CANONICAL_DEDUPE_MERGE'].includes(x.category)).map((x)=>x.legacyId),
+  acceptance:{unexpectedMissing:legacyOnlyAudit.filter((x)=>!['CORRECTLY_EXCLUDED','NO_SOURCE_ITEM','CLOSED_OCCURRENCE','IRRELEVANT','DUPLICATE_LEGACY_SOURCE_NEEDS_REVIEW'].includes(x.category)).map((x)=>x.legacyId),
+    requiresReview:legacyOnlyAudit.filter((x)=>['NO_SOURCE_ITEM','DUPLICATE_LEGACY_SOURCE_NEEDS_REVIEW','COMPARATOR_MISMATCH','MATERIALIZATION_GAP'].includes(x.category)).map((x)=>({legacyId:x.legacyId,reason:x.category,claimedByLegacyIds:x.claimedByLegacyIds})),
     suspectedFalseMerges:'not inferable from IDs; requires visual/source review',suspectedFalseSplits:'not inferable from IDs; requires source-level review',miniAppCutover:false}
 };
-const out='reports/phase6a-canonical-read-parity-20261007.json';
+const out=process.env.PHASE6A_REPORT ?? 'reports/phase6a-canonical-read-parity-20261007.json';
 writeFileSync(out,JSON.stringify(report,null,2)+'\n');
 console.log(JSON.stringify({out,checkpoint:report.checkpoint,currentActiveRequests:activeFilters.length,queryResults:queryResults.map(q=>({name:q.name,legacy:q.legacy.count,canonical:q.canonical.count,overlap:q.overlap,legacyOnly:q.legacyOnlyCount,canonicalOnly:q.canonicalOnlyCount})),dtoCompleteness:fieldStats,overall:report.overallSiemReapRent},null,2));
 db.close();

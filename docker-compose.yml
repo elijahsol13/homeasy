@@ -1,4 +1,34 @@
 services:
+  # ─── Independent verified SQLite snapshots on the MacBook ───────────────────
+  # This process runs even when scraping is paused or blocked by a challenge.
+  # The mounted directory is shared with the app; S3 comes in a later phase.
+  backup:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: api-runner
+    container_name: homeasy-backup
+    restart: unless-stopped
+    stop_grace_period: 120s
+    command: node dist/database/backup-worker.js
+    environment:
+      - NODE_ENV=production
+      - DATABASE_PATH=/app/data/homeasy.db
+    volumes:
+      - ./data:/app/data
+    healthcheck:
+      test: ["CMD", "node", "dist/database/backup-worker.js", "--health"]
+      interval: 30m
+      timeout: 15s
+      retries: 2
+      start_period: 5m
+    mem_limit: 150m
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
   # ─── Telegram Bot Service (grammY) ──────────────────────────────────────────
   bot:
     build:
@@ -13,6 +43,9 @@ services:
       - NODE_ENV=production
       - DATABASE_PATH=/app/data/homeasy.db
       - SERVICE_TYPE=bot
+      - LISTING_READ_PATH=canonical
+      - CANONICAL_READ_CANARY_TELEGRAM_IDS=
+      - CANONICAL_ALERTS_ENABLED=true
     env_file:
       - .env
     volumes:
@@ -33,6 +66,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      target: runner
     container_name: homeasy-scraper
     restart: unless-stopped
     # Long grace period: VACUUM INTO backups and full-table enrichment scans are
@@ -44,6 +78,9 @@ services:
       - NODE_ENV=production
       - DATABASE_PATH=/app/data/homeasy.db
       - SERVICE_TYPE=scraper
+      - LISTING_READ_PATH=canonical
+      - CANONICAL_READ_CANARY_TELEGRAM_IDS=
+      - CANONICAL_ALERTS_ENABLED=true
     env_file:
       - .env
     volumes:
@@ -76,6 +113,9 @@ services:
       - DATABASE_PATH=/app/data/homeasy.db
       - API_PORT=3000
       - API_HOST=0.0.0.0
+      - LISTING_READ_PATH=canonical
+      - CANONICAL_READ_CANARY_TELEGRAM_IDS=
+      - CANONICAL_ALERTS_ENABLED=true
     env_file:
       - .env
     volumes:

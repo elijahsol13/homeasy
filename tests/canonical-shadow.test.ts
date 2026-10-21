@@ -17,6 +17,34 @@ describe('Phase 4 shadow ingestion and canonicalization', () => {
   beforeEach(() => { db = new DatabaseSync(':memory:'); runMigrations(db); legacyBaseline = snapshotLegacyProperties(db); });
   afterEach(() => { assertLegacyPropertiesUnchanged(db, legacyBaseline); db.close(); });
 
+  it('automatically approves corroborated source rentals and keeps the decision on rebuild', () => {
+    const repo = new SourceIngestionRepository(db);
+    const source = repo.upsertSource({ sourceType: 'KHMER24', externalSourceId: 'auto-review-test', name: 'K24' });
+    const item = repo.upsertSourceItemDetailed(source, {
+      sourceType: 'KHMER24', externalId: 'adid:verified-rent',
+      sourceUrl: 'https://www.khmer24.com/en/apartment-adid-5501',
+      rawText: 'Apartment for rent in Siem Reap. 2 Bedrooms. Rent $350/month.',
+      contentHash: 'verified-rent', classification: 'HOUSING_SUPPLY',
+      rawPayload: {
+        listing: { price: 350, currency: 'USD', city: 'siem_reap', type: 'rent' },
+        listingExtraction: { title_en: '2BR apartment for rent', description_en: 'For rent in Siem Reap',
+          price: 350, currency: 'USD', city: 'siem_reap', category: 'apartment', property_type: 'Apartment',
+          bedrooms: 2, offer_type: 'rent' },
+      },
+    }).id;
+    const service = new CanonicalShadowService(db);
+    service.run({ dryRun: false });
+    const listing = (db.prepare('SELECT listing_id FROM canonical_listing_source_occurrences WHERE source_item_id=? AND is_current=1')
+      .get(item) as { listing_id: number }).listing_id;
+    const approval = db.prepare(`SELECT review_status,decision_origin,policy_version,previous_review_status
+      FROM canonical_listing_moderation WHERE listing_id=?`).get(listing);
+    expect(approval).toEqual({ review_status: 'approved', decision_origin: 'INGESTION_VALIDATED_V1',
+      policy_version: 'source-corroborated-crossposts-v12', previous_review_status: 'pending' });
+    service.run({ dryRun: false });
+    expect(db.prepare(`SELECT review_status,decision_origin,policy_version,previous_review_status
+      FROM canonical_listing_moderation WHERE listing_id=?`).get(listing)).toEqual(approval);
+  });
+
   it('imports stable Khmer24 ad IDs through ingestBatch and is idempotent', async () => {
     db.exec(`INSERT INTO properties (hash,title,description,price,currency,type,city,location,category,property_type,source_url,original_url,raw_text,photos,image_phashes,direct_contact,posted_at,created_at,updated_at)
       VALUES ('legacy-test-1','Villa rent','Description',125000,'USD','rent','siem_reap','Sala Kamreuk','house','Private Villa',
@@ -129,7 +157,7 @@ describe('Phase 4 shadow ingestion and canonicalization', () => {
   it('keeps price edits on the same Property, Listing, and occurrence identity', () => {
     const repo=new SourceIngestionRepository(db);const source=repo.upsertSource({sourceType:'FACEBOOK_GROUP',externalSourceId:'price-edit',name:'Price Edit'});
     const facts={title_en:'2BR apartment Wat Bo',description_en:'For rent in Wat Bo',price:400,currency:'USD',category:'apartment',property_type:'Apartment',bedrooms:2,city:'siem_reap',sangkat:'Wat Bo',property_code:'P-123',offer_type:'rent'};
-    const itemId=repo.upsertSourceItemDetailed(source,{sourceType:'FACEBOOK_GROUP',externalId:'post-123',rawText:'2BR Wat Bo for rent $400',contentHash:'price-v1',classification:'HOUSING_SUPPLY',rawPayload:{listingExtraction:facts,photos:['https://img.example/one.jpg']}}).id;
+    const itemId=repo.upsertSourceItemDetailed(source,{sourceType:'FACEBOOK_GROUP',externalId:'post-123',rawText:'2BR Wat Bo for rent $400',contentHash:'price-v1',classification:'HOUSING_SUPPLY',rawPayload:{listingExtraction:facts,photos:['https://img.example/one.jpg']}},'2026-10-07T00:00:00Z').id;
     const service=new CanonicalShadowService(db);service.run({dryRun:false});
     const before=db.prepare(`SELECT o.id occurrence_id,o.listing_id,l.property_id,l.price FROM canonical_listing_source_occurrences o
       JOIN canonical_listings l ON l.id=o.listing_id WHERE o.source_item_id=? AND o.is_current=1`).get(itemId) as {occurrence_id:number;listing_id:number;property_id:number;price:number};
@@ -140,6 +168,33 @@ describe('Phase 4 shadow ingestion and canonicalization', () => {
     expect(result).toMatchObject({processed:1,bindingsUpdated:1,repurposed:0,needsGlobalMatch:0});
     expect(after).toMatchObject({occurrence_id:before.occurrence_id,listing_id:before.listing_id,property_id:before.property_id,price:35000,price_seen:35000,last_seen_at:'2026-10-08T00:00:00Z'});
     expect(db.prepare('SELECT COUNT(*) n FROM source_item_versions WHERE source_item_id=?').get(itemId)).toEqual({n:2});
+  });
+
+  it('prefers Khmer24 live extraction over legacy facts and retains missing valid room counts', () => {
+    const repo = new SourceIngestionRepository(db);
+    const source = repo.upsertSource({sourceType:'KHMER24',externalSourceId:'khmer24-mixed-payload',name:'Khmer24'});
+    const legacy = {title_en:'Apartment Wat Bo',description_en:'For rent $410 monthly',price:410,currency:'USD',
+      property_type:'Apartment',category:'apartment',bedrooms:3,bathrooms:1,city:'siem_reap',sangkat:'Wat Bo',offer_type:'rent'};
+    const itemId = repo.upsertSourceItemDetailed(source,{sourceType:'KHMER24',externalId:'90017',
+      rawText:'Apartment Wat Bo rent $410',contentHash:'legacy-v1',classification:'HOUSING_SUPPLY',
+      rawPayload:{listingFacts:legacy,photos:[]}}).id;
+    const canonical = new CanonicalShadowService(db);
+    canonical.run({dryRun:false});
+    const before = db.prepare('SELECT id,property_id,price,bedrooms,bathrooms FROM canonical_listings').get() as {
+      id:number;property_id:number;price:number;bedrooms:number;bathrooms:number;
+    };
+    expect(before).toMatchObject({price:41000,bedrooms:3,bathrooms:1});
+
+    repo.upsertSourceItemDetailed(source,{sourceType:'KHMER24',externalId:'90017',
+      rawText:'Apartment Wat Bo rent $420',contentHash:'live-v2',classification:'HOUSING_SUPPLY',
+      rawPayload:{listingFacts:legacy,listingExtraction:{...legacy,price:420,bedrooms:null,bathrooms:2},photos:[]}},
+    '2026-10-08T00:00:00Z');
+    expect(canonical.reconcileBoundSourceItems([itemId],'2026-10-08T00:00:00Z'))
+      .toMatchObject({processed:1,bindingsUpdated:1,repurposed:0});
+    const after = db.prepare('SELECT id,property_id,price,bedrooms,bathrooms,listing_facts_json FROM canonical_listings').get() as
+      typeof before & {listing_facts_json:string};
+    expect(after).toMatchObject({id:before.id,property_id:before.property_id,price:42000,bedrooms:3,bathrooms:2});
+    expect(JSON.parse(after.listing_facts_json)).toMatchObject({bedrooms:3,bathrooms:2});
   });
 
   it('attaches a new repost member to its cluster’s existing canonical listing', () => {
@@ -162,6 +217,75 @@ describe('Phase 4 shadow ingestion and canonicalization', () => {
     canonical.reconcileBoundSourceItems([repost],'2026-10-08T00:01:00Z');
     expect(db.prepare('SELECT COUNT(*) n FROM canonical_listing_source_occurrences WHERE is_current=1').get()).toEqual({n:2});
     expect(db.prepare('SELECT COUNT(*) n FROM canonical_listings').get()).toEqual({n:1});
+  });
+
+  it('promotes a later-discovered earlier original and ignores later repost price edits', () => {
+    const repo = new SourceIngestionRepository(db);
+    const source = repo.upsertSource({sourceType:'FACEBOOK_GROUP',externalSourceId:'oldest-original',name:'Oldest original'});
+    const base = {category:'apartment',property_type:'Apartment',bedrooms:2,bathrooms:1,city:'siem_reap',sangkat:'Wat Bo',offer_type:'rent'};
+    const input = (externalId:string, price:number, publishedAt:string, version:string) => ({
+      sourceType:'FACEBOOK_GROUP' as const,externalId,rawText:'2BR apartment Wat Bo near market for rent; contact 012 345 678',
+      contentHash:version,classification:'HOUSING_SUPPLY' as const,authorExternalId:'same-agent',publishedAt,
+      rawPayload:{listingExtraction:{...base,title_en:`Wat Bo ${externalId} $${price}`,description_en:`Source ${externalId} at $${price}`,price,currency:'USD'},photos:[]},
+    });
+    const repost=repo.upsertSourceItemDetailed(source,input('repost',480,'2026-10-16T00:00:00Z','repost-v1'),'2026-10-17T00:00:00Z').id;
+    const canonical=new CanonicalShadowService(db);
+    canonical.run({dryRun:false});
+    const before=db.prepare('SELECT id,public_ref,property_id,price FROM canonical_listings').get() as {id:number;public_ref:string;property_id:number;price:number};
+    expect(before.price).toBe(48000);
+
+    const original=repo.upsertSourceItemDetailed(source,input('original',400,'2026-10-05T00:00:00Z','original-v1'),'2026-10-18T00:00:00Z').id;
+    new RepostClusteringService(db).runIncremental('repost-v1',[original]);
+    expect(canonical.reconcileBoundSourceItems([original],'2026-10-18T00:01:00Z'))
+      .toMatchObject({processed:1,occurrencesAttached:1,needsGlobalMatch:0});
+    const check=()=>db.prepare(`SELECT l.id,l.public_ref,l.property_id,l.price,l.title,l.description,l.primary_source_occurrence_id,
+      o.source_item_id AS primary_source_item_id FROM canonical_listings l
+      JOIN canonical_listing_source_occurrences o ON o.id=l.primary_source_occurrence_id`).get() as {
+        id:number;public_ref:string;property_id:number;price:number;title:string;description:string;
+        primary_source_occurrence_id:number;primary_source_item_id:number;
+      };
+    expect(check()).toMatchObject({id:before.id,public_ref:before.public_ref,property_id:before.property_id,
+      price:40000,title:'Wat Bo original $400',description:'Source original at $400',primary_source_item_id:original});
+    expect(db.prepare('SELECT source_item_id,discovery_credit FROM canonical_listing_source_occurrences WHERE is_current=1 ORDER BY source_item_id').all())
+      .toEqual([{source_item_id:repost,discovery_credit:0},{source_item_id:original,discovery_credit:1}]);
+
+    repo.upsertSourceItemDetailed(source,input('repost',510,'2026-10-16T00:00:00Z','repost-v2'),'2026-10-18T01:00:00Z');
+    canonical.reconcileBoundSourceItems([repost],'2026-10-18T01:01:00Z');
+    expect(check().price).toBe(40000);
+    repo.upsertSourceItemDetailed(source,input('original',390,'2026-10-05T00:00:00Z','original-v2'),'2026-10-18T02:00:00Z');
+    canonical.reconcileBoundSourceItems([original],'2026-10-18T02:01:00Z');
+    expect(check()).toMatchObject({price:39000,title:'Wat Bo original $390',primary_source_item_id:original});
+
+    canonical.run({dryRun:false});
+    expect(check()).toMatchObject({id:before.id,public_ref:before.public_ref,property_id:before.property_id,
+      price:39000,title:'Wat Bo original $390',primary_source_item_id:original});
+    expect(db.prepare('PRAGMA foreign_key_check').all()).toHaveLength(0);
+  });
+
+  it('promotes an existing undated source when its original publication date is backfilled', () => {
+    const repo=new SourceIngestionRepository(db);
+    const source=repo.upsertSource({sourceType:'FACEBOOK_GROUP',externalSourceId:'date-backfill',name:'Date backfill'});
+    const facts=(price:number)=>({title_en:`Original $${price}`,description_en:'Wat Bo apartment',price,currency:'USD',
+      category:'apartment',property_type:'Apartment',bedrooms:2,city:'siem_reap',sangkat:'Wat Bo',offer_type:'rent'});
+    const add=(externalId:string,price:number,publishedAt:string|undefined,seenAt:string)=>repo.upsertSourceItemDetailed(source,{
+      sourceType:'FACEBOOK_GROUP',externalId,publishedAt,classification:'HOUSING_SUPPLY',authorExternalId:'owner',
+      rawText:'Wat Bo apartment 2 bedrooms for rent phone 012 345 678',contentHash:`${externalId}:${price}`,
+      rawPayload:{listingExtraction:facts(price),photos:[]},
+    },seenAt).id;
+    const repost=add('repost',475,'2026-10-16T00:00:00Z','2026-10-17T00:00:00Z');
+    const undated=add('undated',400,undefined,'2026-10-18T00:00:00Z');
+    new RepostClusteringService(db).runIncremental('repost-v1',[repost,undated]);
+    const canonical=new CanonicalShadowService(db);canonical.run({dryRun:false});
+    expect(db.prepare('SELECT COUNT(*) n FROM canonical_listings').get()).toEqual({n:1});
+    const primary=()=>db.prepare(`SELECT o.source_item_id,l.price,l.public_ref FROM canonical_listings l
+      JOIN canonical_listing_source_occurrences o ON o.id=l.primary_source_occurrence_id`).get() as {source_item_id:number;price:number;public_ref:string};
+    expect(primary()).toMatchObject({source_item_id:repost,price:47500});
+    const publicRef=primary().public_ref;
+    add('undated',400,'2026-10-05T00:00:00Z','2026-10-18T01:00:00Z');
+    expect(canonical.reconcileBoundSourceItems([undated])).toMatchObject({processed:1,bindingsUpdated:1});
+    expect(primary()).toMatchObject({source_item_id:undated,price:40000,public_ref:publicRef});
+    expect(db.prepare('SELECT posted_at,discovery_credit FROM canonical_listing_source_occurrences WHERE source_item_id=? AND is_current=1').get(undated))
+      .toEqual({posted_at:'2026-10-05T00:00:00Z',discovery_credit:1});
   });
 
   it('reconciles media-only changes on the current binding without changing canonical IDs', () => {
@@ -210,6 +334,75 @@ describe('Phase 4 shadow ingestion and canonicalization', () => {
     expect(db.prepare('SELECT status FROM canonical_listings WHERE id=?').get(old.listing_id)).toEqual({status:'inactive'});
     expect(db.prepare('SELECT COUNT(*) n FROM canonical_properties WHERE id=?').get(old.property_id)).toEqual({n:1});
     expect(db.prepare('SELECT COUNT(*) n FROM source_item_versions WHERE source_item_id=?').get(itemId)).toEqual({n:2});
+  });
+
+  it('preserves identity, favorites and moderation across edit, unavailability and genuine rediscovery', () => {
+    const repo = new SourceIngestionRepository(db);
+    const sourceId = repo.upsertSource({ sourceType: 'FACEBOOK_GROUP', externalSourceId: 'lifecycle', name: 'Lifecycle' });
+    const canonical = new CanonicalShadowService(db);
+    const item = (price: number, suffix: string) => ({
+      sourceType: 'FACEBOOK_GROUP' as const, externalId: 'lifecycle-post',
+      rawText: `Wat Bo two bedroom apartment for rent $${price} ${suffix}`,
+      contentHash: `lifecycle-${suffix}`, classification: 'HOUSING_SUPPLY' as const,
+      sourceUrl: 'https://www.facebook.com/groups/lifecycle/posts/42',
+      rawPayload: { listingExtraction: { title_en: 'Wat Bo 2BR apartment', description_en: `Apartment ${suffix}`,
+        price, currency: 'USD', category: 'apartment', property_type: 'Apartment', bedrooms: 2,
+        city: 'siem_reap', sangkat: 'Wat Bo', property_code: 'WB-42', offer_type: 'rent' } },
+    });
+    const sourceItemId = repo.upsertSourceItemDetailed(sourceId, item(400, 'original'), '2026-10-01T00:00:00Z').id;
+    canonical.run({ dryRun: false });
+    const initial = db.prepare(`SELECT l.id,l.public_ref,l.status,o.id AS occurrence_id FROM canonical_listings l
+      JOIN canonical_listing_source_occurrences o ON o.listing_id=l.id WHERE o.source_item_id=? AND o.is_current=1`)
+      .get(sourceItemId) as { id: number; public_ref: string; status: string; occurrence_id: number };
+    expect(initial.status).toBe('active');
+
+    db.prepare('INSERT INTO users(telegram_id) VALUES(?)').run(424242);
+    const userId = (db.prepare('SELECT id FROM users WHERE telegram_id=?').get(424242) as { id: number }).id;
+    db.prepare('INSERT INTO canonical_user_favorites(user_id,listing_id) VALUES(?,?)').run(userId, initial.id);
+    db.prepare("UPDATE canonical_listing_moderation SET review_status='approved',decision_origin='EXPLICIT_CANONICAL' WHERE listing_id=?").run(initial.id);
+    const approvalEvents = (db.prepare('SELECT COUNT(*) AS n FROM canonical_publication_events').get() as { n: number }).n;
+    expect(approvalEvents).toBe(1);
+    db.prepare("INSERT INTO canonical_listing_aliases(namespace,alias,listing_id) VALUES('legacy_url',?,?)")
+      .run('https://example.com/lifecycle-original', initial.id);
+
+    repo.upsertSourceItemDetailed(sourceId, item(450, 'repriced'), '2026-10-04T00:00:00Z');
+    expect(canonical.reconcileBoundSourceItems([sourceItemId], '2026-10-04T00:00:00Z'))
+      .toMatchObject({ processed: 1, bindingsUpdated: 1, repurposed: 0 });
+    expect(db.prepare('SELECT price FROM canonical_listings WHERE id=?').get(initial.id)).toEqual({ price: 45000 });
+    expect(db.prepare('SELECT id FROM canonical_listing_source_occurrences WHERE source_item_id=? AND is_current=1')
+      .get(sourceItemId)).toEqual({ id: initial.occurrence_id });
+
+    expect(repo.recordExplicitAvailabilityEdit(sourceItemId, 'Already rented, no longer available', '2026-10-05T00:00:00Z')).toBe(1);
+    expect(db.prepare('SELECT availability_status FROM canonical_listings WHERE id=?').get(initial.id))
+      .toEqual({ availability_status: 'rented' });
+    expect(repo.closeCurrentCanonicalBindings(sourceItemId, 'canonical-dedupe-v1', '2026-10-06T00:00:00Z')).toBe(1);
+    expect(db.prepare('SELECT status FROM canonical_listings WHERE id=?').get(initial.id)).toEqual({ status: 'inactive' });
+    canonical.run({ dryRun: false });
+    expect(db.prepare('SELECT status FROM canonical_listings WHERE id=?').get(initial.id)).toEqual({ status: 'inactive' });
+
+    // Only the source's newer observation supplies evidence of reappearance.
+    repo.upsertSourceItemDetailed(sourceId, item(475, 'reappeared'), '2026-10-10T00:00:00Z');
+    canonical.run({ dryRun: false });
+    expect(db.prepare('SELECT id,public_ref,status,availability_status,price FROM canonical_listings WHERE id=?').get(initial.id))
+      .toEqual({ id: initial.id, public_ref: initial.public_ref, status: 'active', availability_status: 'rented', price: 47500 });
+    expect(db.prepare('SELECT id,is_current,ended_at FROM canonical_listing_source_occurrences WHERE source_item_id=? ORDER BY id')
+      .all(sourceItemId)).toEqual([
+        { id: initial.occurrence_id, is_current: 0, ended_at: '2026-10-06T00:00:00Z' },
+        expect.objectContaining({ is_current: 1, ended_at: null }),
+      ]);
+    expect(repo.recordExplicitAvailabilityEdit(sourceItemId, 'This same unit is available now', '2026-10-11T00:00:00Z')).toBe(1);
+    expect(db.prepare('SELECT availability_status FROM canonical_listings WHERE id=?').get(initial.id))
+      .toEqual({ availability_status: 'available' });
+    canonical.run({ dryRun: false });
+    expect(db.prepare('SELECT COUNT(*) AS n FROM canonical_listings').get()).toEqual({ n: 1 });
+    expect(db.prepare('SELECT COUNT(*) AS n FROM canonical_listing_source_occurrences').get()).toEqual({ n: 2 });
+    expect(db.prepare('SELECT COUNT(*) AS n FROM canonical_publication_events').get()).toEqual({ n: approvalEvents });
+    expect(db.prepare('SELECT listing_id FROM canonical_user_favorites WHERE user_id=?').get(userId)).toEqual({ listing_id: initial.id });
+    expect(db.prepare('SELECT review_status,decision_origin FROM canonical_listing_moderation WHERE listing_id=?').get(initial.id))
+      .toEqual({ review_status: 'approved', decision_origin: 'EXPLICIT_CANONICAL' });
+    expect(db.prepare("SELECT listing_id FROM canonical_listing_aliases WHERE namespace='legacy_url' AND alias=?")
+      .get('https://example.com/lifecycle-original')).toEqual({ listing_id: initial.id });
+    expect(db.prepare('PRAGMA foreign_key_check').all()).toHaveLength(0);
   });
 
   it('produces order-independent cross-source canonical topology for same and separate offers', () => {

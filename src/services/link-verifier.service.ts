@@ -2,12 +2,16 @@ import type { PropertiesRepository, Property } from '../database/repositories/pr
 import type { AlertService } from './alert.service';
 import type { IngestionService } from '../modules/parser/ingestor';
 import { fetchPostTextAnonymous, parseFormattedPrice } from '../modules/parser/fb-worker';
+import { safeKhmer24Url } from '../modules/parser/canonical-freshness-executor';
+import { classifyKhmer24DetailLiveness } from '../modules/parser/khmer24-liveness';
 
 export interface LinkCheckResult {
-  isAlive: boolean;
+  outcome: 'ALIVE' | 'DEAD' | 'UNKNOWN';
   statusCode?: number;
   reason?: string;
   normalizedUrl?: string;
+  /** Body bytes consumed by a bounded canonical probe; excludes wire/header overhead. */
+  bytesRead?: number;
 }
 
 interface ScrapedSnapshot {
@@ -27,6 +31,9 @@ const FETCH_HEADERS = {
   Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
   'Accept-Language': 'en-US,en;q=0.9',
 };
+
+// Canonical freshness checks read text only. A large page is inconclusive, never proof of availability.
+const CANONICAL_KHMER24_BODY_LIMIT = 256 * 1024;
 
 function collapseWs(s: string): string {
   return s.replace(/\s+/g, ' ').trim();
@@ -71,7 +78,7 @@ export class LinkVerifierService {
    */
   async checkUrl(rawUrl: string): Promise<LinkCheckResult> {
     if (!rawUrl || (!rawUrl.startsWith('http://') && !rawUrl.startsWith('https://'))) {
-      return { isAlive: false, reason: 'Invalid or missing URL scheme' };
+      return { outcome: 'UNKNOWN', reason: 'Invalid or missing URL scheme' };
     }
 
     // Normalize web.facebook.com to www.facebook.com
@@ -82,15 +89,14 @@ export class LinkVerifierService {
       normalizedUrl = targetUrl;
     }
 
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 7000);
     try {
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 7000);
 
       const res = await fetch(targetUrl, {
         method: 'GET',
         headers: {
-          'User-Agent':
-            'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1',
+          'User-Agent': FETCH_HEADERS['User-Agent'],
           Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
           'Accept-Language': 'en-US,en;q=0.9',
         },
@@ -98,11 +104,10 @@ export class LinkVerifierService {
         signal: controller.signal,
       });
 
-      clearTimeout(timeoutId);
-
-      // Definite 404 or 410 Gone
+      // Anonymous Facebook errors can mean access restrictions, not deletion.
       if (res.status === 404 || res.status === 410) {
-        return { isAlive: false, statusCode: res.status, reason: `HTTP ${res.status} Not Found`, normalizedUrl };
+        return { outcome: /(?:facebook\.com|fb\.com)/i.test(new URL(targetUrl).hostname) ? 'UNKNOWN' : 'DEAD',
+          statusCode: res.status, reason: `HTTP ${res.status}`, normalizedUrl };
       }
 
       // Check text body for dead post signatures
@@ -117,7 +122,7 @@ export class LinkVerifierService {
           textSample.includes('Facebook is not available on this browser')
         ) {
           return {
-            isAlive: false,
+            outcome: 'UNKNOWN',
             statusCode: res.status,
             reason: 'Content removed, expired, or unavailable',
             normalizedUrl,
@@ -125,14 +130,17 @@ export class LinkVerifierService {
         }
       }
 
-      return { isAlive: true, statusCode: res.status, normalizedUrl };
+      return { outcome: res.ok ? 'ALIVE' : 'UNKNOWN', statusCode: res.status, normalizedUrl };
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       if (msg.includes('abort') || msg.includes('timeout')) {
         // Timeouts or transient network issues do not mark a listing dead
-        return { isAlive: true, reason: 'Network timeout (transient)' };
+        return { outcome: 'UNKNOWN', reason: 'Network timeout (transient)' };
       }
-      return { isAlive: true, reason: `Network check error: ${msg}` };
+      return { outcome: 'UNKNOWN', reason: `Network check error: ${msg}` };
+    } finally {
+      // Keep the timeout active through response.text(), which may also stall.
+      clearTimeout(timeoutId);
     }
   }
 
@@ -141,24 +149,28 @@ export class LinkVerifierService {
    * regex (no browser needed). Cloudflare challenges are treated as "alive —
    * can't verify", never as dead.
    */
-  private async checkKhmer24(url: string): Promise<{ alive: boolean; snap?: ScrapedSnapshot; reason?: string }> {
+  private async checkKhmer24(url: string, strictRedirect = false): Promise<{ outcome: LinkCheckResult['outcome']; snap?: ScrapedSnapshot; reason?: string }> {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 7000);
     try {
-      const res = await fetch(url, { headers: FETCH_HEADERS, redirect: 'follow' });
+      const res = await fetch(url, { headers: FETCH_HEADERS, redirect: strictRedirect ? 'manual' : 'follow', signal: controller.signal });
       if (res.status === 404 || res.status === 410) {
-        return { alive: false, reason: `HTTP ${res.status}` };
+        return { outcome: 'DEAD', reason: `HTTP ${res.status}` };
       }
+      if (!res.ok) return { outcome: 'UNKNOWN', reason: `HTTP ${res.status}` };
       const html = await res.text();
       if (
         res.status === 403 ||
         html.includes('Just a moment') ||
         html.includes('Attention Required')
       ) {
-        return { alive: true, reason: 'cloudflare_blocked' };
+        return { outcome: 'UNKNOWN', reason: 'cloudflare_blocked' };
       }
-      // K24 removed-ad pages still return 200 — detect the tombstone text.
-      if (/this (ad|listing|post) (is|was) (no longer available|removed|deleted|expired)/i.test(html)) {
-        return { alive: false, reason: 'removed listing tombstone' };
+      const liveness = classifyKhmer24DetailLiveness(html, /-adid-(\d+)/i.exec(url)?.[1]);
+      if (liveness === 'dead') {
+        return { outcome: 'DEAD', reason: 'removed listing tombstone' };
       }
+      if (liveness === 'unknown') return { outcome: 'UNKNOWN', reason: 'no confirmed Khmer24 detail post' };
 
       const snap: ScrapedSnapshot = {};
       const ldMatch = /<script[^>]*type="application\/ld\+json"[^>]*>([\s\S]*?)<\/script>/i.exec(html);
@@ -181,9 +193,73 @@ export class LinkVerifierService {
           // malformed JSON-LD — fine, just means no structured snapshot
         }
       }
-      return { alive: true, snap };
+      return { outcome: 'ALIVE', snap };
     } catch (err) {
-      return { alive: true, reason: `fetch error: ${err instanceof Error ? err.message : String(err)}` };
+      return { outcome: 'UNKNOWN', reason: `fetch error: ${err instanceof Error ? err.message : String(err)}` };
+    } finally {
+      clearTimeout(timeoutId);
+    }
+  }
+
+  /** A separately bounded canonical probe: one trusted host, no redirects, at most 256 KiB decoded HTML. */
+  async checkCanonicalKhmer24(url: string, signal?: AbortSignal): Promise<LinkCheckResult> {
+    const trusted = safeKhmer24Url(url);
+    if (!trusted) return { outcome: 'UNKNOWN', reason: 'Untrusted Khmer24 URL', bytesRead: 0 };
+    if (signal?.aborted) return { outcome: 'UNKNOWN', reason: 'Cancelled', bytesRead: 0 };
+    const controller = new AbortController();
+    const abortExternally = (): void => controller.abort();
+    signal?.addEventListener('abort', abortExternally, { once: true });
+    const timeoutId = setTimeout(() => controller.abort(), 7000);
+    let bytesRead = 0;
+    try {
+      const response = await fetch(trusted, {
+        method: 'GET', headers: FETCH_HEADERS, redirect: 'manual', signal: controller.signal,
+      });
+      if (response.status === 404 || response.status === 410) {
+        return { outcome: 'DEAD', reason: `HTTP ${response.status}`, statusCode: response.status, bytesRead };
+      }
+      if (response.status !== 200) {
+        return { outcome: 'UNKNOWN', reason: `HTTP ${response.status}`, statusCode: response.status, bytesRead };
+      }
+      const contentType = response.headers.get('content-type');
+      if (contentType && !/^(text\/html|application\/xhtml\+xml)\b/i.test(contentType.trim())) {
+        return { outcome: 'UNKNOWN', reason: 'Non-HTML response', statusCode: response.status, bytesRead };
+      }
+      const length = response.headers.get('content-length');
+      if (length !== null && (!/^\d+$/.test(length) || Number(length) > CANONICAL_KHMER24_BODY_LIMIT)) {
+        return { outcome: 'UNKNOWN', reason: 'HTML body exceeds canary limit', statusCode: response.status, bytesRead };
+      }
+      if (!response.body) return { outcome: 'UNKNOWN', reason: 'Empty HTML response', statusCode: response.status, bytesRead };
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let html = '';
+      for (;;) {
+        const chunk = await reader.read();
+        if (chunk.done) break;
+        bytesRead += chunk.value.byteLength;
+        if (bytesRead > CANONICAL_KHMER24_BODY_LIMIT) {
+          return { outcome: 'UNKNOWN', reason: 'HTML body exceeds canary limit', statusCode: response.status, bytesRead };
+        }
+        html += decoder.decode(chunk.value, { stream: true });
+      }
+      html += decoder.decode();
+      if (!html.trim()) return { outcome: 'UNKNOWN', reason: 'Empty HTML response', statusCode: response.status, bytesRead };
+      if (html.includes('Just a moment') || html.includes('Attention Required')) {
+        return { outcome: 'UNKNOWN', reason: 'cloudflare_blocked', statusCode: response.status, bytesRead };
+      }
+      const liveness = classifyKhmer24DetailLiveness(html, /-adid-(\d+)/i.exec(trusted)?.[1]);
+      if (liveness === 'dead') {
+        return { outcome: 'DEAD', reason: 'removed listing tombstone', statusCode: response.status, bytesRead };
+      }
+      return { outcome: liveness === 'alive' ? 'ALIVE' : 'UNKNOWN',
+        reason: liveness === 'unknown' ? 'no confirmed Khmer24 detail post' : undefined,
+        statusCode: response.status, bytesRead };
+    } catch (error) {
+      return { outcome: 'UNKNOWN', reason: `fetch error: ${error instanceof Error ? error.message : String(error)}`, bytesRead };
+    } finally {
+      controller.abort(); // Stop any unread response bytes when rejecting headers or a truncated body.
+      clearTimeout(timeoutId);
+      signal?.removeEventListener('abort', abortExternally);
     }
   }
 
@@ -192,12 +268,13 @@ export class LinkVerifierService {
    * GroupCommerceProductItem price. Falls back to a plain dead-marker check
    * when the Relay cache can't be extracted.
    */
-  private async checkFacebook(prop: Property, url: string): Promise<{ alive: boolean; snap?: ScrapedSnapshot; reason?: string }> {
+  private async checkFacebook(prop: Property, url: string): Promise<{ outcome: LinkCheckResult['outcome']; snap?: ScrapedSnapshot; reason?: string }> {
     try {
       const post = await fetchPostTextAnonymous(url);
       if (!post) {
         const health = await this.checkUrl(url);
-        return { alive: health.isAlive, reason: health.reason };
+        // Anonymous HTML cannot establish that an authenticated group post is visible.
+        return { outcome: 'UNKNOWN', reason: health.reason ?? 'Anonymous Facebook response is inconclusive' };
       }
       const snap: ScrapedSnapshot = { text: post.text };
       const price = post.commerce ? parseFormattedPrice(post.commerce.priceText) : null;
@@ -211,9 +288,9 @@ export class LinkVerifierService {
                 ? Math.round(price.amount * 100)
                 : Math.round((price.amount / 4_000) * 100); // huge bare number on rent ≈ riel
       }
-      return { alive: true, snap };
+      return { outcome: post.text?.trim() ? 'ALIVE' : 'UNKNOWN', snap };
     } catch (err) {
-      return { alive: true, reason: `fb check error: ${err instanceof Error ? err.message : String(err)}` };
+      return { outcome: 'UNKNOWN', reason: `fb check error: ${err instanceof Error ? err.message : String(err)}` };
     }
   }
 
@@ -264,23 +341,23 @@ export class LinkVerifierService {
     for (const prop of due) {
       const url = prop.original_url || prop.source_url;
       if (!url) {
-        this.propertiesRepo.markVerified(prop.id);
         continue;
       }
 
       checked++;
 
-      let result: { alive: boolean; snap?: ScrapedSnapshot; reason?: string };
+      let result: { outcome: LinkCheckResult['outcome']; snap?: ScrapedSnapshot; reason?: string };
       if (url.includes('khmer24.com')) {
         result = await this.checkKhmer24(url);
       } else if (url.includes('facebook.com') || url.includes('fb.com')) {
         result = await this.checkFacebook(prop, url);
       } else {
         const health = await this.checkUrl(url);
-        result = { alive: health.isAlive, reason: health.reason };
+        result = { outcome: health.outcome, reason: health.reason };
       }
 
-      if (!result.alive) {
+      if (result.outcome === 'UNKNOWN') continue;
+      if (result.outcome === 'DEAD') {
         this.propertiesRepo.deactivateProperty(prop.id);
         deactivated++;
         console.log(`[LinkVerifier] 🚫 Deactivated dead listing #${prop.id} ("${prop.title.slice(0, 35)}..."): ${result.reason}`);

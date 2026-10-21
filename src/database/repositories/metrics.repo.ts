@@ -7,7 +7,6 @@ export interface ScraperMetricRecord {
   inserted: number;
   duplicates: number;
   errors: number;
-  proxy_used?: string | null;
   duration_ms?: number;
   created_at?: string;
 }
@@ -32,13 +31,12 @@ export class MetricsRepository {
     inserted: number;
     duplicates: number;
     errors: number;
-    proxy_used?: string | null;
     duration_ms?: number;
   }): void {
     const stmt = this.db.prepare(`
       INSERT INTO scraper_metrics (
-        service, total_scraped, inserted, duplicates, errors, proxy_used, duration_ms
-      ) VALUES (?, ?, ?, ?, ?, ?, ?)
+        service, total_scraped, inserted, duplicates, errors, duration_ms
+      ) VALUES (?, ?, ?, ?, ?, ?)
     `);
 
     stmt.run(
@@ -47,7 +45,6 @@ export class MetricsRepository {
       metric.inserted,
       metric.duplicates,
       metric.errors,
-      metric.proxy_used ?? null,
       metric.duration_ms ?? 0,
     );
   }

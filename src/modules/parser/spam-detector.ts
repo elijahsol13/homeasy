@@ -75,7 +75,10 @@ export function isNonRealEstateSpam(
     }
   }
 
-  if (/\b(?:apartment|villa|condo|house for rent|room for rent|studio)\b/i.test(title)) {
+  // Khmer24's original heading is often in Khmer. A single incidental vehicle
+  // word in a property's directions (e.g. "near the car inspection office")
+  // must not quarantine that home before the sale/rent AI classifier sees it.
+  if (/\b(?:apartment|villa|condo|house for rent|room for rent|studio)\b|ផ្ទះ|បន្ទប់ជួល|ខុនដូ/i.test(title)) {
     score -= 2;
     evidence.push('residential_title');
   }

@@ -57,7 +57,7 @@ export class GeminiProvider implements AiProvider {
       });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      const retryMatch = message.match(/retry(?:Delay| in| after)[^\\d]*([\\d.]+)s/i);
+      const retryMatch = message.match(/retry(?:Delay| in| after)[^\d]*([\d.]+)s/i);
       const daily = /requests.per.day|per.day|RPD|daily|free_tier_requests/i.test(message);
       const retryAfterMs = daily ? nextPacificMidnight(Date.now()) - Date.now()
         : retryMatch ? Math.ceil(Number(retryMatch[1]) * 1000)

@@ -5,14 +5,14 @@
  *  - STRICT LAW: Automated headless password entry or console credential passing to Facebook
  *    is prohibited (triggers instant checkpoints/blocks). Authentication must be performed
  *    visually by a human with the local headed fb:login command.
- *  - Connects directly by default; proxy use is explicit opt-in.
+ *  - Connects directly from the local scraper host.
  *  - Uses pinned Camoufox with saved session cookies (`./data/fb_session.json`).
  *  - Navigates to targeted Facebook Groups (e.g., Siem Reap real estate & rental groups).
  *  - Intercepts internal GraphQL API responses (`/api/graphql/`) via `page.on('response')`.
  *  - Recursively extracts full un-truncated post text, direct photo URLs, and timestamps from Relay Comet nodes.
  *  - Emulates human-like scrolling behavior with randomized delays to trigger React GraphQL pagination.
  *  - Feeds extracted data through `extractor.ts` heuristics/LLM to structure price, location, bedrooms, etc.
- *  - Ingests clean listings into the `ingestRawListing` pipeline with automatic deduplication.
+ *  - Ingests clean listings into the canonical source pipeline with automatic deduplication.
  */
 
 import path from 'path';
@@ -24,14 +24,6 @@ import { runMigrations } from '../../database/migrate';
 import type { AppContainer } from '../../container';
 import { createContainer } from '../../container';
 import { env } from '../../config/env';
-import type { Property } from '../../database/repositories/properties.repo';
-import {
-  parseProxyConfig,
-  isProxyError,
-  ProxyConnectionError,
-  type PlaywrightProxyConfig,
-  type ParsedProxyResult,
-} from './proxy';
 import { attachTrafficGuard } from './traffic-guard';
 import {
   FB_SESSION_PATH,
@@ -53,7 +45,6 @@ import {
   extractListingWithLLM,
   extractListingsBatchWithLLM,
   extractLocation,
-  extractMapsUrl,
   extractMinLease,
   extractPrice,
   extractPropertyType,
@@ -65,6 +56,10 @@ import {
 import { cleanPhotoUrls, extractDirectContacts, formatDomesticPhone } from './normalizer';
 import { isNonRealEstateSpam } from './spam-detector';
 import { findCanonicalLocation } from '../../config/locations';
+import { FacebookLiveAdapter, facebookGroupEnvelope } from './live-source-adapters';
+import { installLegacyPropertiesWriteGuard } from '../../database/legacy-write-guard';
+import type { IngestionBatchResult } from './ingestion-contracts';
+import { resolvePropertyMapFromText } from './source-map-location';
 
 export { FB_SESSION_PATH } from './fb-runtime';
 export const BROWSER_CACHE_DIR = path.join(process.cwd(), 'data', 'browser_cache');
@@ -149,14 +144,6 @@ export class FacebookSessionExpiredError extends Error {
   }
 }
 
-export {
-  parseProxyConfig,
-  isProxyError,
-  ProxyConnectionError,
-  type PlaywrightProxyConfig,
-  type ParsedProxyResult,
-};
-
 // ─── Target Group Definitions ─────────────────────────────────────────────────
 
 export interface FBGroupTarget {
@@ -164,6 +151,20 @@ export interface FBGroupTarget {
   url: string;
   city: CityKey;
   defaultCategory?: PropertyCategory;
+}
+
+/** One canonical entry point shared by the normal scraper and feed re-parser. */
+export async function ingestFacebookGroupListings(
+  container: AppContainer,
+  target: FBGroupTarget,
+  listings: RawListing[],
+): Promise<IngestionBatchResult> {
+  const adapter = new FacebookLiveAdapter(async function* () {
+    for (const listing of listings) yield facebookGroupEnvelope(listing, target);
+  });
+  return container.ingestionService.ingestBatch(adapter, {
+    runType: 'DISCOVERY', ingestionMethod: 'CAMOUFOX', parserVersion: 'facebook-canonical-v1',
+  });
 }
 
 export const FB_GROUP_TARGETS: FBGroupTarget[] = FB_GROUPS
@@ -265,6 +266,7 @@ export async function parseFacebookPostText(
   rawDate?: string,
   precomputedLlm?: LLMExtractedListing | null,
   commerce?: { priceText: string; locationText: string },
+  facebookPostId?: string,
 ): Promise<RawListing | null> {
   // 0. Pre-filter spam before calling LLM (saves AI quotas)
   const spamCheck = isNonRealEstateSpam(text.slice(0, 100), text);
@@ -375,7 +377,11 @@ export async function parseFacebookPostText(
   }
   const type = extractType(text) ?? 'rent';
   if (type !== 'rent' || city !== 'siem_reap') return null;
-  const mapsUrl = llm?.maps_url || extractMapsUrl(text) || undefined;
+  // Only resolve links explicitly labelled as the property's location in the
+  // original post. Nearby-landmark links and AI-generated URLs cannot create a pin.
+  const sourceMap = await resolvePropertyMapFromText(text, city);
+  const mapsUrl = sourceMap?.mapsUrl;
+  const sourceMapUrl = sourceMap?.sourceUrl;
   const directContacts = extractDirectContacts(text);
   const regexPhone = directContacts.phone;
   const aiPhones = (llm?.phone_numbers ?? []).map((p) => formatDomesticPhone(p)).filter(Boolean) as string[];
@@ -423,8 +429,12 @@ export async function parseFacebookPostText(
     location,
     city,
     maps_url: mapsUrl,
+    source_map_url: sourceMapUrl,
+    latitude: sourceMap?.latitude,
+    longitude: sourceMap?.longitude,
     source_url: cleanedUrl,
     url: cleanedUrl,
+    facebook_post_id: facebookPostId && /^\d+$/.test(facebookPostId.trim()) ? facebookPostId.trim() : undefined,
     photos: cleanPhotoUrls(photos),
     phone,
     telegram_contact,
@@ -573,6 +583,8 @@ export interface FbGraphQLFeedResponse {
 
 export interface ParsedFbGraphQLPost {
   id?: string;
+  /** Numeric provider post ID, kept separate from composite GraphQL Story IDs. */
+  facebookPostId?: string;
   text: string;
   postUrl: string;
   photos: string[];
@@ -843,6 +855,9 @@ export function extractPostsFromFbGraphQL(
     const rawDate = extractDateFromStory(story);
 
     const postId = story.post_id || story.id;
+    const stablePostId = [story.post_id, story.id]
+      .map((value) => typeof value === 'string' ? value.trim() : '')
+      .find((value) => /^\d+$/.test(value));
     const dedupKey = postId || postUrl || text.slice(0, 50);
 
     if (seenKeys.has(dedupKey)) continue;
@@ -850,6 +865,7 @@ export function extractPostsFromFbGraphQL(
 
     results.push({
       id: postId,
+      facebookPostId: stablePostId,
       text,
       postUrl,
       photos,
@@ -992,25 +1008,8 @@ export async function scrapeFacebookGroup(
     // One scrolled page load yields complete posts straight from GraphQL.
     const intercepted = await collectGroupFeedPosts(context, target, maxScrolls);
 
-    // Free freshness signal: a post still present in the group feed proves the
-    // source is alive — mark it verified so the permalink re-check queue and
-    // the freshness sweep don't waste navigations on it. Absence from the feed
-    // is NOT treated as death (only ~1 page is scrolled per cycle).
-    let feedVerified = 0;
-    for (const post of intercepted) {
-        const idMatch = (post.postUrl || '').match(/(?:posts|permalink)\/(\d+)/);
-        const cleaned = cleanFacebookUrl(post.postUrl);
-        const existing =
-            (idMatch ? container.propertiesRepo.findByPostId(idMatch[1]!) : undefined) ??
-            (cleaned ? container.propertiesRepo.findBySourceUrl(cleaned) : undefined);
-        if (existing && existing.is_active === 1) {
-            container.propertiesRepo.markVerified(existing.id);
-            feedVerified++;
-        }
-    }
-    if (feedVerified > 0) {
-        console.log(`   ✅ ${feedVerified} stored listings re-confirmed alive via feed presence.`);
-    }
+    // Canonical source rediscovery is recorded by ingestBatch below. The feed
+    // no longer updates legacy properties as a side effect of scraping.
 
     const fresh = intercepted.filter(
         (p) => !state.recentPostIds.includes(p.id ?? p.postUrl ?? ''),
@@ -1042,6 +1041,7 @@ export async function scrapeFacebookGroup(
                 post.rawDate,
                 precomputedLlm,
                 post.commerce,
+                post.facebookPostId,
             );
             if (listing) listings.push(listing);
         } catch (err: unknown) {
@@ -1129,6 +1129,7 @@ export async function reparseFacebookViaGroupFeed(
 
   const container = containerInstance ?? createContainer();
   runMigrations(container.db);
+  installLegacyPropertiesWriteGuard(container.db);
 
   if (!fs.existsSync(FB_SESSION_PATH)) {
     console.error('❌ Cannot run Facebook re-parser without active data/fb_session.json.');
@@ -1141,10 +1142,7 @@ export async function reparseFacebookViaGroupFeed(
     return { totalChecked: 0, totalUpdated: 0, totalInserted: 0, errors: 0 };
   }
 
-  const useProxy = process.argv.includes('--proxy') || env.FB_PROXY_ENABLED;
-  const proxyResult = parseProxyConfig(useProxy ? env.FB_PROXY : undefined);
-  if (useProxy && !proxyResult) throw new Error('Facebook proxy was explicitly enabled but FB_PROXY is missing or invalid.');
-  console.log(proxyResult ? `🌐 Proxy enabled: ${proxyResult.masked}` : '🏠 Direct connection enabled.');
+  console.log('🏠 Direct connection enabled.');
 
   let totalChecked = 0;
   let totalUpdated = 0;
@@ -1155,10 +1153,7 @@ export async function reparseFacebookViaGroupFeed(
   let camoufox: CamoufoxBrowser;
   let context: BrowserContext;
   try {
-    camoufox = await launchCamoufox({
-      headless: true,
-      proxyUrl: useProxy ? env.FB_PROXY : undefined,
-    });
+    camoufox = await launchCamoufox({ headless: true });
     try {
       context = await camoufox.browser.newContext({ storageState: FB_SESSION_PATH });
     } catch (error) {
@@ -1192,73 +1187,29 @@ export async function reparseFacebookViaGroupFeed(
         const interceptedPosts = await collectGroupFeedPosts(context, target, maxScrolls);
         console.log(`  📊 Intercepted ${interceptedPosts.length} posts from GraphQL during feed scroll.`);
 
+        const listings: RawListing[] = [];
         for (const post of interceptedPosts) {
           totalChecked++;
-          const cleanedUrl = cleanFacebookUrl(post.postUrl);
-          const idMatch = (post.postUrl || '').match(/(?:posts|permalink)\/(\d+)/);
-          const numericId = idMatch ? idMatch[1] : null;
-
-          let existingRow: Property | undefined = undefined;
-          if (numericId) {
-            existingRow = container.propertiesRepo.findByPostId(numericId);
-          }
-          if (!existingRow && cleanedUrl) {
-            existingRow = container.propertiesRepo.findBySourceUrl(cleanedUrl);
-          }
-
-          if (existingRow) {
-            const currentDesc = existingRow.description || '';
-            const newText = (post.text || '').trim();
-            const wasTruncated =
-              currentDesc.includes('... See more') ||
-              currentDesc.includes('... See More') ||
-              currentDesc.includes('... Ещё') ||
-              currentDesc.endsWith('…') ||
-              currentDesc.length < 60;
-            const isLonger = newText.length > currentDesc.length;
-
-            const existingPhotos: string[] = Array.isArray(existingRow.photos) ? existingRow.photos : [];
-            const combinedPhotos = Array.from(new Set([...existingPhotos, ...post.photos]));
-            const hasMorePhotos = combinedPhotos.length > existingPhotos.length;
-
-            if ((isLonger || wasTruncated || hasMorePhotos) && newText.length > 30) {
-              const bestDesc = (isLonger || wasTruncated) ? newText : currentDesc;
-              container.db
-                .prepare(
-                  `UPDATE properties
-                   SET description = ?, photos = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
-                   WHERE id = ?`,
-                )
-                .run(bestDesc, JSON.stringify(combinedPhotos), existingRow.id);
-
-              totalUpdated++;
-              console.log(
-                `  ✨ [Re-parsed #${existingRow.id}] Recovered ${bestDesc.length} chars (was ${currentDesc.length}) & ${combinedPhotos.length} photos`,
-              );
-            }
-          } else if (post.text && post.text.length > 50) {
-            try {
-              const rawListing = await parseFacebookPostText(
-                post.text,
-                target,
-                cleanedUrl || `https://facebook.com/groups/post-${Date.now()}`,
-                post.photos,
-                post.rawDate,
-                undefined,
-                post.commerce,
-              );
-              if (rawListing) {
-                const ingestRes = await container.ingestionService.ingestRawListing(rawListing);
-                if (ingestRes.status === 'inserted') {
-                  totalInserted++;
-                  console.log(`  ➕ [New Ingest #${ingestRes.propertyId}] "${(rawListing.title ?? '').slice(0, 40)}"`);
-                }
-              }
-            } catch {
-              // ignore ingest errors
-            }
+          // A synthetic URL would generate a new identity on each run. Skip
+          // posts for which the feed doesn't supply a stable permalink.
+          if (!post.postUrl || (!post.facebookPostId && !/(?:posts|permalink)\/\d+(?:[/?#]|$)/i.test(post.postUrl))
+            || !post.text || post.text.length <= 50) continue;
+          try {
+            const parsed = await parseFacebookPostText(
+              post.text, target, cleanFacebookUrl(post.postUrl),
+              post.photos, post.rawDate, undefined, post.commerce, post.facebookPostId,
+            );
+            if (parsed) listings.push(parsed);
+          } catch (error) {
+            errors++;
+            console.error(`  ❌ Failed to reparse ${post.postUrl}:`, error);
           }
         }
+        const ingested = await ingestFacebookGroupListings(container, target, listings);
+        totalInserted += ingested.newSourceItems;
+        totalUpdated += ingested.updatedSourceItems;
+        errors += ingested.errors.length;
+        console.log(`  📥 Canonical feed: new=${ingested.newSourceItems}, updated=${ingested.updatedSourceItems}, unchanged=${ingested.unchangedSourceItems}, errors=${ingested.errors.length}`);
       } catch (err: unknown) {
         errors++;
         if (err instanceof FacebookSessionExpiredError) {
@@ -1350,10 +1301,7 @@ export async function runFacebookFreshnessSweep(
         return { checked: 0, alive: 0, dead: 0, unknown: 0, errors: 0 };
     }
 
-    const useProxy = process.argv.includes('--proxy') || env.FB_PROXY_ENABLED;
-    const proxyResult = parseProxyConfig(useProxy ? env.FB_PROXY : undefined);
-    if (useProxy && !proxyResult) throw new Error('Facebook proxy was explicitly enabled but FB_PROXY is missing or invalid.');
-    console.log(proxyResult ? `🌐 Proxy enabled: ${proxyResult.masked}` : '🏠 Direct connection enabled.');
+    console.log('🏠 Direct connection enabled.');
 
     let checked = 0;
     let alive = 0;
@@ -1366,10 +1314,7 @@ export async function runFacebookFreshnessSweep(
     let camoufox: CamoufoxBrowser;
     let context: BrowserContext;
     try {
-        camoufox = await launchCamoufox({
-            headless: true,
-            proxyUrl: useProxy ? env.FB_PROXY : undefined,
-        });
+        camoufox = await launchCamoufox({ headless: true });
         try {
             context = await camoufox.browser.newContext({ storageState: FB_SESSION_PATH });
         } catch (error) {
@@ -1390,7 +1335,6 @@ export async function runFacebookFreshnessSweep(
         for (const prop of targets) {
             const rawUrl = prop.original_url || prop.source_url;
             if (!rawUrl) {
-                container.propertiesRepo.markVerified(prop.id);
                 continue;
             }
             const url = cleanFacebookUrl(rawUrl);
@@ -1479,6 +1423,7 @@ export async function runFacebookScraper(
 
   const container = containerInstance ?? createContainer();
   runMigrations(container.db);
+  installLegacyPropertiesWriteGuard(container.db);
 
   const safetyState = loadFacebookSafetyState();
   if (safetyState.status === 'blocked') {
@@ -1495,12 +1440,6 @@ export async function runFacebookScraper(
     return { totalScraped: 0, inserted: 0, duplicates: 0, errors: 1, wireBytesTransferred: 0 };
   }
 
-  const useProxy = process.argv.includes('--proxy') || env.FB_PROXY_ENABLED;
-  const proxyResult = parseProxyConfig(useProxy ? env.FB_PROXY : undefined);
-  if (useProxy && !proxyResult) {
-    throw new Error('Facebook proxy was explicitly enabled but FB_PROXY is missing or invalid.');
-  }
-
   let totalScraped = 0;
   let totalInserted = 0;
   let totalDuplicates = 0;
@@ -1512,11 +1451,8 @@ export async function runFacebookScraper(
   const releaseLock = acquireFacebookRuntimeLock('scrape');
 
   try {
-    console.log(proxyResult ? `🌐 Proxy enabled: ${proxyResult.masked}` : '🏠 Direct connection enabled.');
-    camoufox = await launchCamoufox({
-      headless: true,
-      proxyUrl: useProxy ? env.FB_PROXY : undefined,
-    });
+    console.log('🏠 Direct connection enabled.');
+    camoufox = await launchCamoufox({ headless: true });
     context = await camoufox.browser.newContext({ storageState: FB_SESSION_PATH });
     const accountId = await getAuthenticatedFacebookAccountId(context);
     if (!accountId) throw new FacebookSessionExpiredError('Facebook session is missing required authenticated cookies');
@@ -1547,38 +1483,13 @@ export async function runFacebookScraper(
 
         console.log(`\n📥 Ingesting ${listings.length} listings from [${target.name}]...`);
 
-        for (const listing of listings) {
-          try {
-            const result = await container.ingestionService.ingestRawListing(listing);
-            if (result.status === 'inserted') {
-              totalInserted++;
-              console.log(`  ✅ Inserted: "${listing.title?.slice(0, 40)}" (ID #${result.propertyId})`);
-            } else if (result.status === 'duplicate') {
-              totalDuplicates++;
-              console.log(`  🔁 Duplicate: "${listing.title?.slice(0, 40)}" (Reason: ${result.reason || 'match'})`);
-            } else {
-              totalErrors++;
-              console.log(`  ❌ Error: ${result.error}`);
-            }
-          } catch (err: unknown) {
-            totalErrors++;
-            console.error(`  ❌ Ingest error: ${err instanceof Error ? err.message : String(err)}`);
-          }
-        }
+        const result = await ingestFacebookGroupListings(container, target, listings);
+        totalInserted += result.newSourceItems;
+        totalDuplicates += result.unchangedSourceItems;
+        totalErrors += result.errors.length;
+        console.log(`  📥 Canonical: new=${result.newSourceItems}, changed=${result.updatedSourceItems}, unchanged=${result.unchangedSourceItems}, errors=${result.errors.length}`);
       } catch (err: unknown) {
-        if (err instanceof ProxyConnectionError || isProxyError(err)) {
-          const errMsg = err instanceof Error ? err.message : String(err);
-          console.error(`💥 Facebook proxy failure: ${errMsg}`);
-          console.error('📢 Sending high-priority alert to administrators...');
-          await container.notifierService.notifyAdmins(
-            `🚨 <b>Facebook Scraper Aborted: Proxy Failure</b>\n\n` +
-              `Proxy tunnel failed to connect or disconnected:\n<code>${errMsg}</code>\n\n` +
-              `Scraper halted immediately to prevent unproxied requests and IP blocks. Please check your proxy service.`,
-          );
-          totalErrors++;
-          // Abort all remaining groups immediately to prevent further failures or unproxied leaks
-          break;
-        } else if (err instanceof FacebookSessionExpiredError) {
+        if (err instanceof FacebookSessionExpiredError) {
           sessionSafe = false;
           blockFacebookAutomation({
             reason: err.message,
@@ -1609,13 +1520,6 @@ export async function runFacebookScraper(
       await container.alertService.critical(
         '<b>Facebook automation safety-locked.</b> Run <code>npm run fb:login</code> locally to restore the session.',
       );
-    } else if (err instanceof ProxyConnectionError || isProxyError(err)) {
-      const errMsg = err instanceof Error ? err.message : String(err);
-      console.error(`💥 Fatal Facebook proxy failure: ${errMsg}`);
-      await container.notifierService.notifyAdmins(
-        `🚨 <b>Facebook Scraper Aborted: Proxy Failure</b>\n\n` +
-          `Failed to initialize browser or establish proxy tunnel:\n<code>${errMsg}</code>`,
-      );
     } else {
       console.error('💥 Fatal Facebook scraper error:', err instanceof Error ? err.message : String(err));
     }
@@ -1637,7 +1541,7 @@ export async function runFacebookScraper(
   console.log(`   ✅ Inserted        : ${totalInserted}`);
   console.log(`   🔁 Duplicates      : ${totalDuplicates}`);
   console.log(`   ❌ Errors          : ${totalErrors}`);
-  console.log(`   🌐 Proxy Wire Data : ${totalMb} MB (${totalKb} KB)`);
+  console.log(`   🌐 Observed response bytes : ${totalMb} MB (${totalKb} KB)`);
   console.log('═══════════════════════════════════════════════════════════════\n');
 
   return {

@@ -215,7 +215,11 @@ function landmarkNameToDTO(
 /**
  * Transforms an internal database Property entity into a rich, frontend-friendly PropertyDTO.
  */
-export function toPropertyDTO(property: Property, isFavorite?: boolean): PropertyDTO {
+export function toPropertyDTO(
+  property: Property,
+  isFavorite?: boolean,
+  options: { includeAllPhotos?: boolean } = {},
+): PropertyDTO {
   const fullText = `${property.title}\n${property.description}`;
   const electricity = property.electricity ?? extractElectricity(fullText);
   const water = property.water ?? extractWater(fullText);
@@ -321,7 +325,7 @@ export function toPropertyDTO(property: Property, isFavorite?: boolean): Propert
     coordinatePrecision: property.coordinate_precision ?? (coords ? 'exact' : property.location_key ? 'district' : 'city'),
     mapsUrl: property.maps_url,
     coordinates: coords,
-    photos: (property.photos ?? []).slice(0, 8),
+    photos: options.includeAllPhotos ? (property.photos ?? []) : (property.photos ?? []).slice(0, 8),
     thumbnail: property.photos && property.photos.length > 0 ? property.photos[0] : null,
     sourceUrl: property.source_url,
     originalUrl: (property.original_url || '').replace('web.facebook.com', 'www.facebook.com'),

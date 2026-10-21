@@ -152,10 +152,22 @@ export class SourceIngestionRepository {
    * the first REMOVED result must never be deactivated from stale evidence.
    */
   recordNaturalRediscovery(sourceItemId: number, observedAt: string): void {
-    this.db.prepare(`UPDATE canonical_listing_source_occurrences SET last_seen_at=?,
+    this.db.prepare(`UPDATE canonical_listing_source_occurrences SET last_seen_at=MAX(last_seen_at,?),
+      updated_at=strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE source_item_id=? AND is_current=1`)
+      .run(observedAt, sourceItemId);
+    // An observed discovery cancels terminal confirmation only if no later
+    // source check has already recorded contrary evidence. This also handles
+    // pre-v52 backfilled availability checks with no last_checked_at field.
+    this.db.prepare(`UPDATE canonical_listing_source_occurrences SET
       consecutive_terminal_checks=0,terminal_check_last_seen_at=NULL,
-      terminal_check_confirm_after_at=NULL,next_check_at=NULL,
-      updated_at=strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE source_item_id=? AND is_current=1`).run(observedAt, sourceItemId);
+      terminal_check_confirm_after_at=NULL,next_check_at=NULL
+      WHERE source_item_id=? AND is_current=1
+        AND julianday(last_seen_at)<=julianday(?)
+        AND (last_checked_at IS NULL OR julianday(last_checked_at)<=julianday(?))
+        AND NOT EXISTS (SELECT 1 FROM availability_checks a
+          WHERE a.source_occurrence_id=canonical_listing_source_occurrences.id
+            AND a.check_type='SOURCE_RECHECK' AND julianday(a.checked_at)>julianday(?))`)
+      .run(sourceItemId, observedAt, observedAt, observedAt);
     this.db.prepare(`UPDATE canonical_listings SET last_seen_at=MAX(last_seen_at,?),
       updated_at=strftime('%Y-%m-%dT%H:%M:%SZ','now')
       WHERE id IN (SELECT listing_id FROM canonical_listing_source_occurrences WHERE source_item_id=? AND listing_id IS NOT NULL AND is_current=1)`)
@@ -177,9 +189,12 @@ export class SourceIngestionRepository {
       .run(endedAt, sourceItemId, sourceEntityKey);
     const affectedListings = [...new Set(rows.map((row) => row.listing_id).filter((id): id is number => id !== null))];
     const updatePrimary = this.db.prepare(`UPDATE canonical_listings SET primary_source_occurrence_id=(
-      SELECT o.id FROM canonical_listing_source_occurrences o WHERE o.listing_id=? AND o.is_current=1
-      ORDER BY o.first_seen_at,o.id LIMIT 1),
-      status=CASE WHEN EXISTS(SELECT 1 FROM canonical_listing_source_occurrences o WHERE o.listing_id=? AND o.is_current=1) THEN status ELSE 'inactive' END
+      SELECT o.id FROM canonical_listing_source_occurrences o
+      JOIN source_items s ON s.id=o.source_item_id
+      WHERE o.listing_id=? AND o.is_current=1
+      ORDER BY COALESCE(julianday(o.posted_at),julianday(s.published_at)) IS NULL,
+        COALESCE(julianday(o.posted_at),julianday(s.published_at)),julianday(o.first_seen_at),o.id LIMIT 1),
+      status=CASE WHEN status='active' AND NOT EXISTS(SELECT 1 FROM canonical_listing_source_occurrences o WHERE o.listing_id=? AND o.is_current=1) THEN 'inactive' ELSE status END
       WHERE id=?`);
     for (const listingId of affectedListings) updatePrimary.run(listingId, listingId, listingId);
     return rows.length;
@@ -204,14 +219,19 @@ export class SourceIngestionRepository {
   /** Applies only explicit, high-confidence unavailability language in edited source content. */
   recordExplicitAvailabilityEdit(sourceItemId: number, rawText: string, observedAt: string): number {
     const text = rawText.normalize('NFKC').toLowerCase();
-    if (/\b(?:not rented|never rented|looking for rent|for rent)\b/.test(text)) return 0;
-    const rented = /\b(?:already\s+)?(?:rented|taken)\b|\bno longer available\b|\bunavailable\b/.test(text);
-    const available = !rented && !/\b(?:not available|no longer available)\b/.test(text) && /\bavailable\b/.test(text);
+    // A normal "for rent" title may remain in an edited, explicitly rented post.
+    // Negated rental phrases cannot by themselves establish unavailability.
+    const negatedRental = /\b(?:not|never)\s+rented\b|\blooking for rent\b/.test(text);
+    const removed = /\b(?:not available|no longer available|unavailable)\b/.test(text);
+    const rented = removed || (!negatedRental && /\b(?:already\s+)?(?:rented|taken)\b/.test(text));
+    const available = !rented && /\bavailable\b/.test(text);
     if (!rented && !available) return 0;
-    const rows = this.db.prepare(`SELECT o.id AS occurrence_id,o.listing_id,l.availability_status
+    const rows = this.db.prepare(`SELECT o.id AS occurrence_id,o.listing_id,l.availability_status,
+      o.availability_signal,o.availability_signal_at
       FROM canonical_listing_source_occurrences o JOIN canonical_listings l ON l.id=o.listing_id
       WHERE o.source_item_id=? AND o.is_current=1 AND o.listing_id IS NOT NULL`).all(sourceItemId) as Array<{
         occurrence_id: number; listing_id: number; availability_status: string | null;
+        availability_signal: string | null; availability_signal_at: string | null;
       }>;
     const status=rented?'rented':'available';const signal=rented?'unavailable':'available';const result=rented?'UNAVAILABLE':'ALIVE';
     const updateOccurrence = this.db.prepare(`UPDATE canonical_listing_source_occurrences SET availability_signal=?,availability_signal_at=?,
@@ -221,9 +241,25 @@ export class SourceIngestionRepository {
     const check = this.db.prepare(`INSERT INTO availability_checks(listing_id,source_occurrence_id,check_type,provider,previous_status,new_status,result,checked_at,raw_response)
       VALUES(?,?,'CONTENT_CHANGE','SOURCE_CONTENT',?,?,?, ?,?)`);
     for (const row of rows) {
+      // An older replay must not undo a later confirmation from the same source.
+      if (row.availability_signal_at && Date.parse(row.availability_signal_at) > Date.parse(observedAt)) continue;
       updateOccurrence.run(signal, observedAt, row.occurrence_id);
-      updateListing.run(status, observedAt, row.listing_id);
-      check.run(row.listing_id, row.occurrence_id, row.availability_status ?? 'unknown', status, result, observedAt, rawText.slice(0, 2000));
+      // One republished occurrence cannot invalidate independent, currently
+      // available evidence. Stale confirmations (>30 days) do not veto removal.
+      const evidence = this.db.prepare(`SELECT availability_signal,availability_signal_at
+        FROM canonical_listing_source_occurrences WHERE listing_id=? AND is_current=1
+          AND availability_signal IN ('available','unavailable') AND availability_signal_at IS NOT NULL
+          AND julianday(availability_signal_at)>=julianday(?)-30`).all(row.listing_id, observedAt) as Array<{
+            availability_signal: string; availability_signal_at: string;
+          }>;
+      const best = evidence.find((entry) => entry.availability_signal === 'available');
+      const nextStatus = best ? 'available' : evidence.length ? 'rented' : status;
+      const confirmationAt = (evidence.filter((entry) => entry.availability_signal === (best ? 'available' : 'unavailable'))
+        .map((entry) => entry.availability_signal_at).sort().at(-1)) ?? observedAt;
+      updateListing.run(nextStatus, confirmationAt, row.listing_id);
+      if (row.availability_signal !== signal) {
+        check.run(row.listing_id, row.occurrence_id, row.availability_status ?? 'unknown', nextStatus, result, observedAt, rawText.slice(0, 2000));
+      }
     }
     return rows.length;
   }
@@ -278,14 +314,15 @@ export class SourceIngestionRepository {
         mediaHash: string | null; rawPayloadJson: string } | undefined;
   }
 
-  upsertSourceItemDetailed(sourceRegistryId: number, item: SourceItemInput, observedAt = new Date().toISOString()): SourceItemUpsertResult {
+  upsertSourceItemDetailed(sourceRegistryId: number, item: SourceItemInput, observedAt = new Date().toISOString(),
+    verifiedMapPin?: { latitude: number; longitude: number }): SourceItemUpsertResult {
     const payload = JSON.stringify(item.rawPayload ?? {});
     const existing = this.db.prepare(`
-      SELECT id, content_hash, raw_text, raw_payload_json, media_hash
+      SELECT id, content_hash, raw_text, raw_payload_json, media_hash, last_seen_at
       FROM source_items WHERE source_registry_id = ? AND external_id = ?
     `).get(sourceRegistryId, item.externalId) as {
       id: number; content_hash: string | null; raw_text: string | null;
-      raw_payload_json: string; media_hash: string | null;
+      raw_payload_json: string; media_hash: string | null; last_seen_at: string;
     } | undefined;
 
     const changed = Boolean(existing && (existing.content_hash !== item.contentHash || existing.media_hash !== (item.mediaHash ?? null)));
@@ -293,10 +330,28 @@ export class SourceIngestionRepository {
       // A discovery re-read is not a new source version. Keep the last accepted
       // payload/parser facts intact: a transport/parser-only difference must
       // not silently replace richer canonical extraction data.
-      this.db.prepare(`UPDATE source_items SET last_seen_at=?,
+      // A source-verified pin is an exception: only those two location fields
+      // may change without a content/media version or another AI invocation.
+      let retainedPayload = existing.raw_payload_json;
+      if (item.sourceType === 'KHMER24' && verifiedMapPin && observedAt >= existing.last_seen_at) {
+        try {
+          const oldRaw: unknown = JSON.parse(existing.raw_payload_json);
+          if (oldRaw && typeof oldRaw === 'object' && !Array.isArray(oldRaw)) {
+            const raw = oldRaw as Record<string, unknown>;
+            const oldFacts = raw.listingExtraction;
+            const facts = oldFacts && typeof oldFacts === 'object' && !Array.isArray(oldFacts)
+              ? oldFacts as Record<string, unknown> : {};
+            retainedPayload = JSON.stringify({ ...raw, listingExtraction: {
+              ...facts, latitude: verifiedMapPin.latitude, longitude: verifiedMapPin.longitude,
+            } });
+          }
+        } catch { /* Preserve the original payload if historical JSON is invalid. */ }
+      }
+      this.db.prepare(`UPDATE source_items SET published_at=COALESCE(?,published_at),
+        raw_payload_json=?, last_seen_at=MAX(last_seen_at,?),
         processing_run_id=COALESCE(?,processing_run_id),
         updated_at=strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE id=?`)
-        .run(observedAt, item.processingRunId ?? null, existing.id);
+        .run(item.publishedAt ?? null, retainedPayload, observedAt, item.processingRunId ?? null, existing.id);
       return { id: existing.id, inserted: false, updated: false, unchanged: true, newVersion: false };
     }
     if (existing && changed) {
@@ -322,7 +377,7 @@ export class SourceIngestionRepository {
         author_url=excluded.author_url, raw_text=excluded.raw_text,
         raw_payload_json=excluded.raw_payload_json, content_hash=excluded.content_hash,
         media_hash=excluded.media_hash, published_at=COALESCE(excluded.published_at, source_items.published_at),
-        last_seen_at=excluded.last_seen_at,
+        last_seen_at=MAX(source_items.last_seen_at,excluded.last_seen_at),
         classification=COALESCE(excluded.classification, source_items.classification),
         parser_version=excluded.parser_version,
         processing_run_id=COALESCE(excluded.processing_run_id, source_items.processing_run_id),

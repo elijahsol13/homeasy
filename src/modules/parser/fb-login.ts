@@ -14,8 +14,6 @@
 import path from 'path';
 import fs from 'fs';
 import readline from 'readline';
-import { env } from '../../config/env';
-import { parseProxyConfig, isProxyError } from './proxy';
 import type { BrowserContext } from 'playwright';
 import { launchCamoufox, type CamoufoxBrowser } from './camoufox-server';
 import { attachTrafficGuard } from './traffic-guard';
@@ -60,11 +58,7 @@ export async function runFbLogin(): Promise<void> {
     fs.mkdirSync(dataDir, { recursive: true });
   }
 
-  const useProxy = process.argv.includes('--proxy') || env.FB_PROXY_ENABLED;
-  const rawProxy = useProxy ? env.FB_PROXY : undefined;
-  const proxyResult = parseProxyConfig(rawProxy);
-  if (useProxy && !proxyResult) throw new Error('Facebook proxy was explicitly enabled but FB_PROXY is missing or invalid.');
-  console.log(proxyResult ? `🌐 Proxy enabled: ${proxyResult.masked}` : '🏠 Direct connection enabled.');
+  console.log('🏠 Direct connection enabled.');
 
   const releaseLock = acquireFacebookRuntimeLock('login');
   let camoufox: CamoufoxBrowser | null = null;
@@ -72,7 +66,7 @@ export async function runFbLogin(): Promise<void> {
 
   try {
     console.log('🖥️  Opening a headed Camoufox window (pinned device fingerprint)...');
-    camoufox = await launchCamoufox({ headless: false, proxyUrl: rawProxy });
+    camoufox = await launchCamoufox({ headless: false });
     context = await camoufox.browser.newContext(
       fs.existsSync(FB_SESSION_PATH) ? { storageState: FB_SESSION_PATH } : undefined,
     );
@@ -128,13 +122,7 @@ export async function runFbLogin(): Promise<void> {
     console.log(`✅ Session saved successfully to ${FB_SESSION_PATH} (${stats.size} bytes)`);
     console.log('🎉 Run a one-group smoke test before enabling the scheduled scraper.\n');
   } catch (err: unknown) {
-    if (isProxyError(err)) {
-      console.error('\n🚨 PROXY CONNECTION FAILED: Unable to establish tunnel or authenticate through the proxy.');
-      console.error(`Details: ${err instanceof Error ? err.message : String(err)}`);
-      console.error('👉 Please check your FB_PROXY URL, credentials, and network connectivity.\n');
-    } else {
-      console.error('❌ Error during Facebook login:', err instanceof Error ? err.message : String(err));
-    }
+    console.error('❌ Error during Facebook login:', err instanceof Error ? err.message : String(err));
     throw err;
   } finally {
     if (context) await context.close().catch(() => {});

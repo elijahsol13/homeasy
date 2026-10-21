@@ -1,5 +1,5 @@
 import WebApp from '@twa-dev/sdk';
-import posthog from 'posthog-js';
+import { identifyTelegramUser } from './analytics';
 import { openTelegramContact } from './contact-actions';
 
 declare global {
@@ -39,16 +39,7 @@ export function initTelegramWebApp(): void {
       // Stitch Telegram user identity with PostHog
       const tgUser = WebApp.initDataUnsafe?.user;
       if (tgUser?.id) {
-        try {
-          posthog.identify(String(tgUser.id), {
-            username: tgUser.username,
-            first_name: tgUser.first_name,
-            last_name: tgUser.last_name,
-            language_code: tgUser.language_code,
-          });
-        } catch (phErr) {
-          console.warn('[PostHog] Error identifying user:', phErr);
-        }
+        identifyTelegramUser(tgUser);
       }
 
       // Apply Telegram theme colors to CSS variables

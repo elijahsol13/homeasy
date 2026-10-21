@@ -57,6 +57,8 @@ export async function runBot(): Promise<void> {
   const shutdown = async (signal: string) => {
     console.log(`\n⚡ Received ${signal} — shutting down bot gracefully...`);
     bot.stop();
+    await container.canonicalAlertsService.stop();
+    await container.canonicalReviewAlertsService.stop();
     await container.analyticsRepo.shutdown();
     closeDatabase(container.db);
     console.log('✅ Bot shut down.');
@@ -91,6 +93,8 @@ export async function runBot(): Promise<void> {
   console.log('🤖 Bot listening for Telegram updates in polling mode...');
   await bot.start({
     onStart: (info) => {
+      if (env.CANONICAL_ALERTS_ENABLED) container.canonicalAlertsService.start();
+      if (env.ADMIN_REVIEW_ALERTS_ENABLED) container.canonicalReviewAlertsService.start();
       console.log(`✅ Bot @${info.username} is running`);
       console.log('   Press Ctrl+C to stop.\n');
     },

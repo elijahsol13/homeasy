@@ -27,6 +27,10 @@ const EnvSchema = z.object({
   DATABASE_PATH: z.string().default('./data/homeasy.db'),
   SHADOW_INGESTION: z.enum(['true', 'false']).default('false').transform((value) => value === 'true'),
   LISTING_READ_PATH: z.enum(['legacy', 'canonical']).default('legacy'),
+  /** Explicit opt-in: persistent canonical Telegram publication alerts. */
+  CANONICAL_ALERTS_ENABLED: z.enum(['true', 'false']).default('false').transform((v) => v === 'true'),
+  /** Opt-in admin notifications for newly ingested canonical pending listings. */
+  ADMIN_REVIEW_ALERTS_ENABLED: z.enum(['true', 'false']).default('false').transform((v) => v === 'true'),
   LISTING_READ_SHADOW: z.enum(['true', 'false']).default('false').transform((value) => value === 'true'),
   /** Comma-separated Telegram IDs served canonical reads while global path remains legacy. */
   CANONICAL_READ_CANARY_TELEGRAM_IDS: z.string().default('').transform((value) =>
@@ -44,11 +48,6 @@ const EnvSchema = z.object({
   TELEGRAM_MINIAPP_URL: z.string().optional(),
   /** Bot username without @, used as a fallback deep-link base if TELEGRAM_MINIAPP_URL is not set. */
   TELEGRAM_BOT_USERNAME: z.string().optional(),
-  FB_PROXY: z.string().optional(),
-  FB_PROXY_ENABLED: z
-    .enum(['true', 'false'])
-    .default('false')
-    .transform((value) => value === 'true'),
   POSTHOG_API_KEY: z.string().optional(),
   POSTHOG_HOST: z.string().default('https://eu.i.posthog.com'),
   BRIGHTDATA_API_KEY: z.string().optional(),

@@ -3,7 +3,7 @@ import type { AppContainer } from '../../../container';
 import { isAdminTelegramUser, requireTelegramAuth, optionalTelegramAuth } from '../auth';
 import { TrackingLinkService } from '../../../services/tracking.service';
 import type { TrackedLink } from '../../../database/repositories/tracked-links.repo';
-import { isCanonicalReadCanary } from '../listing-read-path';
+import { isCanonicalReadCanary, listingReadPathForUser } from '../listing-read-path';
 
 /**
  * Domain tracking gateway (roadmap §1.5):
@@ -102,19 +102,30 @@ export const trackingRoutes: FastifyPluginAsync<{ container: AppContainer }> = a
         return reply.status(404).send({ statusCode: 404, error: 'Not Found', message: 'Tracking link not found' });
       }
 
-      // A canonical canary must not resolve a tracking link to a listing hidden by moderation.
-      if (isCanonicalReadCanary(request.telegramUser?.id) && (link.listing_public_ref || link.listing_id !== null)) {
-        const identity = link.listing_public_ref
-          ? container.listingIdentityRepo.resolvePublicRef(link.listing_public_ref)
-          : link.listing_id !== null
-            ? container.listingIdentityRepo.resolve('legacy_property_id', link.listing_id)
-            : undefined;
-        const listing = identity ? container.canonicalListingRepo.getPropertyById(identity.listingId) : undefined;
-        if (!listing) {
-          request.log.info({ event: 'canonical_canary_tracking_resolution', servedPath: 'canonical', slug, resolved: false });
-          return reply.status(404).send({ statusCode: 404, error: 'Not Found', message: 'Listing not found' });
+      // Deep links must resolve in the same identity namespace as the user's
+      // catalog. A canonical integer ID is never safe to open as a legacy ID.
+      const canonicalMode = listingReadPathForUser(request.telegramUser?.id) === 'canonical';
+      const canary = isCanonicalReadCanary(request.telegramUser?.id);
+      let listingTarget: string | number | null = null;
+      if (link.listing_public_ref || link.listing_id !== null) {
+        if (canonicalMode) {
+          const identity = link.listing_public_ref
+            ? container.listingIdentityRepo.resolvePublicRef(link.listing_public_ref)
+            : link.listing_id !== null
+              ? container.listingIdentityRepo.resolve('legacy_property_id', link.listing_id)
+              : undefined;
+          const listing = identity ? container.canonicalListingRepo.getPropertyById(identity.listingId) : undefined;
+          if (!listing) {
+            if (canary) request.log.info({ event: 'canonical_canary_tracking_resolution', servedPath: 'canonical', slug, resolved: false });
+            return reply.status(404).send({ statusCode: 404, error: 'Not Found', message: 'Listing not found' });
+          }
+          listingTarget = identity!.publicRef;
+          if (canary) request.log.info({ event: 'canonical_canary_tracking_resolution', servedPath: 'canonical', slug, publicRef: listingTarget, resolved: true });
+        } else if (!link.listing_public_ref && link.listing_id !== null) {
+          // Old links created with a legacy ID remain usable for legacy users.
+          const property = container.propertiesRepo.getPropertyById(link.listing_id);
+          if (property?.is_active === 1) listingTarget = property.id;
         }
-        request.log.info({ event: 'canonical_canary_tracking_resolution', servedPath: 'canonical', slug, publicRef: identity!.publicRef, resolved: true });
       }
 
       const body = (request.body ?? {}) as {
@@ -156,6 +167,7 @@ export const trackingRoutes: FastifyPluginAsync<{ container: AppContainer }> = a
         ok: true,
         slug: link.slug,
         attribution: trackingService.resolveAttribution(link),
+        listingTarget,
       });
     },
   );

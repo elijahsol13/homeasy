@@ -302,7 +302,7 @@ export async function showUserFilters(ctx: MyContext): Promise<void> {
   const filterButtons: Array<Array<{ text: string; callback_data: string }>> = [];
 
   activeFilters.forEach((f, i) => {
-    const { total: matchCount } = ctx.container.matcherService.findMatchingPropertiesForFilter(f, 0, 0);
+    const { total: matchCount } = ctx.container.matcherService.findMatchingPropertiesForFilter(f, 0, 0, ctx.from?.id);
     const row: Array<{ text: string; callback_data: string }> = [];
     if (matchCount > 0) {
       row.push({
@@ -411,7 +411,8 @@ export async function handleFilterCallback(ctx: MyContext, data: string): Promis
     }
 
     const filter = ctx.container.filtersRepo.getFilterById(filterId);
-    if (!filter) {
+    const requestingUser = ctx.container.usersRepo.findByTelegramId(from.id);
+    if (!filter || !requestingUser || filter.user_id !== requestingUser.id) {
       await ctx.answerCallbackQuery('❌ Alert not found');
       return;
     }
@@ -425,7 +426,7 @@ export async function handleFilterCallback(ctx: MyContext, data: string): Promis
       // Ignore if message could not be edited
     }
 
-    const { properties, total } = ctx.container.matcherService.findMatchingPropertiesForFilter(filter, 3, offset);
+    const { properties, total } = ctx.container.matcherService.findMatchingPropertiesForFilter(filter, 3, offset, from.id);
 
     if (properties.length === 0) {
       await ctx.api.sendMessage(from.id, '🏁 No more matching listings found.');
@@ -791,7 +792,7 @@ export async function handleFilterCallback(ctx: MyContext, data: string): Promis
     ctx.session.wizardStep = 'idle';
     ctx.session.filterDraft = { locations: [] };
 
-    const { properties: instantMatches, total } = ctx.container.matcherService.findMatchingPropertiesForFilter(savedFilter, 3, 0);
+    const { properties: instantMatches, total } = ctx.container.matcherService.findMatchingPropertiesForFilter(savedFilter, 3, 0, from.id);
 
     if (instantMatches.length > 0) {
       await ctx.editMessageText(

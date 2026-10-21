@@ -1,5 +1,6 @@
 import crypto from 'crypto';
-import { BulkImportSchema, RawListingSchema, type BulkIngestResult, type CleanProperty, type IngestResult } from './schemas';
+import { BulkImportSchema, RawListingSchema } from './schemas';
+import type { BulkIngestResult, CleanProperty, IngestResult } from './schemas';
 import { cleanPhotoUrls, extractDirectContacts, normalizeText } from './normalizer';
 import {
   categoryFromPropertyType,
@@ -30,11 +31,23 @@ import type { MatcherService } from '../matcher/matcher';
 import type { AlertService } from '../../services/alert.service';
 import type { CityKey, PropertyCategory } from '../../config/settings';
 import type { z } from 'zod';
-import { SourceIngestionRepository } from '../../database/repositories/source-ingestion.repo';
+import type { SourceIngestionRepository } from '../../database/repositories/source-ingestion.repo';
 import type { IngestionBatchResult, SourceAdapter, SourceRunContext } from './ingestion-contracts';
 import { extractDeterministicMetadata } from './deterministic-metadata';
 import type { RepostClusteringService } from './repost-clustering';
 import type { CanonicalShadowService } from './canonical-dedupe';
+
+/** Source-confirmed Khmer24 map pins can change without a text or photo edit.
+ * Compare the trusted scraper extraction, never AI facts or marketing landmarks. */
+function khmer24MapPin(raw: unknown): { latitude: number; longitude: number } | null {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+  const extracted = (raw as Record<string, unknown>).listingExtraction;
+  if (!extracted || typeof extracted !== 'object' || Array.isArray(extracted)) return null;
+  const facts = extracted as Record<string, unknown>;
+  if (typeof facts.latitude !== 'number' || typeof facts.longitude !== 'number') return null;
+  if (!Number.isFinite(facts.latitude) || !Number.isFinite(facts.longitude)) return null;
+  return { latitude: facts.latitude, longitude: facts.longitude };
+}
 
 type RawListing = z.infer<typeof RawListingSchema>;
 
@@ -578,8 +591,30 @@ export class IngestionService {
         const priorState = priorSourceId === undefined ? undefined : repo.findSourceItemState(priorSourceId, item.externalId);
         const sourceContentChanged = !priorState || priorState.contentHash !== (item.contentHash ?? null);
         const sourceMediaChanged = !priorState || priorState.mediaHash !== (item.mediaHash ?? null);
+        let previousPayload: Record<string, unknown> | null = null;
+        if (priorState && item.sourceIdentity.sourceType === 'KHMER24') {
+          try {
+            const parsed: unknown = JSON.parse(priorState.rawPayloadJson);
+            if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) previousPayload = parsed as Record<string, unknown>;
+          } catch { /* Treat malformed historical payload as lacking a trusted pin. */ }
+        }
+        const oldPin = khmer24MapPin(previousPayload);
+        const incomingPin = khmer24MapPin(item.raw);
+        const verifiedMapChanged = incomingPin !== null && (oldPin === null
+          || incomingPin.latitude !== oldPin.latitude || incomingPin.longitude !== oldPin.longitude);
+        // A temporary parser omission must not discard an already verified pin.
+        if (oldPin && !incomingPin && item.raw && typeof item.raw === 'object') {
+          const rawRecord = item.raw as Record<string, unknown>;
+          item = { ...item, raw: {
+            ...rawRecord,
+            listingExtraction: {
+              ...(rawRecord.listingExtraction as Record<string, unknown> | undefined),
+              latitude: (previousPayload!.listingExtraction as Record<string, unknown>).latitude,
+              longitude: (previousPayload!.listingExtraction as Record<string, unknown>).longitude,
+            },
+          } as T };
+        }
         if (adapter.processNewOrChanged && !context.dryRun) {
-          const sourceRegistryId = priorSourceId;
           const existing = priorState;
           const contentChanged = !existing || existing.contentHash !== (item.contentHash ?? null);
           const mediaChanged = !existing || existing.mediaHash !== (item.mediaHash ?? null);
@@ -656,7 +691,8 @@ export class IngestionService {
         const outcome = repo.transaction(() => {
           const resolvedSource = repo.upsertSourceDetailed(item.sourceIdentity);
           sourceIds.set(sourceKey, resolvedSource);
-          const upsert = repo.upsertSourceItemDetailed(resolvedSource.id, sourceItemInput, observedAt);
+          const upsert = repo.upsertSourceItemDetailed(resolvedSource.id, sourceItemInput, observedAt,
+            verifiedMapChanged ? incomingPin ?? undefined : undefined);
           if (!upsert.unchanged) {
             repo.replaceIdentifiers(upsert.id, identifiers);
             result.mutationReport.directWrites.identifierSetsReplaced++;
@@ -685,7 +721,7 @@ export class IngestionService {
           result.incrementalRepostClustersUpdated += repost.clustersUpdated;
         }
         const hasCurrentBinding = repo.hasCurrentCanonicalBinding(outcome.upsert.id,item.contentHash??null,item.mediaHash??null);
-        if (this.canonicalShadowService && (sourceContentChanged || sourceMediaChanged || (eligibleForRepost && !hasCurrentBinding))) {
+        if (this.canonicalShadowService && (sourceContentChanged || sourceMediaChanged || verifiedMapChanged || (eligibleForRepost && !hasCurrentBinding))) {
           canonicalSourceItemIds.add(outcome.upsert.id);
         }
         if (outcome.source.inserted) newSourceKeys.add(sourceKey);

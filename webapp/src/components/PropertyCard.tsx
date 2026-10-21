@@ -1,10 +1,11 @@
 import React, { useState } from 'react';
-import { Heart, MapPin, Send, Waves, Zap, Droplets, Ban, Sparkles, MessageCircle } from 'lucide-react';
+import { Heart, MapPin, Send, Phone, Copy, MessageCircle, Waves } from 'lucide-react';
 import type { PropertyDTO } from '../types';
 import { triggerHaptic } from '../services/telegram';
-import { openTelegramContact, telegramActionHrefFromDto } from '../services/contact-actions';
-import posthog from 'posthog-js';
-import { formatPropertyTypeLabel } from '../formatters';
+import { copyPhoneNumber, onPhoneActionClick, openTelegramContact, phoneActionHref } from '../services/contact-actions';
+import { captureEvent } from '../services/analytics';
+import { formatLocationLabel, formatPropertyTypeLabel, formatUsd } from '../formatters';
+import { PhotoWithFallback } from './PhotoWithFallback';
 
 interface PropertyCardProps {
   property: PropertyDTO;
@@ -42,12 +43,7 @@ export const PropertyCard: React.FC<PropertyCardProps> = ({
   const [photoIndex, setPhotoIndex] = useState(0);
   const photos = property.photos && property.photos.length > 0 ? property.photos : [];
   const source = sourceLabel(property.originalUrl);
-  const freshness = timeAgo(property.postedAt || property.createdAt);
-  const telegramHref = telegramActionHrefFromDto(
-    property.contact.telegramLink,
-    property.contact.phone,
-    property.contact.telegram,
-  );
+  const freshness = timeAgo(property.postedAt);
 
   const handleScroll = (e: React.UIEvent<HTMLDivElement>) => {
     const el = e.currentTarget;
@@ -65,19 +61,15 @@ export const PropertyCard: React.FC<PropertyCardProps> = ({
   };
 
   const handleTelegramClick = (e: React.MouseEvent) => {
-    if (telegramHref) {
+    if (property.contact.telegramLink) {
       triggerHaptic('light');
       try {
-        posthog.capture('contact_lead_clicked', {
-          propertyId: property.id,
-          listingRef: property.publicRef ?? null,
-          channel: 'telegram',
-        });
+        captureEvent('contact_lead_clicked', { propertyId: property.id, listingRef: property.publicRef ?? null, channel: 'telegram' });
       } catch {
         // ignore
       }
       onTelegramContactDispatched?.(property);
-      openTelegramContact(telegramHref, e);
+      openTelegramContact(property.contact.telegramLink, e);
     }
   };
 
@@ -90,7 +82,7 @@ export const PropertyCard: React.FC<PropertyCardProps> = ({
       className="bg-white dark:bg-zinc-800/90 rounded-2xl overflow-hidden border border-zinc-200 dark:border-zinc-700/60 shadow-xs hover:shadow-md transition-all active:scale-[0.99] cursor-pointer flex flex-col"
     >
       {/* Photo Carousel */}
-      <div className="relative aspect-[16/10] w-full bg-zinc-100 dark:bg-zinc-900 overflow-hidden">
+      <div className="relative aspect-[16/9] w-full bg-zinc-100 dark:bg-zinc-900 overflow-hidden">
         {photos.length > 0 ? (
           <div
             ref={carouselRef}
@@ -98,8 +90,8 @@ export const PropertyCard: React.FC<PropertyCardProps> = ({
             className="flex overflow-x-auto snap-x snap-mandatory touch-pan-x scrollbar-hide w-full h-full"
           >
             {photos.map((photoUrl, idx) => (
-              <img
-                key={idx}
+              <PhotoWithFallback
+                key={`${property.id}:${idx}:${photoUrl}`}
                 src={photoUrl}
                 alt={`${property.title} - photo ${idx + 1}`}
                 className="snap-center shrink-0 w-full h-full object-cover select-none pointer-events-none"
@@ -174,14 +166,14 @@ export const PropertyCard: React.FC<PropertyCardProps> = ({
       </div>
 
       {/* Card Content */}
-      <div className="p-3.5 flex flex-col flex-1">
+      <div className="p-3 flex flex-col flex-1">
         {/* Price & Location Header */}
         <div className="flex items-baseline justify-between gap-2 mb-1.5">
           <div className="flex items-baseline gap-1">
             {property.priceUsd > 0 ? (
               <>
                 <span className="text-xl font-bold text-zinc-900 dark:text-zinc-50">
-                  ${property.priceUsd}
+                  {formatUsd(property.priceUsd)}
                 </span>
                 <span className="text-xs text-zinc-500 dark:text-zinc-400">
                   {property.type === 'rent' ? '/month' : ''}
@@ -196,12 +188,12 @@ export const PropertyCard: React.FC<PropertyCardProps> = ({
 
           <div className="flex items-center gap-1 text-xs text-zinc-500 dark:text-zinc-400 truncate max-w-[50%]">
             <MapPin className="w-3.5 h-3.5 shrink-0 text-sky-500" />
-            <span className="truncate">{property.location || property.city}</span>
+            <span className="truncate">{formatLocationLabel(property.location || property.city)}</span>
           </div>
         </div>
 
         {/* Title */}
-        <h3 className="text-sm font-medium text-zinc-800 dark:text-zinc-200 line-clamp-2 leading-snug mb-2.5">
+        <h3 className="text-sm font-medium text-zinc-800 dark:text-zinc-200 line-clamp-2 leading-snug mb-2">
           {property.title}
         </h3>
 
@@ -215,7 +207,7 @@ export const PropertyCard: React.FC<PropertyCardProps> = ({
         )}
 
         {/* Specs & Amenities Pills */}
-        <div className="flex flex-wrap items-center gap-1.5 mb-3.5 text-[11px] font-medium text-zinc-600 dark:text-zinc-300">
+        <div className="flex flex-wrap items-center gap-1.5 mb-2.5 text-[11px] font-medium text-zinc-600 dark:text-zinc-300">
           {property.bedrooms !== null && (
             <span className="bg-zinc-100 dark:bg-zinc-700/60 px-2 py-0.5 rounded-md">
               🛏 {property.bedrooms === 0 ? 'Studio' : `${property.bedrooms} BR`}
@@ -231,32 +223,12 @@ export const PropertyCard: React.FC<PropertyCardProps> = ({
               <Waves className="w-3 h-3 text-sky-500" /> Pool
             </span>
           )}
-          {property.specs.electricity && (
-            <span className="inline-flex items-center gap-1 bg-amber-50 dark:bg-amber-950/60 text-amber-700 dark:text-amber-300 px-2 py-0.5 rounded-md">
-              <Zap className="w-3 h-3 text-amber-500" /> {property.specs.electricity.replace('Fixed Rate ', '')}
-            </span>
-          )}
-          {property.specs.water && (
-            <span className="inline-flex items-center gap-1 bg-cyan-50 dark:bg-cyan-950/60 text-cyan-700 dark:text-cyan-300 px-2 py-0.5 rounded-md">
-              <Droplets className="w-3 h-3 text-cyan-500" /> {property.specs.water}
-            </span>
-          )}
-          {property.specs.cleaning && (
-            <span className="inline-flex items-center gap-1 bg-emerald-50 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 px-2 py-0.5 rounded-md">
-              <Sparkles className="w-3 h-3 text-emerald-500" /> Cleaning
-            </span>
-          )}
-          {property.specs.restrictions.length > 0 && (
-            <span className="inline-flex items-center gap-1 bg-rose-50 dark:bg-rose-950/60 text-rose-700 dark:text-rose-300 px-2 py-0.5 rounded-md">
-              <Ban className="w-3 h-3 text-rose-500" /> {property.specs.restrictions[0]}
-            </span>
-          )}
         </div>
 
         {/* Quick Contact Buttons */}
-        {(telegramHref || property.contact.phone || property.originalUrl) && (
+        {(property.contact.telegramLink || property.contact.phone || property.contact.whatsappLink || property.originalUrl) && (
           <div className="mt-auto pt-2 border-t border-zinc-100 dark:border-zinc-700/50 flex items-center gap-2">
-            {telegramHref ? (
+            {property.contact.telegramLink ? (
               <button
                 type="button"
                 onClick={handleTelegramClick}
@@ -285,18 +257,47 @@ export const PropertyCard: React.FC<PropertyCardProps> = ({
                 onClick={(e) => {
                   e.stopPropagation();
                   triggerHaptic('light');
+                  try {
+                    captureEvent('contact_lead_clicked', { propertyId: property.id, listingRef: property.publicRef ?? null, channel: 'whatsapp' });
+                  } catch {
+                    // ignore
+                  }
                 }}
-                className="p-2 bg-zinc-100 dark:bg-zinc-700 hover:bg-zinc-200 text-zinc-700 dark:text-zinc-200 rounded-xl transition-all active:scale-95 flex items-center justify-center"
+                className="p-2 bg-zinc-100 dark:bg-zinc-700 hover:bg-zinc-200 dark:hover:bg-zinc-600 text-zinc-700 dark:text-zinc-200 rounded-xl transition-all active:scale-95 flex items-center justify-center"
                 aria-label="WhatsApp Agent"
               >
                 <MessageCircle className="w-4 h-4 text-emerald-500" />
               </a>
             )}
 
+            {property.contact.phoneLink && phoneActionHref(property.contact.phoneLink) && (
+              <a
+                href={phoneActionHref(property.contact.phoneLink)!}
+                onClick={(e) => {
+                  onPhoneActionClick(e);
+                  triggerHaptic('light');
+                  try {
+                    captureEvent('contact_lead_clicked', { propertyId: property.id, listingRef: property.publicRef ?? null, channel: 'phone' });
+                  } catch {
+                    // ignore
+                  }
+                }}
+                className="p-2 bg-zinc-100 dark:bg-zinc-700 hover:bg-zinc-200 text-zinc-700 dark:text-zinc-200 rounded-xl transition-all active:scale-95"
+                aria-label="Call Agent"
+              >
+                <Phone className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
+              </a>
+            )}
             {property.contact.phone && (
-              <span className="min-w-0 truncate text-[11px] text-zinc-500 dark:text-zinc-400 select-all" aria-label="Phone number">
-                {property.contact.phone}
-              </span>
+              <button
+                type="button"
+                onClick={(e) => void copyPhoneNumber(property.contact.phone, e)}
+                className="p-2 bg-zinc-100 dark:bg-zinc-700 hover:bg-zinc-200 dark:hover:bg-zinc-600 text-zinc-700 dark:text-zinc-200 rounded-xl transition-all active:scale-95"
+                aria-label="Copy phone number"
+                title="Copy phone number"
+              >
+                <Copy className="w-4 h-4" />
+              </button>
             )}
           </div>
         )}

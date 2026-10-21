@@ -109,7 +109,7 @@ describe('Facebook Scraper', () => {
     const photos = ['https://scontent.xx.fbcdn.net/v/t39.30808-6/sample_villa.jpg'];
 
     test('extracts all core structured fields correctly', async () => {
-      const listing = await parseFacebookPostText(postText, defaultTarget, postUrl, photos);
+      const listing = await parseFacebookPostText(postText, defaultTarget, postUrl, photos, undefined, undefined, undefined, '987654321');
 
       expect(listing).not.toBeNull();
       expect(listing!.title).toContain('Modern 3-Bedroom Villa with Swimming Pool');
@@ -129,6 +129,7 @@ describe('Facebook Scraper', () => {
       expect(listing!.source_url).toBe(
         'https://www.facebook.com/groups/siemreaprealestate/posts/987654321/',
       );
+      expect(listing!.facebook_post_id).toBe('987654321');
     });
 
     test('mapped listing passes RawListingSchema validation', async () => {
@@ -305,11 +306,34 @@ describe('Facebook Scraper', () => {
       const posts = extractPostsFromFbGraphQL(relayResponse, defaultTarget.url);
       expect(posts.length).toBe(1);
       expect(posts[0]!.id).toBe('9988776655');
+      expect(posts[0]!.facebookPostId).toBe('9988776655');
       expect(posts[0]!.text).toContain('Modern 2BR apartment');
       expect(posts[0]!.photos.length).toBe(2);
       expect(posts[0]!.postUrl).toBe(
         'https://www.facebook.com/groups/siemreaprealestate/posts/9988776655/',
       );
+    });
+
+    test('keeps a structured numeric post ID when the feed URL is opaque', () => {
+      const opaqueStory = {
+        ...sampleStory,
+        url: 'https://www.facebook.com/share/p/share-token/',
+      };
+      const posts = extractPostsFromFbGraphQL({ data: { node: opaqueStory } }, defaultTarget.url);
+      expect(posts).toHaveLength(1);
+      expect(posts[0]!.postUrl).toBe('https://www.facebook.com/share/p/share-token/');
+      expect(posts[0]!.facebookPostId).toBe('9988776655');
+    });
+
+    test('does not treat a composite GraphQL Story ID as a Facebook post ID', () => {
+      const compositeOnlyStory = {
+        ...sampleStory,
+        post_id: undefined,
+        url: 'https://www.facebook.com/share/p/share-token/',
+      };
+      const posts = extractPostsFromFbGraphQL({ data: { node: compositeOnlyStory } }, defaultTarget.url);
+      expect(posts).toHaveLength(1);
+      expect(posts[0]!.facebookPostId).toBeUndefined();
     });
 
     test('extractTextFromStory falls back to comet_sections.message.story.text', () => {

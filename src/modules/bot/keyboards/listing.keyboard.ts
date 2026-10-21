@@ -39,8 +39,22 @@ export function getTelegramContactLink(directContact?: { phone?: string; telegra
 
 // ─── Listing notification card actions ────────────────────────────────────────
 
+const PUBLIC_REF_PATTERN = /^lst_[a-f0-9]{32}$/;
+
+/** Canonical Telegram actions must never serialize the overlapping numeric ID. */
+function actionIdentity(property: Property): { prefix: string; id: string } {
+  if (property.public_listing_ref !== undefined) {
+    if (!PUBLIC_REF_PATTERN.test(property.public_listing_ref)) {
+      throw new Error('Canonical listing has an invalid public reference');
+    }
+    return { prefix: 'cb:cl', id: property.public_listing_ref };
+  }
+  return { prefix: 'cb:prop', id: String(property.id) };
+}
+
 export function listingActionKeyboard(property: Property): InlineKeyboard {
   const kb = new InlineKeyboard();
+  const { prefix, id } = actionIdentity(property);
 
   // 1. Direct Message on Telegram / WhatsApp
   const tgLink = getTelegramContactLink(property.direct_contact);
@@ -60,9 +74,9 @@ export function listingActionKeyboard(property: Property): InlineKeyboard {
     kb.row();
   }
 
-  kb.text('⭐ Save', `cb:prop:save:${property.id}`).text(
+  kb.text('⭐ Save', `${prefix}:save:${id}`).text(
     '🙈 Hide',
-    `cb:prop:hide:${property.id}`,
+    `${prefix}:hide:${id}`,
   );
 
   let origUrl = property.original_url;
@@ -74,7 +88,7 @@ export function listingActionKeyboard(property: Property): InlineKeyboard {
     kb.row().url('🔗 View Original Listing', origUrl);
   }
 
-  kb.row().text('🚩 Report (Rented/Fake)', `cb:prop:report:${property.id}`);
+  kb.row().text('🚩 Report (Rented/Fake)', `${prefix}:report:${id}`);
 
   return kb;
 }
@@ -92,10 +106,11 @@ export function favoritesListKeyboard(
   const slice = properties.slice(start, start + PAGE_SIZE);
 
   slice.forEach((prop) => {
+    const identity = actionIdentity(prop);
     const priceLabel =
       prop.price > 0 ? `$${(prop.price / 100).toLocaleString('en-US')}` : 'price on request';
     const label = `🏠 ${prop.title.slice(0, 28)} — ${priceLabel}`;
-    kb.text(label, `cb:fav:view:${prop.id}`).row();
+    kb.text(label, identity.prefix === 'cb:cl' ? `cb:clfav:view:${identity.id}` : `cb:fav:view:${identity.id}`).row();
   });
 
   // Pagination
@@ -103,8 +118,9 @@ export function favoritesListKeyboard(
   const hasPrev = page > 0;
 
   if (hasPrev || hasNext) {
-    if (hasPrev) kb.text('⬅️ Prev', `cb:fav:page:${page - 1}`);
-    if (hasNext) kb.text('Next ➡️', `cb:fav:page:${page + 1}`);
+    const pagePrefix = properties.some((prop) => prop.public_listing_ref !== undefined) ? 'cb:clfav' : 'cb:fav';
+    if (hasPrev) kb.text('⬅️ Prev', `${pagePrefix}:page:${page - 1}`);
+    if (hasNext) kb.text('Next ➡️', `${pagePrefix}:page:${page + 1}`);
     kb.row();
   }
 
@@ -114,9 +130,13 @@ export function favoritesListKeyboard(
 
 // ─── Single favorite detail ───────────────────────────────────────────────────
 
-export function favoriteDetailKeyboard(propertyId: number): InlineKeyboard {
+export function favoriteDetailKeyboard(propertyId: number | string): InlineKeyboard {
+  if (typeof propertyId === 'string' && !PUBLIC_REF_PATTERN.test(propertyId)) {
+    throw new Error('Invalid canonical favorite reference');
+  }
   return new InlineKeyboard()
-    .text('🗑 Remove Favorite', `cb:fav:remove:${propertyId}`)
+    .text('🗑 Remove Favorite', typeof propertyId === 'string'
+      ? `cb:clfav:remove:${propertyId}` : `cb:fav:remove:${propertyId}`)
     .row()
     .text('🔙 Back to Favorites', 'cb:menu:favorites');
 }

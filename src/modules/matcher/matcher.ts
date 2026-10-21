@@ -1,7 +1,10 @@
 import type { FiltersRepository, SearchFilter } from '../../database/repositories/filters.repo';
 import type { PropertiesRepository, Property } from '../../database/repositories/properties.repo';
 import type { UsersRepository } from '../../database/repositories/users.repo';
+import type { CanonicalListingRepository } from '../../database/repositories/canonical-listing.repo';
 import type { NotifierService } from '../../services/notifier';
+import { listingReadPathForUser } from '../api/listing-read-path';
+import { getCanonicalLocationKey } from '../../config/locations';
 
 // ─── Matching logic ───────────────────────────────────────────────────────────
 
@@ -40,9 +43,13 @@ export function propertyMatchesFilter(property: Property, filter: SearchFilter):
   // 6. Location (Districts / Sangkats)
   if (filter.locations.length > 0) {
     const propLocNorm = property.location.toLowerCase();
+    const propertyKey = getCanonicalLocationKey(property.location, property.city);
     const locationMatch = filter.locations.some(
-      (loc) =>
-        propLocNorm.includes(loc.toLowerCase()) || loc.toLowerCase().includes(propLocNorm),
+      (loc) => {
+        const requestedKey = getCanonicalLocationKey(loc, filter.city);
+        if (requestedKey && propertyKey) return requestedKey === propertyKey;
+        return propLocNorm.includes(loc.toLowerCase()) || loc.toLowerCase().includes(propLocNorm);
+      },
     );
     if (!locationMatch) return false;
   }
@@ -76,6 +83,7 @@ export class MatcherService {
     private readonly usersRepo: UsersRepository,
     private readonly propertiesRepo: PropertiesRepository,
     private readonly notifierService: NotifierService,
+    private readonly canonicalListingRepo: CanonicalListingRepository,
   ) {}
 
   propertyMatchesFilter(property: Property, filter: SearchFilter): boolean {
@@ -116,8 +124,11 @@ export class MatcherService {
     filter: SearchFilter,
     limit = 3,
     offset = 0,
+    telegramUserId?: number,
   ): { properties: Property[]; total: number } {
-    const allProperties = this.propertiesRepo.getRecentProperties(500);
+    const allProperties = telegramUserId !== undefined && listingReadPathForUser(telegramUserId) === 'canonical'
+      ? this.canonicalListingRepo.searchProperties({ city: filter.city, type: filter.type, limit: 500 }).items
+      : this.propertiesRepo.getRecentProperties(500);
     const matching = allProperties.filter((p) => p.is_active === 1 && this.propertyMatchesFilter(p, filter));
     return {
       properties: matching.slice(offset, offset + limit),
@@ -130,14 +141,15 @@ export class MatcherService {
    * Called by the ingestor after a new property is persisted.
    */
   async matchAndNotify(property: Property): Promise<void> {
-    const matched = this.matchProperty(property);
-
-    if (matched.length === 0) return;
-
-    console.log(`🎯 Property #${property.id} "${property.title}" matched ${matched.length} user(s)`);
-
-    for (const { telegramId } of matched) {
+    // Canonical notifications must originate from the durable publication
+    // outbox. Legacy ingests can trigger this method repeatedly on recrawls.
+    if (property.public_listing_ref) return;
+    let sent = 0;
+    for (const { telegramId } of this.matchProperty(property)) {
+      if (listingReadPathForUser(telegramId) !== 'legacy') continue;
       this.notifierService.dispatchNotification(telegramId, property);
+      sent++;
     }
+    if (sent) console.log(`🎯 Listing ${property.id} matched ${sent} user(s)`);
   }
 }

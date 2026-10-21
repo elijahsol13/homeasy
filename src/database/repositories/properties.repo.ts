@@ -776,9 +776,17 @@ export class PropertiesRepository {
     }
 
     if (options.bedrooms && options.bedrooms.length > 0) {
-      const placeholders = options.bedrooms.map(() => '?').join(', ');
-      whereClauses.push(`bedrooms IN (${placeholders})`);
-      params.push(...options.bedrooms);
+      const exactBedrooms = options.bedrooms.filter((count) => count !== 4);
+      const selections: string[] = [];
+      if (exactBedrooms.length) {
+        selections.push(`bedrooms IN (${exactBedrooms.map(() => '?').join(', ')})`);
+        params.push(...exactBedrooms);
+      }
+      if (options.bedrooms.includes(4)) {
+        selections.push('bedrooms >= ?');
+        params.push(4);
+      }
+      whereClauses.push(`(${selections.join(' OR ')})`);
     }
 
     if (options.bathrooms && options.bathrooms.length > 0) {
@@ -822,9 +830,9 @@ export class PropertiesRepository {
     // Sorting
     let orderBy = 'ORDER BY COALESCE(posted_at, created_at) DESC';
     if (options.sort === 'price_asc') {
-      orderBy = 'ORDER BY price ASC, COALESCE(posted_at, created_at) DESC';
+      orderBy = 'ORDER BY CASE WHEN price IS NULL OR price <= 0 THEN 1 ELSE 0 END ASC, price ASC, COALESCE(posted_at, created_at) DESC, id DESC';
     } else if (options.sort === 'price_desc') {
-      orderBy = 'ORDER BY price DESC, COALESCE(posted_at, created_at) DESC';
+      orderBy = 'ORDER BY CASE WHEN price IS NULL OR price <= 0 THEN 1 ELSE 0 END ASC, price DESC, COALESCE(posted_at, created_at) DESC, id DESC';
     }
 
     const limit = Math.max(1, Math.min(options.limit ?? 20, 100));
@@ -1059,6 +1067,8 @@ export class PropertiesRepository {
 }
 
 export interface PropertyFilterOptions {
+  /** Canonical-only server-computed map cluster membership (never taken from client IDs). */
+  canonicalListingIds?: number[];
   city?: CityKey;
   locations?: string[];
   category?: PropertyCategory | string;

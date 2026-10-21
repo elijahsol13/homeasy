@@ -77,7 +77,7 @@ export function createAdminHandler(container: AppContainer): Composer<MyContext>
       await ctx.reply('✅ Server FB Scraper has been <b>ENABLED</b>.', { parse_mode: 'HTML' });
     } else if (command === 'off' || command === 'disable') {
       saveScraperSettings({ facebookEnabled: false });
-      await ctx.reply('❌ Server FB Scraper has been <b>DISABLED</b>.\n\nYou can now safely run <code>npm run scrape:fb</code> locally without burning proxy traffic on the server.', { parse_mode: 'HTML' });
+      await ctx.reply('❌ Server FB Scraper has been <b>DISABLED</b>.\n\nYou can now run <code>npm run scrape:fb</code> locally if the Facebook session is ready.', { parse_mode: 'HTML' });
     } else {
       await ctx.reply('Unknown command. Use <code>/scraper on</code> or <code>/scraper off</code>.', { parse_mode: 'HTML' });
     }
