@@ -41,7 +41,7 @@ const out = `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
 <key>Label</key><string>com.homeasy.backup-monitor</string>
-<key>ProgramArguments</key><array>${[node, script, '--notify'].map(entry).join('')}</array>
+<key>ProgramArguments</key><array>${[node, script].map(entry).join('')}</array>
 <key>WorkingDirectory</key>${entry(project)}
 <key>EnvironmentVariables</key><dict>
 <key>DATABASE_PATH</key>${entry(path.join(project, 'data/homeasy.db'))}
