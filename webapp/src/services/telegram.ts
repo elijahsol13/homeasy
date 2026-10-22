@@ -1,70 +1,87 @@
-import WebApp from '@twa-dev/sdk';
 import { identifyTelegramUser } from './analytics';
 import { openTelegramContact } from './contact-actions';
+
+/** The official https://telegram.org/js/telegram-web-app.js exposes this global. */
+interface TelegramWebApp {
+  initData?: string;
+  initDataUnsafe?: {
+    start_param?: string;
+    user?: Parameters<typeof identifyTelegramUser>[0];
+  };
+  ready: () => void;
+  expand: () => void;
+  enableClosingConfirmation?: () => void;
+  themeParams?: Partial<Record<
+    'bg_color' | 'text_color' | 'hint_color' | 'link_color' |
+    'button_color' | 'button_text_color' | 'secondary_bg_color', string
+  >>;
+  HapticFeedback?: {
+    selectionChanged?: () => void;
+    notificationOccurred?: (type: 'success' | 'warning' | 'error') => void;
+    impactOccurred?: (type: 'light' | 'medium' | 'heavy') => void;
+  };
+  openLink?: (url: string) => void;
+  openTelegramLink?: (url: string) => void;
+}
 
 declare global {
   interface Window {
     Telegram?: {
-      WebApp?: typeof WebApp;
+      WebApp?: TelegramWebApp;
     };
   }
 }
 
+function telegramWebApp(): TelegramWebApp | undefined {
+  return typeof window === 'undefined' ? undefined : window.Telegram?.WebApp;
+}
+
 export function isTelegramWebApp(): boolean {
-  return typeof window !== 'undefined' && Boolean(window.Telegram?.WebApp?.initData);
+  return Boolean(telegramWebApp()?.initData);
 }
 
 export function getTelegramStartParam(): string | undefined {
-  try {
-    const sdk = WebApp.initDataUnsafe?.start_param;
-    if (sdk) return sdk;
-  } catch {
-    // fall through to native bridge
-  }
-  try {
-    const native = window.Telegram?.WebApp as { initDataUnsafe?: { start_param?: string } } | undefined;
-    return native?.initDataUnsafe?.start_param ?? undefined;
-  } catch {
-    return undefined;
-  }
+  return telegramWebApp()?.initDataUnsafe?.start_param;
 }
 
 export function initTelegramWebApp(): void {
   try {
-    if (typeof window !== 'undefined' && window.Telegram?.WebApp) {
-      WebApp.ready();
-      WebApp.expand();
-      WebApp.enableClosingConfirmation();
+    const webApp = telegramWebApp();
+    if (webApp) {
+      // Required official methods: a missing method indicates a broken bridge.
+      webApp.ready();
+      webApp.expand();
+      webApp.enableClosingConfirmation?.();
 
       // Stitch Telegram user identity with PostHog
-      const tgUser = WebApp.initDataUnsafe?.user;
+      const tgUser = webApp.initDataUnsafe?.user;
       if (tgUser?.id) {
         identifyTelegramUser(tgUser);
       }
 
       // Apply Telegram theme colors to CSS variables
-      if (WebApp.themeParams) {
+      if (webApp.themeParams) {
         const root = document.documentElement;
-        if (WebApp.themeParams.bg_color) {
-          root.style.setProperty('--tg-theme-bg-color', WebApp.themeParams.bg_color);
+        if (webApp.themeParams.bg_color) {
+          root.style.setProperty('--tg-theme-bg-color', webApp.themeParams.bg_color);
         }
-        if (WebApp.themeParams.text_color) {
-          root.style.setProperty('--tg-theme-text-color', WebApp.themeParams.text_color);
+        if (webApp.themeParams.text_color) {
+          root.style.setProperty('--tg-theme-text-color', webApp.themeParams.text_color);
         }
-        if (WebApp.themeParams.hint_color) {
-          root.style.setProperty('--tg-theme-hint-color', WebApp.themeParams.hint_color);
+        if (webApp.themeParams.hint_color) {
+          root.style.setProperty('--tg-theme-hint-color', webApp.themeParams.hint_color);
         }
-        if (WebApp.themeParams.link_color) {
-          root.style.setProperty('--tg-theme-link-color', WebApp.themeParams.link_color);
+        if (webApp.themeParams.link_color) {
+          root.style.setProperty('--tg-theme-link-color', webApp.themeParams.link_color);
         }
-        if (WebApp.themeParams.button_color) {
-          root.style.setProperty('--tg-theme-button-color', WebApp.themeParams.button_color);
+        if (webApp.themeParams.button_color) {
+          root.style.setProperty('--tg-theme-button-color', webApp.themeParams.button_color);
         }
-        if (WebApp.themeParams.button_text_color) {
-          root.style.setProperty('--tg-theme-button-text-color', WebApp.themeParams.button_text_color);
+        if (webApp.themeParams.button_text_color) {
+          root.style.setProperty('--tg-theme-button-text-color', webApp.themeParams.button_text_color);
         }
-        if (WebApp.themeParams.secondary_bg_color) {
-          root.style.setProperty('--tg-theme-secondary-bg-color', WebApp.themeParams.secondary_bg_color);
+        if (webApp.themeParams.secondary_bg_color) {
+          root.style.setProperty('--tg-theme-secondary-bg-color', webApp.themeParams.secondary_bg_color);
         }
       }
     }
@@ -75,13 +92,14 @@ export function initTelegramWebApp(): void {
 
 export function triggerHaptic(type: 'light' | 'medium' | 'heavy' | 'selection' | 'success' | 'warning' | 'error' = 'light'): void {
   try {
-    if (typeof window !== 'undefined' && window.Telegram?.WebApp?.HapticFeedback) {
+    const feedback = telegramWebApp()?.HapticFeedback;
+    if (feedback) {
       if (type === 'selection') {
-        WebApp.HapticFeedback.selectionChanged();
+        feedback.selectionChanged?.();
       } else if (type === 'success' || type === 'warning' || type === 'error') {
-        WebApp.HapticFeedback.notificationOccurred(type);
+        feedback.notificationOccurred?.(type);
       } else {
-        WebApp.HapticFeedback.impactOccurred(type);
+        feedback.impactOccurred?.(type);
       }
     }
   } catch {
@@ -90,19 +108,7 @@ export function triggerHaptic(type: 'light' | 'medium' | 'heavy' | 'selection' |
 }
 
 export function getTelegramInitData(): string {
-  try {
-    if (WebApp.initData) return WebApp.initData;
-  } catch {
-    // fall through to native bridge
-  }
-  try {
-    // Telegram Desktop on macOS exposes the payload on the native bridge
-    // while the SDK wrapper may not have hydrated it yet.
-    const native = window.Telegram?.WebApp as { initData?: string } | undefined;
-    return native?.initData || '';
-  } catch {
-    return '';
-  }
+  return telegramWebApp()?.initData || '';
 }
 
 export function openExternalUrl(url: string | null | undefined, e?: React.SyntheticEvent): void {
@@ -121,8 +127,9 @@ export function openExternalUrl(url: string | null | undefined, e?: React.Synthe
 
   // 2. Try Telegram WebApp openLink for external websites
   try {
-    if (typeof window !== 'undefined' && window.Telegram?.WebApp?.openLink) {
-      window.Telegram.WebApp.openLink(targetUrl);
+    const webApp = telegramWebApp();
+    if (webApp?.openLink) {
+      webApp.openLink(targetUrl);
       if (e) e.preventDefault();
       return;
     }

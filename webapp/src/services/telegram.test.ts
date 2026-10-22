@@ -8,6 +8,8 @@ import {
   openExternalUrl,
   getTelegramInitData,
   getTelegramStartParam,
+  initTelegramWebApp,
+  triggerHaptic,
 } from './telegram';
 import { copyPhoneNumber, onPhoneActionClick, openTelegramContact, phoneActionHref } from './contact-actions';
 
@@ -53,6 +55,58 @@ function setTelegramWebApp(app?: Partial<FakeTelegramWebApp>) {
       }
     : undefined;
 }
+
+describe('official Telegram WebApp bridge', () => {
+  afterEach(() => {
+    setTelegramWebApp();
+    vi.restoreAllMocks();
+  });
+
+  it('initializes the WebApp object provided by the official script', () => {
+    const ready = vi.fn();
+    const expand = vi.fn();
+    const enableClosingConfirmation = vi.fn();
+    setTelegramWebApp({ ready, expand, enableClosingConfirmation, initData: 'signed-data' });
+
+    initTelegramWebApp();
+
+    expect(ready).toHaveBeenCalledOnce();
+    expect(expand).toHaveBeenCalledOnce();
+    expect(enableClosingConfirmation).toHaveBeenCalledOnce();
+  });
+
+  it('does nothing without the official Telegram object', () => {
+    const warn = vi.spyOn(console, 'warn');
+    setTelegramWebApp();
+
+    expect(() => initTelegramWebApp()).not.toThrow();
+    expect(warn).not.toHaveBeenCalled();
+  });
+
+  it('reports an incomplete Telegram bridge rather than masking it', () => {
+    setTelegramWebApp({ ready: undefined });
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    initTelegramWebApp();
+
+    expect(warn).toHaveBeenCalledWith(
+      '[Telegram] Could not initialize Telegram WebApp SDK:',
+      expect.any(TypeError),
+    );
+  });
+
+  it('uses the official HapticFeedback object directly', () => {
+    const impactOccurred = vi.fn();
+    setTelegramWebApp({ HapticFeedback: {
+      impactOccurred,
+      notificationOccurred: vi.fn(),
+      selectionChanged: vi.fn(),
+    } });
+
+    triggerHaptic('medium');
+    expect(impactOccurred).toHaveBeenCalledWith('medium');
+  });
+});
 
 describe('openExternalUrl', () => {
   beforeEach(() => {
