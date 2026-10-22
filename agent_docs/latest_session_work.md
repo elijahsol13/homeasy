@@ -1,6 +1,11 @@
 # Latest Homeasy session handoff
 
-Updated 2026-10-22. **Current work: Git/Pages release published, API refreshed; Cloudflare production-branch switch needs Pages Write access, then live QA.** Evidence and scoped next steps: [reports/homeasy-live-qa-and-release-plan-20261022.md](../reports/homeasy-live-qa-and-release-plan-20261022.md). Prior full audit: [reports/homeasy-full-audit-20261022.md](../reports/homeasy-full-audit-20261022.md). Previous 2026-10-21/22 handoff (including independent backend test evidence) is preserved byte-identically in [history/session_work_2026-10-22_pre-full-audit.md](history/session_work_2026-10-22_pre-full-audit.md), indexed by `history/README.md`.
+Updated 2026-10-22. **Current work: owner has switched Cloudflare Pages production branch to `main`; a new `main` push must prove production autodeploy, then full live Chrome/Telegram QA.** Evidence and scoped next steps: [reports/homeasy-live-qa-and-release-plan-20261022.md](../reports/homeasy-live-qa-and-release-plan-20261022.md). Prior full audit: [reports/homeasy-full-audit-20261022.md](../reports/homeasy-full-audit-20261022.md). Previous 2026-10-21/22 handoff (including independent backend test evidence) is preserved byte-identically in [history/session_work_2026-10-22_pre-full-audit.md](history/session_work_2026-10-22_pre-full-audit.md), indexed by `history/README.md`.
+
+## Production branch cutover — owner update 2026-10-22
+
+- Owner explicitly confirms changing Cloudflare Pages `homeasy-app` production branch to `main` in the Cloudflare dashboard. Next verification: a fresh documentation-only commit pushed to **`main` only**, with GitHub Cloudflare Pages check showing **Production** for its exact SHA and the production domain serving the deployment. Do not infer success solely from prior Preview checks or an unchanged HTML hash.
+- `feature/telegram-mini-app` stays as a temporary rollback reference; stop synchronized branch pushes. Full read-only Chrome/Telegram Web QA follows successful deployment verification. See `reports/miniapp-manual-test-cases-20261016.md` (T01–T36) and `reports/homeasy-live-qa-and-release-plan-20261022.md` (R01–R06). No owner authorization to alter live listing moderation, scraper state or database.
 
 ## Git and application release — 2026-10-22 (supersedes older branch/deployment descriptions below)
 
