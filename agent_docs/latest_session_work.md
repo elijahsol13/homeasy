@@ -14,7 +14,9 @@ Updated 2026-10-22. Previous full checkpoint (including Git recovery bundles, SQ
 
 **Base layer:** OpenFreeMap's official Quick Start documents `https://tiles.openfreemap.org/styles/liberty` and the `@maplibre/maplibre-gl-leaflet` adapter. Its public service permits commercial use without an API key or request cap; there is no SLA and the service may be discontinued. The adapter keeps existing Leaflet markers and controls. MapLibre is loaded only with the lazy map view, so the initial feed bundle does not include the map engine; the map chunk is larger and Vite reports a chunk-size warning. English/Latin-first label changes are applied to style layers when the style loads.
 
-Locations normalization and Khmer/source-text/photo diagnosis remain separate workstreams and have not been started. Git commit and push are the remaining publication steps for this checkpoint; deployment has not been performed.
+**Git publication:** Commit `ba871fb` (`fix: align map filters and switch to OpenFreeMap`) was pushed to `origin/main` by normal fast-forward (`62daa2c..ba871fb`). `main` is synchronized with `origin/main`. No deployment was performed and `feature/telegram-mini-app` was not changed. Existing unrelated untracked user files remain untouched.
+
+Locations normalization and Khmer/source-text/photo diagnosis remain separate workstreams and have not been started. The next step is owner review in the actual Mini App before separately authorizing deployment; these changes are on `main` only.
 
 ## 2026-10-21 — public browser QA and local Newest fix (after network interruption)
 

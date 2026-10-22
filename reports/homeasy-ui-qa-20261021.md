@@ -28,4 +28,4 @@ Latest local verification after the map/filter changes: backend Jest **911/911 t
 
 ## Safety / release boundary
 
-These changes currently exist only on local `main`; the published Cloudflare Pages app uses `feature/telegram-mini-app`, and the running backend is deployed separately. No deployment, Docker rebuild, database change, scraper run, paid provider invocation, or release was part of this work. Preserve live `data/homeasy.db` and WAL/SHM plus unrelated untracked reports. QA observations and totals are point-in-time, not a live inventory guarantee.
+These changes were pushed to `origin/main` in commit `ba871fb`; they have **not** been deployed. The published Cloudflare Pages app uses `feature/telegram-mini-app`, and the running backend is deployed separately. No deployment, Docker rebuild, database change, scraper run, paid provider invocation, or release was part of this work. Preserve live `data/homeasy.db` and WAL/SHM plus unrelated untracked reports. QA observations and totals are point-in-time, not a live inventory guarantee.
