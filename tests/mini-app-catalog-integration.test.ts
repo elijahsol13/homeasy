@@ -9,6 +9,7 @@ import { CanonicalShadowService } from '../src/modules/parser/canonical-dedupe';
 
 type CatalogItem = { id: number; bedrooms: number | null; priceUsd: number; location: string; category: string };
 type CatalogPage = { page: number; limit: number; total: number; totalPages: number; items: CatalogItem[] };
+type MapResponse = { count: number; markers: Array<{ isExact: boolean; count?: number; locationKey: string | null; bedrooms: number | null; priceUsd: number; publicRef?: string }> };
 
 /** Six independent offers; their source and legacy copies exist only in RAM. */
 const offers = [
@@ -38,6 +39,11 @@ describe('Mini App listing query integration through Fastify and in-memory SQLit
     return response.json() as CatalogPage;
   };
   const bedrooms = (page: CatalogPage) => page.items.map((item) => item.bedrooms);
+  const map = async (params = ''): Promise<MapResponse> => {
+    const response = await app.inject({ method: 'GET', url: `/api/v1/properties/map${params ? `?${params}` : ''}` });
+    expect(response.statusCode).toBe(200);
+    return response.json() as MapResponse;
+  };
 
   beforeAll(async () => {
     db = new DatabaseSync(':memory:');
@@ -106,11 +112,35 @@ describe('Mini App listing query integration through Fastify and in-memory SQLit
       it('applies 4+ BR and a mixed 2 BR / 4+ BR selection (C)', async () => {
         const four = await list('bedrooms=4&sort=price_asc');
         const mixed = await list('bedrooms=2,4&sort=price_asc');
-        const unknown = path === 'canonical' ? [null] : [];
-        expect(bedrooms(four)).toEqual([4, 5, 6, ...unknown]);
-        expect(four.total).toBe(3 + unknown.length);
-        expect(bedrooms(mixed)).toEqual([2, 4, 5, 6, ...unknown]);
-        expect(mixed.total).toBe(4 + unknown.length);
+        expect(bedrooms(four)).toEqual([4, 5, 6]);
+        expect(four.total).toBe(3);
+        expect(bedrooms(mixed)).toEqual([2, 4, 5, 6]);
+        expect(mixed.total).toBe(4);
+      });
+
+      it('uses identical cohort filters for map clusters and list, including cluster-key navigation', async () => {
+        const selectedLocation = path === 'legacy' ? 'Sla Kram' : 'Wat Bo';
+        const params = `category=house&locations_json=${encodeURIComponent(JSON.stringify([selectedLocation]))}&min_price=350&max_price=550&bedrooms=4&bathrooms=2&min_lease_max=6&query=Integration`;
+        const feed = await list(params);
+        expect(feed.total).toBe(2);
+        const markers = await map(`${params}&limit=1`);
+        expect(markers.markers.filter((item) => item.isExact)).toHaveLength(0);
+        expect(markers.markers.reduce((count, marker) => count + (marker.count ?? 1), 0)).toBe(feed.total);
+        const cluster = markers.markers.find((marker) => !marker.isExact);
+        expect(cluster?.locationKey).toBeTruthy();
+        const fromCluster = await list(`${params}&map_cluster_key=${encodeURIComponent(cluster!.locationKey!)}`);
+        expect(fromCluster.total).toBe(2);
+        expect(bedrooms(fromCluster)).toEqual(expect.arrayContaining([4, 5]));
+      });
+
+      it('updates map clusters for 4+ BR, mixed selections and empty filtered cohorts', async () => {
+        const mapTotal = async (params: string) =>
+          (await map(params)).markers.reduce((count, marker) => count + (marker.count ?? 1), 0);
+        expect(await mapTotal('bedrooms=4')).toBe(3);
+        expect(await mapTotal('bedrooms=2,4')).toBe(4);
+        expect(await mapTotal('bedrooms=3')).toBe(1);
+        expect(await mapTotal('bedrooms=4&category=room')).toBe(0);
+        expect(await mapTotal('')).toBe(6);
       });
 
       it('combines category, location, price, rooms, and correct pagination (B, D)', async () => {
@@ -152,10 +182,10 @@ describe('Mini App listing query integration through Fastify and in-memory SQLit
     });
   }
 
-  it('preserves the agreed canonical unknown-bedroom and unknown-price behavior (C)', async () => {
+  it('preserves canonical unknown-price matches but excludes unknown-bedroom matches (C)', async () => {
     env.LISTING_READ_PATH = 'canonical';
     const result = await list('bedrooms=4&min_price=100&max_price=650&sort=price_asc');
-    expect(bedrooms(result)).toEqual([4, 5, 6, null]);
+    expect(bedrooms(result)).toEqual([4, 5, 6]);
   });
 
   it('rejects malformed map cluster keys and returns zero for a valid but nonexistent cluster (G, H)', async () => {

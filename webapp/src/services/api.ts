@@ -28,16 +28,10 @@ function getAuthHeaders(): HeadersInit {
   return headers;
 }
 
-export async function fetchProperties(
-  filters: FilterState,
-  page = 1,
-  limit = 20,
-): Promise<{ total: number; page: number; limit: number; totalPages: number; items: PropertyDTO[] }> {
+/** The shared listing cohort; pagination/sorting and viewport are endpoint-specific. */
+function serializeListingFilters(filters: FilterState): URLSearchParams {
   const params = new URLSearchParams();
   params.set('city', filters.city);
-  params.set('page', page.toString());
-  params.set('limit', limit.toString());
-  params.set('sort', filters.sort);
 
   if (filters.locations.length > 0) {
     params.set('locations_json', JSON.stringify(filters.locations));
@@ -73,6 +67,19 @@ export async function fetchProperties(
   if (filters.reviewStatus) {
     params.set('review_status', filters.reviewStatus);
   }
+
+  return params;
+}
+
+export async function fetchProperties(
+  filters: FilterState,
+  page = 1,
+  limit = 20,
+): Promise<{ total: number; page: number; limit: number; totalPages: number; items: PropertyDTO[] }> {
+  const params = serializeListingFilters(filters);
+  params.set('page', page.toString());
+  params.set('limit', limit.toString());
+  params.set('sort', filters.sort);
 
   const res = await fetch(`${API_BASE}/properties?${params.toString()}`, {
     headers: getAuthHeaders(),
@@ -125,15 +132,10 @@ export interface MapBounds {
 }
 
 export async function fetchMapMarkers(
-  city: string,
-  category?: string,
-  type?: 'rent' | 'sale',
+  filters: FilterState,
   bounds?: MapBounds,
 ): Promise<MapMarkerDTO[]> {
-  const params = new URLSearchParams();
-  params.set('city', city);
-  if (category) params.set('category', category);
-  if (type) params.set('type', type);
+  const params = serializeListingFilters(filters);
   if (bounds) {
     params.set('minLat', bounds.minLat.toString());
     params.set('maxLat', bounds.maxLat.toString());

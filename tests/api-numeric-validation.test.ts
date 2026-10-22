@@ -110,6 +110,9 @@ describe('catalog numeric HTTP query validation', () => {
 
       it.each([
         ['limit=cat', 'limit'], ['limit=1.5', 'limit'], ['limit=0', 'limit'],
+        ['bedrooms=4,NaN', 'bedrooms'], ['bedrooms=2.5', 'bedrooms'],
+        ['min_price=bad', 'min_price'], ['max_price=Infinity', 'max_price'],
+        ['bathrooms=NaN', 'bathrooms'], ['min_lease_max=1.5', 'min_lease_max'],
         ['minLat=Infinity&maxLat=14&minLng=103&maxLng=104', 'minLat'],
         ['minLat=13&maxLat=14&minLng=103&maxLng=NaN', 'maxLng'],
         ['minLat=13junk&maxLat=14&minLng=103&maxLng=104', 'minLat'],

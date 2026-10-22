@@ -847,6 +847,18 @@ export class PropertiesRepository {
     };
   }
 
+  /** Visit every matching legacy listing for map cohort parity, without a marker cap. */
+  forEachMapProperty(options: PropertyFilterOptions, visit: (property: Property) => void): number {
+    const batchSize = 100;
+    let visited = 0;
+    for (;;) {
+      const { items, total } = this.searchProperties({ ...options, limit: batchSize, offset: visited });
+      for (const property of items) visit(property);
+      visited += items.length;
+      if (!items.length || visited >= total) return visited;
+    }
+  }
+
   /**
    * Lightweight query for map markers with optional Bounding Box & 20% overscan buffer.
    */
@@ -857,9 +869,14 @@ export class PropertiesRepository {
       type?: 'rent' | 'sale';
       limit?: number;
       bounds?: MapBoundingBox;
+      /** Restrict map markers to the already-filtered listing cohort. */
+      listingIds?: number[];
     } = {},
   ): Property[] {
-    const whereClauses: string[] = ['is_active = 1', 'city = ?', 'latitude IS NOT NULL', 'longitude IS NOT NULL'];
+    const whereClauses: string[] = [
+      ...(options.listingIds === undefined ? ['is_active = 1'] : []),
+      'city = ?', 'latitude IS NOT NULL', 'longitude IS NOT NULL',
+    ];
     const params: Array<string | number> = [city];
 
     if (options.category) {
@@ -870,6 +887,11 @@ export class PropertiesRepository {
     if (options.type) {
       whereClauses.push('type = ?');
       params.push(options.type);
+    }
+
+    if (options.listingIds !== undefined) {
+      whereClauses.push('id IN (SELECT value FROM json_each(?))');
+      params.push(JSON.stringify(options.listingIds));
     }
 
     if (options.bounds) {
@@ -906,6 +928,8 @@ export class PropertiesRepository {
       category?: string;
       type?: 'rent' | 'sale';
       bounds?: MapBoundingBox;
+      /** Restrict cluster counts to the already-filtered listing cohort. */
+      listingIds?: number[];
     } = {},
   ): Array<{
     location: string;
@@ -916,7 +940,10 @@ export class PropertiesRepository {
     lat: number;
     lng: number;
   }> {
-    const whereClauses: string[] = ['is_active = 1', 'city = ?', '(latitude IS NULL OR longitude IS NULL)', "location != ''"];
+    const whereClauses: string[] = [
+      ...(options.listingIds === undefined ? ['is_active = 1'] : []),
+      'city = ?', '(latitude IS NULL OR longitude IS NULL)', "location != ''",
+    ];
     const params: Array<string | number> = [city];
 
     if (options.category) {
@@ -926,6 +953,11 @@ export class PropertiesRepository {
     if (options.type) {
       whereClauses.push('type = ?');
       params.push(options.type);
+    }
+
+    if (options.listingIds !== undefined) {
+      whereClauses.push('id IN (SELECT value FROM json_each(?))');
+      params.push(JSON.stringify(options.listingIds));
     }
 
     const sql = `

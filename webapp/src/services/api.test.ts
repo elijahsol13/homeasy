@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { fetchProperties, reviewProperty, trackMiniAppOpen, type TrackingAttribution } from './api';
+import { fetchMapMarkers, fetchProperties, reviewProperty, trackMiniAppOpen, type TrackingAttribution } from './api';
+import type { FilterState } from '../types';
 
 const mockFetch = vi.fn();
 (globalThis as unknown as { fetch: typeof fetch }).fetch = mockFetch as unknown as typeof fetch;
@@ -23,6 +24,41 @@ describe('bedroom selection request encoding', () => {
     await fetchProperties({ city: 'siem_reap', type: 'rent', locations: [], sort: 'newest', bedrooms: [2, 4] });
     const params = new URL(String(mockFetch.mock.calls[0][0]), 'https://homeasy.example').searchParams;
     expect(params.get('bedrooms')).toBe('2,4');
+  });
+});
+
+describe('map and feed filter parity', () => {
+  it('sends every active cohort filter on both endpoints with identical encoding and retains viewport bounds', async () => {
+    mockFetch.mockReset();
+    mockFetch.mockResolvedValue({ ok: true, json: async () => ({ total: 0, items: [], markers: [] }) } as Response);
+    const filters: FilterState = {
+      city: 'phnom_penh', locations: ['BKK1', 'Sangkat Boeung Keng Kang, Phnom Penh'],
+      mapClusterKey: 'phnom_penh:bkk1', category: 'condo', type: 'sale',
+      minPrice: 100, maxPrice: 900, bedrooms: [2, 4], bathrooms: [1, 2],
+      hasPool: false, minLeaseMax: 6, query: ' pool ', sort: 'price_desc', reviewStatus: 'pending',
+    };
+    const bounds = { minLat: 11, maxLat: 12, minLng: 104, maxLng: 105, paddingRatio: 0.2 };
+    await fetchProperties(filters, 2, 25);
+    await fetchMapMarkers(filters, bounds);
+
+    const feed = new URL(String(mockFetch.mock.calls[0][0])).searchParams;
+    const map = new URL(String(mockFetch.mock.calls[1][0])).searchParams;
+    for (const key of ['city', 'locations_json', 'map_cluster_key', 'category', 'type', 'min_price', 'max_price',
+      'bedrooms', 'bathrooms', 'has_pool', 'min_lease_max', 'query', 'review_status']) {
+      expect(map.get(key), key).toBe(feed.get(key));
+      expect(map.has(key), key).toBe(true);
+    }
+    expect(map.get('query')).toBe('pool');
+    expect(map.get('bedrooms')).toBe('2,4');
+    expect(map.get('has_pool')).toBe('false');
+    expect(map.get('sort')).toBeNull();
+    expect(map.get('page')).toBeNull();
+    expect(map.get('limit')).toBeNull();
+    expect(feed.get('sort')).toBe('price_desc');
+    expect(Object.fromEntries(['minLat', 'maxLat', 'minLng', 'maxLng', 'paddingRatio']
+      .map((key) => [key, map.get(key)]))).toEqual({
+      minLat: '11', maxLat: '12', minLng: '104', maxLng: '105', paddingRatio: '0.2',
+    });
   });
 });
 

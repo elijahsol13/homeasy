@@ -52,6 +52,37 @@ describe('CanonicalListingRepository', () => {
     expect(result.items.map((item)=>item.id)).toEqual([1]);
   });
 
+  it('orders Newest by publication time across rent-confidence tiers and paginates in that order', () => {
+    const daysAgo = (days: number) => new Date(Date.now() - days * 86_400_000).toISOString();
+    // An older exact rental must not outrank a newer probable rental.
+    db.prepare("UPDATE canonical_listings SET availability_status='available', listing_facts_json=? WHERE id=2")
+      .run(JSON.stringify({ offer_type: 'rent_or_sale' }));
+    db.prepare('UPDATE canonical_listing_source_occurrences SET posted_at=? WHERE id=101').run(daysAgo(14));
+    db.prepare('UPDATE canonical_listing_source_occurrences SET posted_at=? WHERE id=102').run(daysAgo(1));
+
+    const newest = repository.searchProperties({ city: 'siem_reap', type: 'rent', sort: 'newest' });
+    expect(newest.items.map((item) => item.id)).toEqual([2, 1]);
+    expect(newest.items.map((item) => item.match_tier)).toEqual(['PROBABLE', 'EXACT']);
+    expect(repository.searchProperties({ city: 'siem_reap', type: 'rent', sort: 'newest', limit: 1, offset: 0 })
+      .items.map((item) => item.id)).toEqual([2]);
+    expect(repository.searchProperties({ city: 'siem_reap', type: 'rent', sort: 'newest', limit: 1, offset: 1 })
+      .items.map((item) => item.id)).toEqual([1]);
+  });
+
+  it('sorts by the displayed source publication date when the occurrence date is missing', () => {
+    const daysAgo = (days: number) => new Date(Date.now() - days * 86_400_000).toISOString();
+    const newer = daysAgo(6);
+    const older = daysAgo(7);
+    db.prepare("UPDATE canonical_listings SET availability_status='available' WHERE id=2").run();
+    db.prepare('UPDATE canonical_listing_source_occurrences SET posted_at=?,last_seen_at=? WHERE id=101').run(newer,daysAgo(1));
+    db.prepare('UPDATE canonical_listing_source_occurrences SET posted_at=NULL,last_seen_at=? WHERE id=102').run(daysAgo(0));
+    db.prepare('UPDATE source_items SET published_at=? WHERE id=2').run(older);
+
+    const newest = repository.searchProperties({ city: 'siem_reap', type: 'rent', sort: 'newest' });
+    expect(newest.items.map((item) => item.id)).toEqual([1, 2]);
+    expect(newest.items.map((item) => item.posted_at)).toEqual([newer, older]);
+  });
+
   it('interprets the 4+ selection as four or more bedrooms in canonical list and map', () => {
     for (const count of [3, 4, 5, 6]) {
       db.prepare('UPDATE canonical_listings SET bedrooms=? WHERE id=1').run(count);
@@ -88,10 +119,15 @@ describe('CanonicalListingRepository', () => {
     }).items.map((item) => item.bedrooms)).toEqual([2]);
   });
 
-  it('preserves canonical inclusion of unknown bedroom counts when a bedroom filter is active', () => {
+  it('excludes unknown bedroom counts from every active bedroom selection in list and map', () => {
     db.prepare('UPDATE canonical_listings SET bedrooms=NULL WHERE id=1').run();
-    expect(repository.searchProperties({ city: 'siem_reap', type: 'rent', bedrooms: [4] })
-      .items.map((item) => item.bedrooms)).toEqual([null]);
+    for (const bedrooms of [[1], [4], [2, 4]]) {
+      expect(repository.searchProperties({ city: 'siem_reap', type: 'rent', bedrooms }).items).toEqual([]);
+      const map: number[] = [];
+      expect(repository.forEachMapProperty({ city: 'siem_reap', type: 'rent', bedrooms }, (p) => map.push(p.id))).toBe(0);
+      expect(map).toEqual([]);
+    }
+    expect(repository.searchProperties({ city: 'siem_reap', type: 'rent' }).total).toBe(1);
   });
 
   it('suppresses Khmer24 district-centre GPS in historical facts, property and synthesized map links', () => {
@@ -339,12 +375,12 @@ describe('CanonicalListingRepository', () => {
     expect(repository.searchProperties({city:'siem_reap',type:'rent'}).items.find((p)=>p.id===23)?.city_evidence).toBe('LOCAL_EVIDENCE');
   });
 
-  it('keeps unknown price and bedrooms as lower-confidence matches under filters', () => {
+  it('keeps unknown prices under price filters while excluding unknown bedrooms with a bedroom filter', () => {
     db.prepare(`UPDATE canonical_listings SET price=0, bedrooms=NULL WHERE id=1`).run();
     const budget=repository.searchProperties({city:'siem_reap',type:'rent',maxPrice:30000});
     expect(budget.items).toHaveLength(1);
     expect(budget.items[0]).toMatchObject({price:0,match_tier:'PROBABLE'});
-    expect(repository.searchProperties({city:'siem_reap',type:'rent',bedrooms:[1]}).items).toHaveLength(1);
+    expect(repository.searchProperties({city:'siem_reap',type:'rent',bedrooms:[1]}).items).toHaveLength(0);
   });
 
   it('includes unknown minimum lease and excludes terms longer than the requested maximum', () => {
@@ -387,9 +423,9 @@ describe('CanonicalListingRepository', () => {
     expect(repository.searchProperties({city:'siem_reap',type:'rent',sort:'price_desc'}).items.map((p)=>p.id))
       .toEqual([1,15,12,10,13,14,11]);
     const newest=repository.searchProperties({city:'siem_reap',type:'rent'}).items;
-    expect(newest[0].id).toBe(1);
+    expect(newest[0].id).toBe(10);
     expect(newest.find((p)=>p.id===10)).toMatchObject({match_tier:'PROBABLE',city_tier:'PROBABLE_CITY'});
-    expect(newest.findIndex((p)=>p.id===15)).toBeLessThan(newest.findIndex((p)=>p.id===10));
+    expect(newest.findIndex((p)=>p.id===15)).toBeGreaterThan(newest.findIndex((p)=>p.id===10));
     expect(repository.searchProperties({city:'siem_reap',type:'rent',sort:'price_asc'}).items[0].id)
       .toBe(10);
     const paginated=repository.searchProperties({city:'siem_reap',type:'rent',sort:'price_asc',limit:2,offset:2});

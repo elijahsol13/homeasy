@@ -510,15 +510,19 @@ export const App: React.FC = () => {
             </div>
           }>
             <MapView
-              city={filters.city}
+              filters={filters}
               onSelectProperty={openProperty}
               focusRequest={mapFocusRequest}
               onFocusHandled={() => setMapFocusRequest(null)}
               onBackToProperty={mapReturnProperty ? () => openProperty(mapReturnProperty) : undefined}
               onSelectLocation={(locationNames, clusterKey) => {
-                // The map deliberately ignores feed filters. Start from that same
-                // cohort to make the cluster count equal the resulting list total.
-                setFilters({ ...INITIAL_FILTERS, city: filters.city, locations: locationNames, mapClusterKey: clusterKey ?? undefined });
+                // Keep the map's filtered cohort and intersect it with this cluster.
+                // Location aliases are a fallback when the API has no cluster key.
+                setFilters((previous) => ({
+                  ...previous,
+                  locations: previous.locations.length > 0 ? previous.locations : locationNames,
+                  mapClusterKey: clusterKey ?? undefined,
+                }));
                 setActiveTab('feed');
               }}
             />

@@ -43,8 +43,8 @@ vi.mock('./components/PropertyDetailModal', () => ({
   ) : null,
 }));
 vi.mock('./components/MapView', () => ({
-  MapView: ({ onSelectLocation }: { onSelectLocation: (names: string[], key: string) => void }) => (
-    <button data-testid="map-view" onClick={() => onSelectLocation(['Sla Kram', 'Wat Bo', 'Sangkat Sla Kram, Siem Reap'], 'siem_reap:sla_kram')}>
+  MapView: ({ filters, onSelectLocation }: { filters: FilterState; onSelectLocation: (names: string[], key: string) => void }) => (
+    <button data-testid="map-view" data-filters={JSON.stringify(filters)} onClick={() => onSelectLocation(['Sla Kram', 'Wat Bo', 'Sangkat Sla Kram, Siem Reap'], 'siem_reap:sla_kram')}>
       View as list
     </button>
   ),
@@ -300,16 +300,37 @@ describe('feed sorting and pagination', () => {
     expect(host.querySelector('[data-testid="map-view"]')).not.toBeNull();
   });
 
-  it('T24: selecting a map cluster sends its exact key and clears previous feed filters', async () => {
+  it('T24: selecting a map cluster retains applied cohort filters and scopes the list to its exact key', async () => {
+    localStorage.setItem('homeasy_filters', JSON.stringify({
+      locations: ['Wat Bo'], bedrooms: [4], maxPrice: 800, hasPool: false, sort: 'price_desc',
+    }));
     await act(async () => { root.render(<App />); await Promise.resolve(); });
     const openMap = [...host.querySelectorAll('button')].find((button) => button.textContent === 'Open map tab')!;
     await act(async () => { openMap.click(); await Promise.resolve(); });
+    expect(JSON.parse(host.querySelector('[data-testid="map-view"]')!.getAttribute('data-filters')!)).toMatchObject({
+      locations: ['Wat Bo'], bedrooms: [4], maxPrice: 800, hasPool: false, sort: 'price_desc',
+    });
     await act(async () => { (host.querySelector('[data-testid="map-view"]') as HTMLButtonElement).click(); await new Promise((resolve) => setTimeout(resolve, 5)); });
-    expect(requests.at(-1)?.filters.locations).toEqual(['Sla Kram', 'Wat Bo', 'Sangkat Sla Kram, Siem Reap']);
+    expect(requests.at(-1)?.filters.locations).toEqual(['Wat Bo']);
     expect(requests.at(-1)?.filters.mapClusterKey).toBe('siem_reap:sla_kram');
-    expect(requests.at(-1)?.filters.maxPrice).toBeUndefined();
-    expect(requests.at(-1)?.filters.sort).toBe('newest');
+    expect(requests.at(-1)?.filters).toMatchObject({ bedrooms: [4], maxPrice: 800, hasPool: false, sort: 'price_desc' });
     expect(host.querySelector('[data-testid="map-view"]')).toBeNull();
+  });
+
+  it('passes Apply and Reset changes to the mounted MapView', async () => {
+    await act(async () => { root.render(<App />); await Promise.resolve(); });
+    await act(async () => { button('Open map tab').click(); await Promise.resolve(); });
+    const mapFilters = () => JSON.parse(host.querySelector('[data-testid="map-view"]')!.getAttribute('data-filters')!);
+    expect(mapFilters().maxPrice).toBe(800);
+    await act(async () => { button('Open filters').click(); });
+    await act(async () => { button('4+ BR').click(); });
+    await act(async () => { button('Show Listings').click(); });
+    expect(mapFilters()).toMatchObject({ locations: ['Wat Bo'], maxPrice: 800, bedrooms: [4] });
+    await act(async () => { button('Open filters').click(); });
+    await act(async () => { button('Reset').click(); });
+    expect(mapFilters()).toMatchObject({ locations: [], sort: 'newest', type: 'rent' });
+    expect(mapFilters().bedrooms).toBeUndefined();
+    expect(mapFilters().maxPrice).toBeUndefined();
   });
 
   it('documents that FilterDrawer Apply drops a map cluster key but retains its location aliases', async () => {

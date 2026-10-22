@@ -45,6 +45,72 @@ function optionalFiniteDecimal(value: unknown, parameter: string): number | unde
   return parsed;
 }
 
+/** Keep list and map endpoints on the same listing cohort. */
+function parseListingFilterOptions(
+  query: Record<string, string | undefined>,
+  isAdmin: boolean,
+): PropertyFilterOptions {
+  const city: CityKey = 'siem_reap';
+  const category = query.category || undefined;
+  const type = 'rent' as const;
+  const minPrice = optionalInteger(query.min_price, 'min_price', 0, 100);
+  const maxPrice = optionalInteger(query.max_price, 'max_price', 0, 100);
+  const bedrooms = optionalIntegerList(query.bedrooms, 'bedrooms');
+  const bathrooms = optionalIntegerList(query.bathrooms, 'bathrooms');
+
+  let locations: string[] | undefined;
+  if (query.locations_json) {
+    // JSON preserves commas in source addresses; CSV stays supported.
+    try {
+      const parsed: unknown = JSON.parse(query.locations_json);
+      if (Array.isArray(parsed) && parsed.length <= 100 && parsed.every((item) => typeof item === 'string' && item.length <= 250)) {
+        locations = parsed.map((item: string) => item.trim()).filter(Boolean);
+      }
+    } catch { /* Ignore an invalid optional filter payload. */ }
+  } else if (query.locations) {
+    locations = query.locations.split(',').map((value) => value.trim()).filter(Boolean);
+  }
+
+  let hasPool: boolean | undefined;
+  if (query.has_pool !== undefined) hasPool = query.has_pool === 'true' || query.has_pool === '1';
+
+  let petFriendly: boolean | undefined;
+  if (query.pet_friendly !== undefined) petFriendly = query.pet_friendly === 'true' || query.pet_friendly === '1';
+
+  const primaryLandmark = query.primary_landmark ? query.primary_landmark.trim() : undefined;
+  const minLeaseMax = optionalInteger(query.min_lease_max, 'min_lease_max');
+  const textQuery = query.query ? query.query.trim() : undefined;
+  const sort = query.sort === 'price_asc' || query.sort === 'price_desc' ? query.sort : 'newest';
+
+  let reviewStatus: PropertyFilterOptions['reviewStatus'];
+  if (isAdmin && query.review_status) {
+    if (query.review_status === 'pending' || query.review_status === 'approved' || query.review_status === 'rejected') {
+      reviewStatus = query.review_status;
+    } else if (query.review_status === 'all') {
+      reviewStatus = 'all';
+    }
+  }
+
+  return {
+    city,
+    locations,
+    category,
+    type,
+    minPrice,
+    maxPrice,
+    bedrooms,
+    bathrooms,
+    hasPool,
+    petFriendly,
+    primaryLandmark,
+    minLeaseMax,
+    query: textQuery,
+    sort,
+    reviewStatus,
+    includeInactive: isAdmin && reviewStatus !== undefined,
+  };
+}
+
 export const propertiesRoutes: FastifyPluginAsync<{ container: AppContainer }> = async (fastify, opts) => {
   const { container } = opts;
 
@@ -57,78 +123,14 @@ export const propertiesRoutes: FastifyPluginAsync<{ container: AppContainer }> =
     { preHandler: optionalTelegramAuth },
     async (request, reply) => {
       const query = request.query as Record<string, string | undefined>;
-
-      const city: CityKey = 'siem_reap';
-      const category = query.category || undefined;
-      const type = 'rent' as const;
-
-      // Price in USD -> convert to USD cents
-      const minPrice = optionalInteger(query.min_price, 'min_price', 0, 100);
-      const maxPrice = optionalInteger(query.max_price, 'max_price', 0, 100);
-
-      // Bedrooms
-      const bedrooms = optionalIntegerList(query.bedrooms, 'bedrooms');
-
-      // Bathrooms
-      const bathrooms = optionalIntegerList(query.bathrooms, 'bathrooms');
-
-      // Locations / Sangkats
-      let locations: string[] | undefined;
-      if (query.locations_json) {
-        // Map clusters send every original displayed-location alias (T24).
-        // JSON preserves commas in source addresses; CSV stays supported.
-        try {
-          const parsed: unknown = JSON.parse(query.locations_json);
-          if (Array.isArray(parsed) && parsed.length <= 100 && parsed.every((item) => typeof item === 'string' && item.length <= 250)) {
-            locations = parsed.map((item: string) => item.trim()).filter(Boolean);
-          }
-        } catch { /* Ignore an invalid optional filter payload. */ }
-      } else if (query.locations) {
-        locations = query.locations
-          .split(',')
-          .map((s) => s.trim())
-          .filter((s) => s.length > 0);
-      }
-
-      // Has pool
-      let hasPool: boolean | undefined;
-      if (query.has_pool !== undefined) {
-        hasPool = query.has_pool === 'true' || query.has_pool === '1';
-      }
-
-      // Pet friendly
-      let petFriendly: boolean | undefined;
-      if (query.pet_friendly !== undefined) {
-        petFriendly = query.pet_friendly === 'true' || query.pet_friendly === '1';
-      }
-
-      // Primary landmark
-      const primaryLandmark = query.primary_landmark ? query.primary_landmark.trim() : undefined;
-
-      // Min lease
-      const minLeaseMax = optionalInteger(query.min_lease_max, 'min_lease_max');
-
-      // Search text query
-      const textQuery = query.query ? query.query.trim() : undefined;
-
-      // Sort
-      const sort = query.sort === 'price_asc' || query.sort === 'price_desc' ? query.sort : 'newest';
-
-      // Admin-only review-status filter (pending/approved/rejected/all)
-      const canary = isCanonicalReadCanary(request.telegramUser?.id);
       const isAdmin = (
         isAdminTelegramUser(request.telegramUser?.id) ||
         (request.telegramUser
           ? container.usersRepo.findByTelegramId(request.telegramUser.id)?.role === 'admin'
           : false));
-      let reviewStatus: 'pending' | 'approved' | 'rejected' | 'all' | undefined;
-      if (isAdmin && query.review_status) {
-        if (query.review_status === 'pending' || query.review_status === 'approved' || query.review_status === 'rejected') {
-          reviewStatus = query.review_status;
-        } else if (query.review_status === 'all') {
-          reviewStatus = 'all';
-        }
-      }
+      const filterOptions = parseListingFilterOptions(query, isAdmin);
+      const city: CityKey = filterOptions.city ?? 'siem_reap';
+      const canary = isCanonicalReadCanary(request.telegramUser?.id);
 
       // Pagination
       const page = optionalInteger(query.page, 'page', 1) ?? 1;
@@ -137,22 +139,7 @@ export const propertiesRoutes: FastifyPluginAsync<{ container: AppContainer }> =
       if (!Number.isSafeInteger(offset)) throw new InvalidNumericQuery('page');
 
       const searchOptions: PropertyFilterOptions = {
-        city,
-        locations,
-        category,
-        type,
-        minPrice,
-        maxPrice,
-        bedrooms,
-        bathrooms,
-        hasPool,
-        petFriendly,
-        primaryLandmark,
-        minLeaseMax,
-        query: textQuery,
-        sort,
-        reviewStatus,
-        includeInactive: isAdmin && reviewStatus !== undefined,
+        ...filterOptions,
         limit,
         offset,
       };
@@ -165,7 +152,7 @@ export const propertiesRoutes: FastifyPluginAsync<{ container: AppContainer }> =
           return reply.status(400).send({ error: 'Invalid map cluster key' });
         }
         const unlocated: Array<{ listingId: number; city: string; location: string; locationKey: string | null; priceUsd: number }> = [];
-        container.canonicalListingRepo.forEachMapProperty({ city, type, category }, (property) => {
+        container.canonicalListingRepo.forEachMapProperty(searchOptions, (property) => {
           const marker = toMapMarkerDTO(property);
           if (!marker.coordinates) unlocated.push({
             listingId: property.id,
@@ -246,9 +233,15 @@ export const propertiesRoutes: FastifyPluginAsync<{ container: AppContainer }> =
    */
   fastify.get('/api/v1/properties/map', { preHandler: optionalTelegramAuth }, async (request, reply) => {
     const query = request.query as Record<string, string | undefined>;
-    const city: CityKey = 'siem_reap';
-    const category = query.category || undefined;
-    const type = 'rent' as const;
+    const isAdmin = (
+      isAdminTelegramUser(request.telegramUser?.id) ||
+      (request.telegramUser
+        ? container.usersRepo.findByTelegramId(request.telegramUser.id)?.role === 'admin'
+        : false));
+    const filterOptions = parseListingFilterOptions(query, isAdmin);
+    const city: CityKey = filterOptions.city ?? 'siem_reap';
+    const category = filterOptions.category;
+    const type = filterOptions.type ?? 'rent';
     const limit = Math.min(500, optionalInteger(query.limit, 'limit', 1) ?? 300);
 
     let bounds: MapBoundingBox | undefined = undefined;
@@ -297,7 +290,7 @@ export const propertiesRoutes: FastifyPluginAsync<{ container: AppContainer }> =
 
       let canonicalCount: number;
       try {
-        canonicalCount = container.canonicalListingRepo.forEachMapProperty({ city, type, category }, (property) => {
+        canonicalCount = container.canonicalListingRepo.forEachMapProperty(filterOptions, (property) => {
           const marker = toMapMarkerDTO(property);
           if (marker.coordinates) {
             if (exactMarkers.length < limit && isInsideBounds(marker.coordinates)) exactMarkers.push(marker);
@@ -329,9 +322,11 @@ export const propertiesRoutes: FastifyPluginAsync<{ container: AppContainer }> =
       if (canary) {
         const legacyStarted = performance.now();
         try {
-          const legacyProperties = container.propertiesRepo.getPropertiesForMap(city, { category, type, limit, bounds });
+          const legacyListingIds: number[] = [];
+          container.propertiesRepo.forEachMapProperty(filterOptions, (property) => legacyListingIds.push(property.id));
+          const legacyProperties = container.propertiesRepo.getPropertiesForMap(city, { category, type, limit, bounds, listingIds: legacyListingIds });
           const legacyExactMarkers = legacyProperties.map(toMapMarkerDTO);
-          const legacyClusters = container.propertiesRepo.getSangkatClustersForMap(city, { category, type, bounds })
+          const legacyClusters = container.propertiesRepo.getSangkatClustersForMap(city, { category, type, bounds, listingIds: legacyListingIds })
             .map((cluster, index) => toSangkatClusterDTO(cluster, city, index));
           const legacyMarkers = [...legacyExactMarkers, ...legacyClusters];
           const markerIdentity = (marker: typeof canonicalMarkers[number]) => marker.isExact
@@ -353,11 +348,14 @@ export const propertiesRoutes: FastifyPluginAsync<{ container: AppContainer }> =
       return reply.send({ city, count: canonicalMarkers.length, markers: canonicalMarkers });
     }
 
+    const listingIds: number[] = [];
+    container.propertiesRepo.forEachMapProperty(filterOptions, (property) => listingIds.push(property.id));
     const exactProperties = container.propertiesRepo.getPropertiesForMap(city, {
       category,
       type,
       limit,
       bounds,
+      listingIds,
     });
 
     const exactMarkers = exactProperties.map(toMapMarkerDTO);
@@ -366,6 +364,7 @@ export const propertiesRoutes: FastifyPluginAsync<{ container: AppContainer }> =
       category,
       type,
       bounds,
+      listingIds,
     });
 
     const clusterMarkers = clusters.map((c, idx) => toSangkatClusterDTO(c, city, idx));

@@ -1,6 +1,30 @@
 # Latest Session Work — bounded handoff
 
-Updated 2026-10-21. Previous full checkpoint (including Git recovery bundles, SQLite consolidation and earlier Mini App diagnostics): [history/session_work_2026-10-21_before-git-hardening.md](history/session_work_2026-10-21_before-git-hardening.md). Historical checkpoints are indexed in `history/README.md`. Follow `harness_protocol.md`.
+Updated 2026-10-22. Previous full checkpoint (including Git recovery bundles, SQLite consolidation and earlier Mini App diagnostics): [history/session_work_2026-10-21_before-git-hardening.md](history/session_work_2026-10-21_before-git-hardening.md). Historical checkpoints are indexed in `history/README.md`. Follow `harness_protocol.md`.
+
+## 2026-10-22 — Map/Feed parity, bedroom filters and OpenFreeMap
+
+**Current worktree:** The Mini App sends the active listing cohort filters to feed and map, refetches markers after applied filter changes, clears stale pins and ignores late responses. Cluster-to-feed navigation retains the filter cohort and applies the selected cluster key. The API shares list/map filter parsing; legacy markers and clusters are restricted to IDs returned by the filtered search. Canonical and legacy bedroom filters interpret `4` as `>=4`; unknown bedroom counts are excluded whenever a bedroom filter is active. The Leaflet basemap now uses OpenFreeMap Liberty through MapLibre GL Leaflet, with name labels preferring `name:en`, `name_en` and `name:latin`; map name labels without those fields are suppressed. Map resources are disposed when the map view unmounts.
+
+**Final verification:** `npm test -- --runInBand --forceExit` — **911/911 PASS (85/85 suites)**; `npm --prefix webapp run test -- --reporter=dot` — **60/60 PASS**; `npm run typecheck && npm run lint` — PASS; `npm --prefix webapp run build` — PASS; `git diff --check` — PASS. `npm --prefix webapp run lint` exits 0 with seven warnings (two in `MapView.tsx`, five elsewhere). Jest's existing open async-handle warning remains. Vite warns that the lazy MapLibre map chunk is about 1.21 MB unminified (332.58 KB gzip); the separate worker bundle is about 517 KB.
+
+**Owner decisions:** The owner approved excluding unknown bedroom counts from active bedroom filters, applying membership-changing feed filters to map markers/clusters (with admin review status only for admins and no effect from sort), and using OpenFreeMap. The decisions are recorded in `decisions.md`. The local implementation has not been deployed. No production database write, scraper or paid AI/provider call occurred.
+
+**UI audit and owner decision:** `FilterDrawer.tsx` exposes Category, Budget, Bedrooms, Bathrooms, Lease Requirement, Swimming Pool Required, Locations & Sangkats, an admin-only Review Status control, and Sort By. `Header.tsx` provides free-text search; city is displayed as fixed Siem Reap. The owner approved applying the membership-changing filters to map pins/clusters, carrying Review Status for admins, and excluding Sort By from map membership. `type` is fixed to rent and is not selectable in the UI.
+
+**Base layer:** OpenFreeMap's official Quick Start documents `https://tiles.openfreemap.org/styles/liberty` and the `@maplibre/maplibre-gl-leaflet` adapter. Its public service permits commercial use without an API key or request cap; there is no SLA and the service may be discontinued. The adapter keeps existing Leaflet markers and controls. MapLibre is loaded only with the lazy map view, so the initial feed bundle does not include the map engine; the map chunk is larger and Vite reports a chunk-size warning. English/Latin-first label changes are applied to style layers when the style loads.
+
+Locations normalization and Khmer/source-text/photo diagnosis remain separate workstreams and have not been started. Git commit and push are the remaining publication steps for this checkpoint; deployment has not been performed.
+
+## 2026-10-21 — public browser QA and local Newest fix (after network interruption)
+
+**Evidence:** [reports/homeasy-ui-qa-20261021.md](../reports/homeasy-ui-qa-20261021.md) records reproduction, cause, file paths, priorities and remaining decisions. Chrome QA of the published app found Newest/date ordering, Map/Feed filter mismatch, `4+ BR` unknown-room matches and raw Locations duplicates. Original Khmer titles and image failures need per-listing/source evidence before any data-pipeline change.
+
+**Local code:** `src/database/repositories/canonical-listing.repo.ts` now sorts Newest by source publication timestamp before confidence-tier tie breakers, with stable `l.id`; when occurrence `posted_at` is missing, `source_items.published_at` precedes scraper `last_seen_at`. `tests/canonical-listing.repo.test.ts` covers tier inversion, pagination and displayed publication-date fallback. The additional source-date test failed **before** its fix (actual IDs `[2,1]` vs expected `[1,2]`) and passed afterward. At that checkpoint, no other filter/map/location contract had been changed; the later local draft is recorded above.
+
+**Verification:** targeted canonical repo Jest **25/25 PASS**; full backend Jest **895/895 PASS** (85/85 suites) with existing `--forceExit` async-handle warning; frontend Vitest **55/55 PASS**, webapp production build PASS, root TypeScript and backend ESLint PASS, `git diff --check` PASS. Live Mini App and Telegram WebView were **not retested after the local change**. No push, deployment, production SQLite writes, scrapers or paid LLMs. Existing untracked reports and user files remain in place.
+
+**Next:** confirm desired Map/Feed filtering contract and treatment of unknown bedrooms, then implement/test those as separate scoped changes; normalize official sangkat metadata/filters using existing catalog with ambiguity handling. Investigate concrete Khmer/raw-copy and photo examples by public ref before patching the ingestion pipeline. Deployment of local Newest fix remains a separate release step.
 
 ## 2026-10-21 — GitHub publication, Mini App sync, Docker refresh (owner-authorized)
 

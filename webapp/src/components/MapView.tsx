@@ -1,13 +1,37 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import L from 'leaflet';
-import type { CityKey, MapFocusRequest, MapMarkerDTO, PropertyDTO } from '../types';
+import { maplibreGL } from '@maplibre/maplibre-gl-leaflet';
+import { setWorkerUrl, type Map as MapLibreMap } from 'maplibre-gl';
+import workerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?worker&url';
+import 'maplibre-gl/dist/maplibre-gl.css';
+import type { CityKey, FilterState, MapFocusRequest, MapMarkerDTO, PropertyDTO } from '../types';
 import { fetchMapMarkers, fetchPropertyById } from '../services/api';
 import { triggerHaptic } from '../services/telegram';
 import { ArrowLeft, ChevronRight, Waves, MapPin } from 'lucide-react';
 import { formatPropertyTypeLabel } from '../formatters';
 
+const OPENFREEMAP_STYLE_URL = 'https://tiles.openfreemap.org/styles/liberty';
+const ENGLISH_LABEL_EXPRESSION = ['coalesce', ['get', 'name:en'], ['get', 'name_en'], ['get', 'name:latin']];
+
+setWorkerUrl(workerUrl);
+
+function referencesNameField(value: unknown): boolean {
+  if (!Array.isArray(value)) return false;
+  if (value[0] === 'get' && typeof value[1] === 'string' && /^name(?::|_|$)/.test(value[1])) return true;
+  return value.some(referencesNameField);
+}
+
+function applyEnglishFirstLabels(map: MapLibreMap): void {
+  for (const layer of map.getStyle().layers) {
+    if (layer.type !== 'symbol') continue;
+    const textField = layer.layout?.['text-field'];
+    if (!textField || !referencesNameField(textField)) continue;
+    map.setLayoutProperty(layer.id, 'text-field', ENGLISH_LABEL_EXPRESSION as never);
+  }
+}
+
 interface MapViewProps {
-  city: CityKey;
+  filters: FilterState;
   onSelectProperty: (property: PropertyDTO) => void;
   onSelectLocation?: (locationNames: string[], clusterKey: string | null) => void;
   focusRequest?: MapFocusRequest | null;
@@ -21,13 +45,16 @@ const CITY_COORDS: Record<CityKey, [number, number]> = {
 };
 
 export const MapView: React.FC<MapViewProps> = ({
-  city,
+  filters,
   onSelectProperty,
   onSelectLocation,
   focusRequest,
   onFocusHandled,
   onBackToProperty,
 }) => {
+  const city = filters.city;
+  // Leaflet registers its moveend handler once. Always read the latest cohort.
+  const filtersRef = useRef(filters);
   const mapContainerRef = useRef<HTMLDivElement>(null);
   const mapInstanceRef = useRef<L.Map | null>(null);
   const markersLayerRef = useRef<L.LayerGroup | null>(null);
@@ -57,7 +84,7 @@ export const MapView: React.FC<MapViewProps> = ({
       paddingRatio: 0.2, // ~20% buffer overscan (~5-10 mm beyond screen on mobile)
     };
 
-    fetchMapMarkers(city, undefined, undefined, bounds)
+    fetchMapMarkers(filtersRef.current, bounds)
       .then((data) => {
         if (requestId !== markersRequestId.current) return;
         setMarkers(data);
@@ -70,6 +97,17 @@ export const MapView: React.FC<MapViewProps> = ({
       });
   };
 
+  // Invalidate outstanding requests before passive effects or their promises
+  // can commit markers from a previous filter cohort.
+  useLayoutEffect(() => {
+    filtersRef.current = filters;
+    ++markersRequestId.current;
+    setMarkers([]);
+    setSelectedMarker(null);
+    setZoomedCluster(null);
+    setLoading(true);
+  }, [filters]);
+
   // Initialize Leaflet map
   useEffect(() => {
     if (!mapContainerRef.current) return;
@@ -78,13 +116,15 @@ export const MapView: React.FC<MapViewProps> = ({
       const map = L.map(mapContainerRef.current, {
         center: CITY_COORDS[city],
         zoom: 13,
+        minZoom: 1,
+        maxBounds: [[180, -Infinity], [-180, Infinity]],
+        maxBoundsViscosity: 1,
         zoomControl: false,
       });
 
-      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-        attribution: '&copy; OpenStreetMap contributors',
-        maxZoom: 19,
-      }).addTo(map);
+      const openFreeMapLayer = maplibreGL({ style: OPENFREEMAP_STYLE_URL }).addTo(map);
+      const maplibreMap = openFreeMapLayer.getMaplibreMap();
+      maplibreMap.on('style.load', () => applyEnglishFirstLabels(maplibreMap));
 
       L.control.zoom({ position: 'topright' }).addTo(map);
 
@@ -107,13 +147,20 @@ export const MapView: React.FC<MapViewProps> = ({
     } else {
       mapInstanceRef.current.setView(CITY_COORDS[city], 13);
     }
+
+    return () => {
+      if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current);
+      debounceTimerRef.current = null;
+      ++markersRequestId.current;
+      mapInstanceRef.current?.remove();
+      mapInstanceRef.current = null;
+      markersLayerRef.current = null;
+    };
   }, [city]);
 
-  // Initial fetch / city change fetch
+  // Applied cohort changes refetch against the current bounds, even while
+  // Leaflet stays mounted behind the filter drawer.
   useEffect(() => {
-    setSelectedMarker(null);
-    setZoomedCluster(null);
-    setLoading(true);
     if (mapInstanceRef.current) {
       fetchMarkersForCurrentBounds();
     }
@@ -121,7 +168,7 @@ export const MapView: React.FC<MapViewProps> = ({
       if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current);
       ++markersRequestId.current;
     };
-  }, [city]);
+  }, [filters]);
 
   // Render markers onto map
   useEffect(() => {

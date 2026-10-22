@@ -113,16 +113,16 @@ async function main() {
     await page.getByRole('button', { name: '4+ BR' }).click();
     await page.getByRole('button', { name: 'Show Listings' }).click();
     const filtered = await (await filteredResponse).json();
-    assert.deepEqual(filtered.items.map((item) => item.bedrooms).sort((a, b) => (a ?? 99) - (b ?? 99)), [4, 5, 6, null]);
+    assert.deepEqual(filtered.items.map((item) => item.bedrooms).sort((a, b) => a - b), [4, 5, 6]);
     await page.waitForFunction(() => [...document.querySelectorAll('h3')]
-      .filter((el) => /^Integration \d/.test(el.textContent || '')).length === 4);
-    console.log('PASS: FilterDrawer 4+ BR, canonical NULL policy and rendered cards (B, C)');
+      .filter((el) => /^Integration \d/.test(el.textContent || '')).length === 3);
+    console.log('PASS: FilterDrawer 4+ BR excludes unknown bedrooms in rendered cards (B, C)');
 
     const sortedResponse = page.waitForResponse((response) => response.url().includes('/properties?')
       && new URL(response.url()).searchParams.get('sort') === 'price_desc');
     await page.getByRole('button', { name: 'Most expensive' }).click();
     const sorted = await (await sortedResponse).json();
-    assert.deepEqual(sorted.items.map((item) => item.priceUsd), [600, 500, 400, 0]);
+    assert.deepEqual(sorted.items.map((item) => item.priceUsd), [600, 500, 400]);
     await page.waitForFunction(() => document.querySelector('button[aria-pressed="true"]')?.textContent?.includes('Most expensive'));
     await page.reload();
     await page.waitForFunction(() => document.querySelector('button[aria-pressed="true"]')?.textContent?.includes('Most expensive'));
@@ -130,6 +130,19 @@ async function main() {
     assert.deepEqual(persisted.bedrooms, [4]);
     assert.equal(persisted.sort, 'price_desc');
     console.log('PASS: real sort, reload and restored 4+ BR selection (D, F)');
+
+    // Verify the map inherits the applied bedroom filter through a real browser request.
+    const filteredMapResponse = page.waitForResponse((response) => response.url().includes('/properties/map?')
+      && new URL(response.url()).searchParams.get('bedrooms') === '4');
+    await page.getByRole('button', { name: 'Map', exact: true }).click();
+    const filteredMap = await filteredMapResponse;
+    assert.equal(filteredMap.status(), 200);
+    const mapBody = await filteredMap.json();
+    assert.ok(mapBody.markers.every((marker) => marker.bedrooms == null || marker.bedrooms >= 4));
+    const visibleOffers = mapBody.markers.reduce((count, marker) => count + (marker.count ?? 1), 0);
+    assert.equal(visibleOffers, 3, 'map exact pins and cluster counts must represent the same filtered cohort');
+    await page.getByRole('button', { name: 'Explore', exact: true }).click();
+    console.log('PASS: applied bedroom filters reach the map API in a real browser (G)');
 
     await page.evaluate(() => localStorage.setItem('homeasy_filters', '{broken-json'));
     await page.reload();

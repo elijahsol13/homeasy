@@ -109,16 +109,17 @@ export class CanonicalListingRepository {
   }
 
   private listSql(options: PropertyFilterOptions, from: string, whereSql: string, paginated = true): string {
-    const priceSort = options.sort === 'price_asc' || options.sort === 'price_desc';
-    const orderBy = options.sort === 'price_asc'
-      ? 'ORDER BY CASE WHEN l.price IS NULL OR l.price<=0 THEN 1 ELSE 0 END ASC,l.price ASC,COALESCE(o.posted_at,o.last_seen_at,l.last_seen_at) DESC,l.id DESC'
-      : options.sort === 'price_desc'
-        ? 'ORDER BY CASE WHEN l.price IS NULL OR l.price<=0 THEN 1 ELSE 0 END ASC,l.price DESC,COALESCE(o.posted_at,o.last_seen_at,l.last_seen_at) DESC,l.id DESC'
-        : 'ORDER BY COALESCE(o.posted_at,o.last_seen_at,l.last_seen_at) DESC,l.id DESC';
+    // Match toProperty().posted_at (the card's age badge) before falling back to scraper sightings.
+    const dateOrder = 'COALESCE(o.posted_at,s.published_at,o.last_seen_at,l.last_seen_at) DESC';
     const rentTier=this.rentTierSql(options);
     const cityTier=this.cityTierSql(options.city);
-    const tierOrder = priceSort ? '' : `${cityTier}='EXACT_CITY' DESC,${cityTier}='PROBABLE_CITY' DESC,CASE WHEN ${rentTier}='EXACT' THEN 0 WHEN ${rentTier}='PROBABLE' THEN 1 ELSE 2 END,`;
-    return `SELECT ${paginated ? 'COUNT(*) OVER() AS __total, ' : ''}${this.projectionSql(false,options)} ${from} ${whereSql} ORDER BY ${tierOrder} ${orderBy.replace(/^ORDER BY /,'')}${paginated ? ' LIMIT ? OFFSET ?' : ''}`;
+    const confidenceTieBreak = `${cityTier}='EXACT_CITY' DESC,${cityTier}='PROBABLE_CITY' DESC,CASE WHEN ${rentTier}='EXACT' THEN 0 WHEN ${rentTier}='PROBABLE' THEN 1 ELSE 2 END,`;
+    const orderBy = options.sort === 'price_asc'
+      ? `CASE WHEN l.price IS NULL OR l.price<=0 THEN 1 ELSE 0 END ASC,l.price ASC,${dateOrder},l.id DESC`
+      : options.sort === 'price_desc'
+        ? `CASE WHEN l.price IS NULL OR l.price<=0 THEN 1 ELSE 0 END ASC,l.price DESC,${dateOrder},l.id DESC`
+        : `${dateOrder},${confidenceTieBreak}l.id DESC`;
+    return `SELECT ${paginated ? 'COUNT(*) OVER() AS __total, ' : ''}${this.projectionSql(false,options)} ${from} ${whereSql} ORDER BY ${orderBy}${paginated ? ' LIMIT ? OFFSET ?' : ''}`;
   }
 
   explainSearch(options: PropertyFilterOptions = {}): { count: Array<Record<string, unknown>>; list: Array<Record<string, unknown>> } {
@@ -296,7 +297,7 @@ export class CanonicalListingRepository {
         selections.push('l.bedrooms >= ?');
         params.push(4);
       }
-      clauses.push(`(${selections.join(' OR ')} OR l.bedrooms IS NULL)`);
+      clauses.push(`(${selections.join(' OR ')})`);
     }
     if (options.bathrooms?.length) { clauses.push(`l.bathrooms IN (${options.bathrooms.map(()=>'?').join(',')})`); params.push(...options.bathrooms); }
     if (options.hasPool) clauses.push("json_extract(l.listing_facts_json,'$.has_pool')=1");
@@ -370,7 +371,7 @@ export class CanonicalListingRepository {
   private rentTierSql(options: PropertyFilterOptions = {}): string {
     const offer="lower(COALESCE(json_extract(l.listing_facts_json,'$.offer_type'),''))";
     const offerTier=`CASE WHEN ${offer}='rent' THEN 'EXACT' WHEN ${offer} IN ('rent_or_sale','mixed','rent_and_sale') OR ${this.rentalLanguageSql()} THEN 'PROBABLE' ELSE 'UNKNOWN' END`;
-    const filterUnknown=(options.minPrice!==undefined||options.maxPrice!==undefined?' OR l.price IS NULL OR l.price<=0':'')+(options.bedrooms?.length?' OR l.bedrooms IS NULL':'');
+    const filterUnknown=options.minPrice!==undefined||options.maxPrice!==undefined?' OR l.price IS NULL OR l.price<=0':'';
     return filterUnknown?`CASE WHEN (${offerTier})='UNKNOWN' THEN 'UNKNOWN' WHEN (${offerTier})='PROBABLE'${filterUnknown} THEN 'PROBABLE' WHEN (${filterUnknown.replace(/^ OR /,'')}) THEN 'PROBABLE' ELSE 'EXACT' END`:offerTier;
   }
 
