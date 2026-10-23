@@ -29,9 +29,14 @@ RUN apt-get update && \
 COPY scripts/camoufox/requirements.txt /app/scripts/camoufox/requirements.txt
 RUN python3 -m venv /app/.venv-camoufox && \
     /app/.venv-camoufox/bin/pip install --no-cache-dir -r /app/scripts/camoufox/requirements.txt && \
-    /app/.venv-camoufox/bin/camoufox sync && \
-    /app/.venv-camoufox/bin/camoufox set official/stable/152.0.4-beta.30 && \
-    /app/.venv-camoufox/bin/camoufox fetch official/152.0.4-beta.30 && \
+    for attempt in 1 2 3; do \
+      /app/.venv-camoufox/bin/camoufox sync && \
+      /app/.venv-camoufox/bin/camoufox set official/stable/152.0.4-beta.30 && \
+      /app/.venv-camoufox/bin/camoufox fetch official/152.0.4-beta.30 && \
+      /app/.venv-camoufox/bin/python -c 'from camoufox.pkgman import installed_verstr; assert installed_verstr() == "152.0.4-beta.30"' && break; \
+      if [ "$attempt" -eq 3 ]; then exit 1; fi; \
+      sleep 5; \
+    done && \
     /app/.venv-camoufox/bin/camoufox version
 
 COPY --from=builder /app/dist ./dist
