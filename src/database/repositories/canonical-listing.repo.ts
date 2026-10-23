@@ -450,6 +450,15 @@ export class CanonicalListingRepository {
     const payloadListing=jsonObject(raw.listing); const payloadContacts=jsonObject(raw.direct_contact ?? payloadListing.direct_contact ?? raw.contact);
     const city=(nonEmpty(row.projection_city)??'siem_reap') as CityKey;
     const location=nonEmpty(row.explicit_location)??nonEmpty(row.sangkat)??nonEmpty(row.property_explicit_location)??nonEmpty(row.property_sangkat)??nonEmpty(row.canonical_address)??city;
+    // Use the same administrative evidence and priority as the SQL location
+    // filters; an informal display area ("Sra Ngae area") may be unrecognized
+    // even when the listing has a verified sangkat ("Srangae").
+    const verifiedSangkat=firstVerifiedSangkat([
+      row.explicit_location,row.sangkat,row.property_explicit_location,row.property_sangkat,row.canonical_address,
+    ],city);
+    const locationKey=verifiedSangkat
+      ? getCanonicalLocationKey(verifiedSangkat.canonicalName,city)
+      : canonicalizeLocation(location,city)?.key??null;
     const media=typeof row.occurrence_media==='string'?row.occurrence_media.split('\n').filter(Boolean):[];
     const photos=media.length?media:detail
       ? stringList(raw.photos??payloadListing.photos??raw.image_urls??raw.images).length?stringList(raw.photos??payloadListing.photos??raw.image_urls??raw.images)
@@ -497,7 +506,7 @@ export class CanonicalListingRepository {
       currency:row.currency==='KHR'?'KHR':'USD',type:offerType==='sale'?'sale':'rent',category,
       bedrooms:row.bedrooms===null?null:Number(row.bedrooms),bathrooms:row.bathrooms===null?null:Number(row.bathrooms),
       deposit:row.deposit_amount===null?null:Number(row.deposit_amount),min_lease:row.min_lease_months===null?null:Number(row.min_lease_months),
-      has_pool:typeof facts.has_pool==='boolean'?facts.has_pool:null,location,location_key:canonicalizeLocation(location,city)?.key??null,raw_location:null,
+      has_pool:typeof facts.has_pool==='boolean'?facts.has_pool:null,location,location_key:locationKey,raw_location:null,
       city,coordinate_precision:latitude!==null&&longitude!==null?'exact':location!==city?'district':'city',maps_url:mapsUrl,
       source_url:sourceUrl,photos,image_phash:null,image_phashes:[],direct_contact:contact,original_url:sourceUrl??'',reports_count:0,
       is_active:row.status==='active' && row.availability_status!=='rented' && row.availability_status!=='removed' ? 1 : 0,

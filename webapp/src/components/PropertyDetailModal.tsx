@@ -34,6 +34,85 @@ interface PropertyDetailModalProps {
   onReview?: (property: PropertyDTO, action: 'approve' | 'reject') => Promise<void>;
 }
 
+type Landmark = PropertyDTO['specs']['landmarks'][number];
+type DisplayLandmark = Landmark & { sourceClaim?: string };
+
+// The stored arrays preserve the model's original claims. Only derive presentation
+// groups here; a proximity phrase is not, by itself, an advertising claim.
+const touristDestination = (text: string): string[] => {
+  const destinations: string[] = [];
+  if (/\b(?:pub\s*[- ]?\s*street|pa[pt]\s*street|pup\s*street)\b/i.test(text)) destinations.push('pub street');
+  if (/\b(?:old\s+(?:pub\s+)?market)\b|ផ្សារចាស់/i.test(text)) destinations.push('old market');
+  if (/\bnight\s+market\b/i.test(text)) destinations.push('night market');
+  if (/\bangkor\s+wat\b/i.test(text)) destinations.push('angkor wat');
+  return destinations;
+};
+
+const placeKey = (text: string) => text.replace(/\s*\([^)]*\broad\)\s*$/i, '').normalize('NFKD').toLowerCase()
+  .replace(/[\u0300-\u036f]/g, '').replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
+
+const isGenericPlace = (value: string) => /^(?:(?:near|next\s+to|close\s+to|behind)\s+)?(?:the\s+)?(?:river(?:\s*side)?|city\s+center|siem\s+reap(?:\s+city)?\s+center|local\s+market|market|school|hotel|university|supermarket|showroom|airport|bridge|shops?|restaurants?)$/i.test(value.trim());
+
+function specificNonTouristPlace(raw: string): string | null {
+  // Remove ONLY recognizable proximity wording. Unrecognized claims remain in
+  // the original source; don't fabricate a POI or map a generic facility.
+  let name = raw.trim()
+    .replace(/^(?:close\s+to|next\s+to|near|behind|south\s+of)\s+/i, '')
+    .replace(/^(?:(?:approximately|about|around|only)\s+)?\d+(?:[.,]\d+)?\s*(?:km|kilometers?|met(?:er|re)s?|mins?|minutes?)\s*(?:\([^)]*\)\s*)?(?:(?:walk|drive|driving|by\s+\w+|south|north|east|west)\s*)?(?:(?:away|distance)\s*)?(?:(?:to|from|of|near)\s+)?/i, '')
+    .replace(/\s*(?::|–|-)\s*\d+(?:[.,]\d+)?\s*(?:km|m|minutes?|mins?)\s*$/i, '')
+    .replace(/\s*\(\s*\d+(?:[.,]\d+)?\s*(?:km|m)\s*\)\s*$/i, '')
+    .trim();
+  // Some ads use "3 minutes south of ..."; leave the original description
+  // intact, while linking only to the explicitly named place.
+  name = name.replace(/^(?:south|north|east|west)\s+of\s+/i, '');
+  const named = /\b(?:university|hotel|supermarket|showroom|shrine|airport|bridge|national\s+road\s*\d+|borey|phsar\s+[a-z]+|(?:angkor|central|russian|kralanh|leu|choa\s+sanghok)\s+market(?:\s*\d+)?)\b/i;
+  if (!named.test(name) || isGenericPlace(name) || /\b(?:shops|caf[eé]s|daily necessities|restaurants)\b/i.test(name)) return null;
+  return name;
+}
+
+function visibleLandmarks(specs: PropertyDTO['specs'], city: string) {
+  const nearby: DisplayLandmark[] = [];
+  const advertised: Landmark[] = [];
+  const nearbyKeys = new Set<string>();
+  const advertisedKeys = new Set<string>();
+  const promotedDestinations = new Set(specs.marketingLandmarks.flatMap((l) => touristDestination(l.name)));
+
+  const addNearby = (place: DisplayLandmark) => {
+    const key = placeKey(place.name);
+    if (key && !nearbyKeys.has(key)) { nearbyKeys.add(key); nearby.push({ ...place }); }
+  };
+  for (const place of specs.landmarks) {
+    const targets = touristDestination(place.name);
+    if (!isGenericPlace(place.name) && !(targets.length && targets.every((destination) => promotedDestinations.has(destination)))) {
+      addNearby(place);
+    }
+  }
+  for (const place of specs.marketingLandmarks) {
+    const sourceClaim = place.name.trim();
+    if (!sourceClaim) continue;
+    if (touristDestination(sourceClaim).length) {
+      const key = placeKey(sourceClaim);
+      if (!advertisedKeys.has(key)) { advertisedKeys.add(key); advertised.push(place); }
+      continue;
+    }
+    const name = specificNonTouristPlace(sourceClaim);
+    if (!name) continue;
+    const key = placeKey(name);
+    if (nearbyKeys.has(key)) {
+      const existing = nearby.find((item) => placeKey(item.name) === key);
+      if (existing && !existing.sourceClaim) existing.sourceClaim = sourceClaim;
+    } else {
+      addNearby({
+        ...place,
+        name,
+        sourceClaim,
+        link: `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(`${name}, ${city === 'phnom_penh' ? 'Phnom Penh' : 'Siem Reap'}, Cambodia`)}`,
+      });
+    }
+  }
+  return { nearby, advertised };
+}
+
 export const PropertyDetailModal: React.FC<PropertyDetailModalProps> = ({
   property,
   onClose,
@@ -86,6 +165,7 @@ export const PropertyDetailModal: React.FC<PropertyDetailModalProps> = ({
   if (!property) return null;
 
   const photos = property.photos && property.photos.length > 0 ? property.photos : [];
+  const { nearby: nearbyLandmarks, advertised: advertisedLandmarks } = visibleLandmarks(property.specs, property.city);
 
   const effectiveMapsUrl =
     property.mapsUrl ||
@@ -419,17 +499,18 @@ export const PropertyDetailModal: React.FC<PropertyDetailModalProps> = ({
           )}
 
           {/* Landmarks */}
-          {property.specs.landmarks.length > 0 && (
+          {nearbyLandmarks.length > 0 && (
             <div className="space-y-2">
               <h3 className="text-sm font-bold text-zinc-900 dark:text-zinc-100 uppercase tracking-wider">
                 Nearby Landmarks
               </h3>
               <div className="flex flex-wrap gap-2">
-                {property.specs.landmarks.map((l) => (
+                {nearbyLandmarks.map((l) => (
                   <button
                     key={l.id}
                     type="button"
                     onClick={() => openExternalUrl(l.link)}
+                    title={l.sourceClaim ? `Unverified advertiser wording: ${l.sourceClaim}` : undefined}
                     className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-zinc-100 dark:bg-zinc-800 text-zinc-800 dark:text-zinc-200 text-xs font-medium hover:bg-zinc-200 transition-colors"
                   >
                     <span>🚩 {l.name}</span>
@@ -441,13 +522,13 @@ export const PropertyDetailModal: React.FC<PropertyDetailModalProps> = ({
           )}
 
           {/* Advertised Nearby (marketing claims — unverified) */}
-          {property.specs.marketingLandmarks.length > 0 && (
+          {advertisedLandmarks.length > 0 && (
             <div className="space-y-2">
               <h3 className="text-sm font-bold text-zinc-900 dark:text-zinc-100 uppercase tracking-wider">
                 Advertised Nearby
               </h3>
               <div className="flex flex-wrap gap-2">
-                {property.specs.marketingLandmarks.map((l) => (
+                {advertisedLandmarks.map((l) => (
                   <button
                     key={l.id}
                     type="button"

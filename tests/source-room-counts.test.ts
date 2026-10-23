@@ -1,5 +1,6 @@
 import { sourceRoomCounts } from '../src/modules/parser/source-room-counts';
 import { Khmer24LiveAdapter } from '../src/modules/parser/live-source-adapters';
+import { sanitizeListingFacts } from '../src/modules/parser/listing-extraction';
 
 describe('deterministic original-source room counts', () => {
   it.each([
@@ -13,6 +14,44 @@ describe('deterministic original-source room counts', () => {
   it('extracts bathroom and bedroom labels independently, including CRLF', () => {
     expect(sourceRoomCounts('Number of bedrooms: 4\r\nNumber of bathrooms: 5')).toMatchObject({
       bedrooms: 4, bathrooms: 5, conflictingBedrooms: false, conflictingBathrooms: false,
+    });
+  });
+
+  it('reads Khmer24 14151244 layout "3 Bed | 4 Bath" as three bedrooms and four bathrooms', () => {
+    const layout = '• Layout: 3 Bed | 4 Bath | Living Room & Kitchen';
+    expect(sourceRoomCounts(layout)).toEqual({
+      bedrooms: 3, bathrooms: 4, conflictingBedrooms: false, conflictingBathrooms: false,
+    });
+    expect(sourceRoomCounts(`3-Bedroom House for Rent\n${layout}`)).toEqual({
+      bedrooms: 3, bathrooms: 4, conflictingBedrooms: false, conflictingBathrooms: false,
+    });
+    expect(sourceRoomCounts('3 Bed | 4 Bath')).toMatchObject({
+      bedrooms: 3, bathrooms: 4, conflictingBedrooms: false, conflictingBathrooms: false,
+    });
+    expect(sanitizeListingFacts({ bedrooms: null, bathrooms: 4 }, layout))
+      .toMatchObject({ bedrooms: 3, bathrooms: 4 });
+  });
+
+  it('does not mistake furniture bed counts for bedrooms', () => {
+    for (const furniture of ['3 beds included', 'Furniture: 3 bed frames provided', 'Layout: 3 bed frames included']) {
+      expect(sourceRoomCounts(furniture)).toMatchObject({ bedrooms: null, conflictingBedrooms: false });
+    }
+  });
+
+  it('marks conflicting bedroom totals in a layout and source title as unknown', () => {
+    const contradictorySource = '2-Bedroom House for Rent\nLayout: 3 Bed | 4 Bath';
+    expect(sourceRoomCounts(contradictorySource)).toEqual({
+      bedrooms: null, bathrooms: 4, conflictingBedrooms: true, conflictingBathrooms: false,
+    });
+    expect(sanitizeListingFacts({ bedrooms: 3, bathrooms: 4 }, contradictorySource))
+      .toMatchObject({ bedrooms: null, bathrooms: 4 });
+  });
+
+  it('does not count per-unit Bed/Bath components as total bedrooms', () => {
+    const components = '1-Wood House: 1-Bed, 1-Bath\n6-Unit Rooms: 1-Bed, 1-Bath each';
+    expect(sourceRoomCounts(components)).toMatchObject({ bedrooms: null, conflictingBedrooms: false });
+    expect(sourceRoomCounts(`7 Bedrooms, 7 Bathrooms\n${components}`)).toMatchObject({
+      bedrooms: 7, conflictingBedrooms: false,
     });
   });
 

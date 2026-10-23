@@ -21,6 +21,15 @@ describe('canonical AI JSON contract', () => {
     expect(validateCanonicalListingBatch(batch(emptyFacts), byId)).toBe(true);
   });
 
+  test('ignores catalog-unknown amenity labels while keeping typed structure strict', () => {
+    expect(validateCanonicalListingBatch(batch({ ...emptyFacts,
+      discovered_amenities: ['free_wifi', 'roof terrace', 'unlisted_id'],
+    }), byId)).toBe(true);
+    expect(validateCanonicalListingBatch(batch({ ...emptyFacts,
+      discovered_amenities: ['unlisted_id', 12],
+    }), byId)).not.toBe(true);
+  });
+
   test.each([
     ['inferred boolean as a string', { pet_friendly: 'false' }],
     ['wrong property enum', { property_type: 'Castle' }],

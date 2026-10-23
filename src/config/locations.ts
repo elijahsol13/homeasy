@@ -17,7 +17,7 @@ export const CAMBODIA_LOCATIONS: LocationEntry[] = [
     city: 'siem_reap',
     administrativeType: 'sangkat',
     aliases: [
-      'svay dangkum', 'svay dang kum', 'svaydangkum', 'svay', 'ស្វាយដង្គុំ',
+      'svay dangkum', 'svay dankum', 'svay dang kum', 'svaydangkum', 'svay', 'ស្វាយដង្គុំ',
       'phsa kraom', 'phsa kraom residence', 'phsar kraom', 'phsar kraom residence',
       'phsar kraoum', 'psar kraom', 'psar kroam', 'phsar kroam',
     ],
@@ -28,7 +28,7 @@ export const CAMBODIA_LOCATIONS: LocationEntry[] = [
     khmerName: 'សាលាកំរើក',
     city: 'siem_reap',
     administrativeType: 'sangkat',
-    aliases: ['sala kamreuk', 'sala kamreak', 'sala kamraeuk', 'salakamreuk', 'sala kamroek', 'salakomreuk', 'wat damnak', 'wat bo'],
+    aliases: ['sala kamreuk', 'sala kamreak', 'sala kamraeuk', 'salakamreuk', 'salakamreauk', 'sala kamroek', 'salakomreuk', 'wat damnak', 'wat bo'],
     googleMapsPlaceQuery: 'Sangkat Sala Kamreuk, Krong Siem Reap, Cambodia',
   },
   {
@@ -36,7 +36,7 @@ export const CAMBODIA_LOCATIONS: LocationEntry[] = [
     khmerName: 'ស្លក្រាម',
     city: 'siem_reap',
     administrativeType: 'sangkat',
-    aliases: ['sla kram', 'slor kram', 'slakram', 'slorkram', 'slokram', 'slarkram'],
+    aliases: ['sla kram', 'slor kram', 'slakram', 'slorkram', 'slokram', 'slok kram', 'slarkram'],
     googleMapsPlaceQuery: 'Sangkat Sla Kram, Krong Siem Reap, Cambodia',
   },
   {
@@ -52,7 +52,7 @@ export const CAMBODIA_LOCATIONS: LocationEntry[] = [
     khmerName: 'គោកចក',
     city: 'siem_reap',
     administrativeType: 'sangkat',
-    aliases: ['kouk chak', 'kok chak', 'koukchak', 'kork chork', 'kok chork'],
+    aliases: ['kouk chak', 'kok chak', 'koukchak', 'kork chak', 'kork chork', 'kok chork'],
     googleMapsPlaceQuery: 'Sangkat Kouk Chak, Krong Siem Reap, Cambodia',
   },
   {
@@ -84,7 +84,7 @@ export const CAMBODIA_LOCATIONS: LocationEntry[] = [
     khmerName: 'ស្រង៉ែ',
     city: 'siem_reap',
     administrativeType: 'sangkat',
-    aliases: ['srangae', 'srange', 'srongae'],
+    aliases: ['srangae', 'srange', 'srongae', 'sra nge', 'sra ngae'],
     googleMapsPlaceQuery: 'Sangkat Srangae, Krong Siem Reap, Cambodia',
   },
   {
@@ -308,6 +308,24 @@ function normalizeLoc(s: string): string {
     .trim();
 }
 
+/** Explicitly conflicting sangkat names must not be resolved by the first
+ * address segment or by the broad substring matcher used for map searches.
+ * The strict lookup rejects standalone village/landmark aliases and city names. */
+function hasConflictingSangkats(location: string, city?: CityKey): boolean {
+  const segments = location.split(/\s*(?:,|\/|&|\band\b)\s*/i);
+  if (segments.length < 2) return false;
+  const matches = new Set<string>();
+  const cities: CityKey[] = city ? [city] : ['siem_reap', 'phnom_penh'];
+  for (const segment of segments) {
+    for (const candidateCity of cities) {
+      const match = getFilterSangkat(segment, candidateCity);
+      if (match) matches.add(`${match.city}:${match.canonicalName}`);
+      if (matches.size > 1) return true;
+    }
+  }
+  return false;
+}
+
 /**
  * Finds matching canonical location entry by string (English alias or Khmer name).
  */
@@ -317,6 +335,14 @@ export function findCanonicalLocation(
 ): LocationEntry | undefined {
   if (!query || !query.trim()) return undefined;
   const raw = query.trim();
+  if (hasConflictingSangkats(raw, city)) return undefined;
+
+  // Exact administrative labels and spelling variants take precedence over
+  // approximate map matches; this also recognizes a prefixed "Sangkat Sra Nge".
+  const administrative = city
+    ? getFilterSangkat(raw, city)
+    : getFilterSangkat(raw, 'siem_reap') ?? getFilterSangkat(raw, 'phnom_penh');
+  if (administrative) return administrative;
 
   // K24 and other platforms often store full addresses as
   // "Sangkat, Khan, City". Try each comma-separated segment from most
@@ -363,6 +389,9 @@ export function findCanonicalLocation(
     if (norm.includes(normCan)) return entry;
     for (const alias of entry.aliases) {
       const normAlias = normalizeLoc(alias);
+      // Sra Nge is also used for a temple outside Siem Reap municipality.
+      // Accept it as a standalone/explicit sangkat, never a fuzzy substring.
+      if (entry.canonicalName === 'Srangae' && ['sra nge', 'sra ngae'].includes(normAlias)) continue;
       if (normAlias.length >= 4 && norm.includes(normAlias)) return entry;
     }
   }
@@ -382,6 +411,7 @@ export function getCanonicalLocationKey(location: string, city?: CityKey): strin
 export function getFilterSangkat(location: string, city: CityKey): LocationEntry | undefined {
   const normalized = normalizeLoc(location.replace(/_/g, ' '));
   if (!normalized) return undefined;
+  if (hasConflictingSangkats(location, city)) return undefined;
   // Reject explicit references to another city before matching an embedded area.
   if (city === 'siem_reap' && /\bphnom penh\b/.test(normalized)) return undefined;
   if (city === 'phnom_penh' && /\bsiem reap\b/.test(normalized)) return undefined;

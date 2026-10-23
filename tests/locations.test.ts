@@ -33,6 +33,38 @@ describe('Cambodia Locations & Smart Google Maps Link Generator', () => {
       expect(getFilterSangkat(name, 'siem_reap')?.canonicalName).toBe(canonical);
     });
 
+    it.each([
+      ['Salakamreauk', 'Sala Kamreuk'], // saved canonical listing 278
+      ['Slok Kram', 'Sla Kram'], // saved canonical listing 107
+      ['Kork Chak', 'Kouk Chak'], // saved canonical listing 8710
+      ['Svay Dankum', 'Svay Dangkum'], // saved canonical listing 9135; NCDD Latin spelling
+      ['Sra Nge', 'Srangae'], // alternate spelling of Siem Reap municipality's Srangae
+      ['Sangkat Sra Ngae, Siem Reap City', 'Srangae'], // saved listing 16500: Sra Ngae area
+    ])('resolves evidenced Siem Reap sangkat variant %s to %s', (name, canonical) => {
+      expect(getFilterSangkat(name, 'siem_reap')?.canonicalName).toBe(canonical);
+      expect(findCanonicalLocation(name, 'siem_reap')?.canonicalName).toBe(canonical);
+    });
+
+    it.each([
+      'Sala Kram', // saved canonical listing 16516; source said Sla Kram
+      'Sla Kram / Sala Kamreuk',
+      'Sla Kram, Sala Kamreuk, Siem Reap',
+    ])('rejects hybrid or conflicting administrative locations %s', (name) => {
+      expect(getFilterSangkat(name, 'siem_reap')).toBeUndefined();
+      expect(findCanonicalLocation(name, 'siem_reap')).toBeUndefined();
+      expect(getCanonicalLocationKey(name, 'siem_reap')).toBeNull();
+    });
+
+    it.each(['Kandaek', 'Chong Kaosou', 'Sra Ngae area', 'Svay Dankum area'])
+    ('does not promote village / area hints %s to an administrative sangkat', (name) => {
+      expect(getFilterSangkat(name, 'siem_reap')).toBeUndefined();
+    });
+
+    it.each(['Sra Nge Temple', 'Trapeang Sra Nge Temple', 'Sra Ngae area'])
+    ('does not confuse a namesake locality or temple %s with Sangkat Srangae', (name) => {
+      expect(findCanonicalLocation(name, 'siem_reap')).toBeUndefined();
+    });
+
     it.each(['Siem Reap', 'Svay', 'Wat Bo', 'Airport Road', 'Bakong',
       'Boeng Kak Pir, Tuol Kouk, Phnom Penh', 'Near Pub Street', 'Unknown Place'])
     ('does not assert an administrative sangkat based on %s', (name) => {

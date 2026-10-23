@@ -83,6 +83,26 @@ export function sourceRoomCounts(text: string): {
       if (value === null) continue;
       if (value >= 0 && value <= 30) values.add(value);
     }
+    if (kind === 'bed') {
+      // Khmer24 layouts often abbreviate bedrooms as "3 Bed | 4 Bath".
+      // Singular "bed" elsewhere may refer to furniture; accept it only in
+      // an explicit floor plan or a paired Bed/Bath count, never per-unit items.
+      const layoutBed = new RegExp(`\\b(${count})[ \\t]*[-–]?[ \\t]*bed\\b`, 'gi');
+      for (const match of normalized.matchAll(layoutBed)) {
+        const index = match.index ?? 0;
+        if (componentBathroomMention(normalized, index)) continue;
+        const lineStart = normalized.lastIndexOf('\n', Math.max(-1, index - 1)) + 1;
+        const lineEnd = normalized.indexOf('\n', index);
+        const before = normalized.slice(lineStart, index);
+        const after = normalized.slice(index + match[0].length, lineEnd < 0 ? normalized.length : lineEnd);
+        const inLayout = /\b(?:layout|floor[ \t]+plan|configuration)[ \t]*[:：=-][^\r\n]*$/i.test(before);
+        const pairedBath = /^[ \t]*[|,;/&][ \t]*\d{1,2}[ \t]*[-–]?[ \t]*baths?\b/i.test(after);
+        if (!inLayout && !pairedBath) continue;
+        if (/^[ \t]*(?:[-–][ \t]*)?(?:frames?|mattresses?|sheets?|linen|covers?|sofas?|sets?|included|provided)\b/i.test(after)) continue;
+        const value = parseRoomNumber(match[1]!);
+        if (value !== null && value >= 0 && value <= 30) values.add(value);
+      }
+    }
     const conflict = values.size > 1 || compoundPatterns.some(pattern => pattern.test(normalized));
     if (kind === 'bed' && conflict && !compoundPatterns.some(pattern => pattern.test(normalized))) {
       // A villa compound can give its total and then describe its components:

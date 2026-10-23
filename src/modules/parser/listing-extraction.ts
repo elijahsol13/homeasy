@@ -8,7 +8,7 @@
  *  - Sangkat names are normalized by findCanonicalLocation, not by the LLM.
  *  - Lease/electricity/water store what was written; assumptions belong to the matching layer.
  */
-import { findCanonicalLocation } from '../../config/locations';
+import { CAMBODIA_LOCATIONS, getFilterSangkat } from '../../config/locations';
 import { CANONICAL_AMENITIES } from '../../config/amenities';
 import { sourceRoomCounts } from './source-room-counts';
 
@@ -86,7 +86,7 @@ Platform metadata, if provided separately, is secondary evidence. Check it again
 Translate descriptive text into English. Preserve proper nouns, place names, project names and business names (Wat Bo, Sala Kamreuk, DakaKun Realty).
 
 PROPERTY TYPE: one of Condo, Apartment, Studio, Room, Private Villa, Private House, Flat House (shophouse used as a residence), Hotel Room, or null.
-ROOM COUNTS: bedroom and bathroom totals are independent facts. Read the ENTIRE individual listing, including labels such as "Bedroom 02", "Bedrooms: 2", "2BR", and Khmer equivalents. 02 means 2. Never copy room counts from another item in the batch. Never count furniture ("2 beds") as bedrooms. If a count is unstated or contradictory use null; an unknown count must not by itself reject an otherwise clear residential rental. Ensure the number in title_en agrees with the source counts.
+ROOM COUNTS: bedroom and bathroom totals are independent facts. Read the ENTIRE individual listing, including labels such as "Bedroom 02", "Bedrooms: 2", "2BR", Khmer equivalents, and real-estate layouts such as "Layout: 3 Bed | 4 Bath | Living Room & Kitchen" (3 bedrooms, 4 bathrooms). 02 means 2. Never copy room counts from another item in the batch. Never count furniture ("2 beds" without an explicit room layout) as bedrooms. If a count is unstated or contradictory use null; an unknown count must not by itself reject an otherwise clear residential rental. Ensure the number in title_en agrees with the source counts.
 Room = a bedroom in a shared property without a private self-contained kitchen. Studio = self-contained single unit with its own bathroom. Apartment/Condo = self-contained residential unit. Nearby hotels, schools or malls are landmarks, not the property type.
 category follows property_type: room -> Room; apartment -> Studio/Apartment/Condo; house -> Private Villa/Private House/Flat House; hotel -> Hotel Room. Otherwise null.
 
@@ -94,7 +94,7 @@ PRICE: only the actual monthly rent supported by the source, as a number. Ignore
 
 LEASE: min_lease_months only when a duration is explicitly stated ("6 months contract" -> 6, "1 year" -> 12). Put the wording of vague terms ("long term", "short term", "monthly") in lease_term_text and leave min_lease_months null.
 
-LOCATION: city is the city the post states (e.g. Siem Reap, Phnom Penh, Kampot); never force it to Siem Reap. sangkat only if the post explicitly names a sangkat/commune. explicit_location is the neighborhood or area as written (e.g. "Wat Bo", "BKK1"). Never infer a sangkat from distance to a landmark: "5 minutes from Pub Street" is a marketing landmark, not an address. landmarks = named places the property is at/next to; marketing_landmarks = promotional distance phrases.
+LOCATION: city is the city the post states (e.g. Siem Reap, Phnom Penh, Kampot); never force it to Siem Reap. The 12 Siem Reap Municipality sangkats are Sla Kram, Sala Kamreuk, Svay Dangkum, Chreav, Kouk Chak, Nokor Thum, Sambour, Siem Reap (only when explicitly identified as a sangkat), Srangae, Tuek Vil, Krabei Riel, and Chong Kneas. Sla Kram and Sala Kamreuk are DIFFERENT; "Sala Kram" is an invalid blend and must not be output. Srangae/Sra Nge is a sangkat. The author's title and body take priority over separately provided Khmer24 form metadata, which can corroborate or fill an unstated location. Do not silently resolve contradictory author claims. sangkat only for an explicitly named administrative sangkat. Never infer one from Wat Bo, Wat Damnak, a road, landmark or travel-time claim. explicit_location is the original neighborhood or area wording. landmarks = factual named reference points including schools and hotels; marketing_landmarks = tourist-oriented promotional distance claims (e.g. "5 minutes from Pub Street" or "Night Market") rather than an ordinary "close to Zannier Phum Baitang Hotel". Do not return the same landmark in both arrays.
 
 UTILITIES: electricity_type / water_type is included | state_rate (EDC, government, "state price", ភ្លើងរដ្ឋ, ទឹករដ្ឋ) | fixed (a stated custom rate) | not_included | null. Put a number only if the post states it (e.g. electricity_rate "0.25 USD/kWh", water_rate "5 USD/person"); otherwise null. Do not add typical tariffs. cleaning = frequency if stated, else null.
 
@@ -183,6 +183,63 @@ const CATEGORY_FROM_TYPE: Record<ListingPropertyType, ListingCategory> = {
   'Flat House': 'house',
   'Hotel Room': 'hotel',
 };
+
+/** Require an actually named administrative sangkat. Matching a nearby landmark
+ * or an invented model spelling must never create an address/filter value. */
+function sourceSangkatCandidates(source: string): string[] {
+  const candidates = new Set<string>();
+  for (const entry of CAMBODIA_LOCATIONS) {
+    if (entry.city !== 'siem_reap' || entry.administrativeType !== 'sangkat') continue;
+    for (const name of [entry.canonicalName, entry.khmerName, ...entry.aliases]) {
+      // The city and the sangkat share this name in both English and Khmer.
+      // A city mention alone is not evidence of a municipal ward.
+      if (entry.canonicalName === 'Siem Reap' &&
+        (name === entry.khmerName || name.toLowerCase() === 'siem reap') &&
+        !/(?:\bsangkat\s+siem\s+reap\b|សង្កាត់\s*សៀមរាប)/iu.test(source)) continue;
+      // Only aliases eligible for administrative filters can establish a sangkat.
+      if (getFilterSangkat(name, 'siem_reap')?.canonicalName !== entry.canonicalName) continue;
+      const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/\s+/g, '\\s+');
+      const pattern = new RegExp(`(?:^|[^\\p{L}\\p{N}])${escaped}(?=$|[^\\p{L}\\p{N}])`, 'iu');
+      if (pattern.test(source)) candidates.add(entry.canonicalName);
+    }
+  }
+  return [...candidates];
+}
+
+function reconciledSangkat(source: string, platformLocation: unknown): string | null {
+  const byAuthor = sourceSangkatCandidates(source);
+  if (byAuthor.length > 1) return null; // author contradicts themselves
+  if (byAuthor.length === 1) return byAuthor[0]!;
+  return typeof platformLocation === 'string'
+    ? (getFilterSangkat(platformLocation, 'siem_reap')?.canonicalName ?? null)
+    : null;
+}
+
+/** Explicit source heading outranks an AI-generated property-type label. */
+function propertyTypeFromSourceHeading(source: string): ListingPropertyType | null {
+  const heading = source.trim().split(/\r?\n/, 1)[0] ?? '';
+  if (heading.length > 160) return null;
+  const patterns: Array<[RegExp, ListingPropertyType]> = [
+    [/\bcondo(?:minium)?\b/i, 'Condo'],
+    [/\bapartment\b/i, 'Apartment'],
+    [/\bstudio\b/i, 'Studio'],
+    [/\bvilla\b/i, 'Private Villa'],
+    [/\b(?:private\s+)?house\b/i, 'Private House'],
+    [/\b(?:shophouse|flat\s+house)\b/i, 'Flat House'],
+  ];
+  const matching = patterns.filter(([re]) => re.test(heading));
+  return matching.length === 1 ? matching[0]![1] : null;
+}
+
+function reconcileGeneratedCopy(text: string, sourceType: ListingPropertyType | null, sangkat: string | null): string {
+  let result = text;
+  if (sourceType === 'Apartment') result = result.replace(/\b(?:private\s+)?house\b/gi, 'apartment');
+  if (sangkat === 'Sla Kram') {
+    result = result.replace(/\bSala Kram\b/gi, 'Sla Kram');
+    result = result.replace(/\b(in|at|sangkat)\s+Sala Kamreuk\b/gi, '$1 Sla Kram');
+  }
+  return result;
+}
 
 /** High-confidence monthly rent explicitly labelled by the author. Keep unlabelled
  * amounts and utility/deposit prices out of this deterministic reconciliation. */
@@ -320,13 +377,25 @@ export function sanitizeListingFacts(
   if (!raw || typeof raw !== 'object') return null;
   const p = raw as Record<string, unknown>;
 
-  const propertyType = LISTING_PROPERTY_TYPES.find((t) => t.toLowerCase() === String(p.property_type ?? '').toLowerCase()) ?? null;
+  const modelPropertyType = LISTING_PROPERTY_TYPES.find((t) => t.toLowerCase() === String(p.property_type ?? '').toLowerCase()) ?? null;
+  const headingType = propertyTypeFromSourceHeading(sourceText);
+  // A generic ad heading can omit a more specific subtype ("apartment" vs
+  // "studio", "house" vs "villa"). Only override a different broad category
+  // when the body does not independently support the model's category.
+  const body = sourceText.split(/\r?\n/).slice(1).join('\n');
+  const modelSupportedByBody = modelPropertyType === 'Private Villa' && /\bvilla\b/i.test(body)
+    || modelPropertyType === 'Private House' && /\b(?:private\s+)?house\b/i.test(body)
+    || modelPropertyType === 'Apartment' && /\bapartment\b/i.test(body)
+    || modelPropertyType === 'Condo' && /\bcondo(?:minium)?\b/i.test(body);
+  const sourceType = headingType && modelPropertyType &&
+    CATEGORY_FROM_TYPE[headingType] !== CATEGORY_FROM_TYPE[modelPropertyType] && !modelSupportedByBody
+    ? headingType : null;
+  const propertyType = sourceType ?? modelPropertyType ?? headingType;
   const declaredCategory = LISTING_CATEGORIES.find((c) => c === String(p.category ?? '').toLowerCase()) ?? null;
   // category is derived from property_type when present, so the two can never disagree
   const category = propertyType ? CATEGORY_FROM_TYPE[propertyType] : declaredCategory;
 
-  const sangkatRaw = str(p.sangkat);
-  const sangkat = sangkatRaw ? (findCanonicalLocation(sangkatRaw)?.canonicalName ?? sangkatRaw) : null;
+  const sangkat = reconciledSangkat(sourceText, platformMetadata?.platform_location);
 
   const explicitRent = sourceExplicitMonthlyRent(sourceText);
   const price = explicitRent.kind === 'confirmed' ? explicitRent.price
@@ -351,8 +420,8 @@ export function sanitizeListingFacts(
   const bedrooms = verifiedCount('bedrooms');
   const bathrooms = verifiedCount('bathrooms');
   const verifiedRooms = { ...literalRooms, bedrooms, bathrooms };
-  const title = sanitizeGeneratedRoomClaims(str(p.title_en) ?? '', verifiedRooms);
-  const description = sanitizeGeneratedDescription(str(p.description_en) ?? '', verifiedRooms, sourceText);
+  const title = reconcileGeneratedCopy(sanitizeGeneratedRoomClaims(str(p.title_en) ?? '', verifiedRooms), sourceType, sangkat);
+  const description = reconcileGeneratedCopy(sanitizeGeneratedDescription(str(p.description_en) ?? '', verifiedRooms, sourceText), sourceType, sangkat);
   const amenities = strArr(p.discovered_amenities).filter((id) =>
     LISTING_AMENITY_IDS.includes(id) && sourceSupportsAmenity(id, sourceText));
   // Never show generic and specific air conditioning chips together.

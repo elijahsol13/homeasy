@@ -328,6 +328,14 @@ describe('CanonicalListingRepository', () => {
     expect(repository.searchProperties({ city:'siem_reap',type:'rent',locations:['Sla Kram'] }).total).toBe(1);
   });
 
+  it('uses the verified sangkat for DTO locationKey when display location is an informal area', () => {
+    db.prepare("UPDATE canonical_listings SET explicit_location='Sra Ngae area',sangkat='Srangae' WHERE id=1").run();
+    const property = repository.getPropertyById(1)!;
+    expect(property.location).toBe('Sra Ngae area');
+    expect(property.location_key).toBe('siem_reap:srangae');
+    expect(repository.searchProperties({city:'siem_reap',type:'rent',locations:['Srangae']}).total).toBe(1);
+  });
+
   it('combines verified sangkat variants without publishing marketing addresses or generic city mentions', () => {
     db.prepare("UPDATE canonical_listings SET explicit_location='Wat Bo Village',sangkat=NULL WHERE id=1").run();
     db.prepare("UPDATE canonical_listings SET availability_status='available',explicit_location='Slorkram',sangkat=NULL WHERE id=2").run();

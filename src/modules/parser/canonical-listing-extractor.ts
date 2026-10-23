@@ -61,7 +61,16 @@ export function validateCanonicalListingBatch(
   const entries = (response as { items: Array<{ id: string; result?: unknown }> }).items;
   for (const entry of entries) {
     const raw = entry.result as Record<string, unknown> | null | undefined;
-    const validation = CANONICAL_FACTS_RESPONSE_SCHEMA.safeParse(raw);
+    // The amenity vocabulary is finite. The sanitizer drops unknown IDs and
+    // source-unsupported claims; don't discard an otherwise complete response
+    // merely because Gemini proposed a novel amenity label. Malformed lists and
+    // every other field must still pass the strict schema.
+    const typed = raw && typeof raw === 'object' && !Array.isArray(raw)
+      && Array.isArray(raw.discovered_amenities)
+      && raw.discovered_amenities.every((id) => typeof id === 'string')
+      ? { ...raw, discovered_amenities: raw.discovered_amenities.filter((id: string) => amenityIdSet.has(id)) }
+      : raw;
+    const validation = CANONICAL_FACTS_RESPONSE_SCHEMA.safeParse(typed);
     if (!validation.success) {
       const issue = validation.error.issues[0];
       return `invalid typed facts for ${entry.id}: ${issue?.path.join('.') || 'result'} (${issue?.message ?? 'unknown error'})`;
