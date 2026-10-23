@@ -244,7 +244,7 @@ export const PropertyDetailModal: React.FC<PropertyDetailModalProps> = ({
                 </>
               ) : (
                 <span className="text-sm font-semibold text-zinc-500 dark:text-zinc-400 bg-zinc-100 dark:bg-zinc-800 px-3 py-1.5 rounded-lg">
-                  Price on request — contact the agent
+                  Price not specified
                 </span>
               )}
             </div>
@@ -311,70 +311,92 @@ export const PropertyDetailModal: React.FC<PropertyDetailModalProps> = ({
                 </span>
               </div>
             )}
-            {property.depositUsd !== null && (
-              <div className="p-3 bg-zinc-50 dark:bg-zinc-800/40 rounded-xl border border-zinc-100 dark:border-zinc-800">
-                <span className="text-xs text-zinc-400 block">Deposit</span>
-                <span className="text-sm font-semibold text-zinc-800 dark:text-zinc-200">
-                  ${property.depositUsd}
-                </span>
-              </div>
-            )}
-            {property.minLeaseMonths !== null && (
-              <div className="p-3 bg-zinc-50 dark:bg-zinc-800/40 rounded-xl border border-zinc-100 dark:border-zinc-800">
-                <span className="text-xs text-zinc-400 block">Min. Lease</span>
-                <span className="text-sm font-semibold text-zinc-800 dark:text-zinc-200">
-                  {property.minLeaseMonths} months
-                </span>
-              </div>
-            )}
           </div>
 
-          {/* Cambodian Utilities & Amenities */}
-          <div className="space-y-2">
-            <h3 className="text-sm font-bold text-zinc-900 dark:text-zinc-100 uppercase tracking-wider">
-              Utilities & Amenities
-            </h3>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
-              {property.specs.electricity && (
-                <div className="flex items-center gap-2 p-2.5 rounded-lg bg-amber-50/70 dark:bg-amber-950/40 text-amber-900 dark:text-amber-200">
-                  <Zap className="w-4 h-4 text-amber-500 shrink-0" />
-                  <span>Electricity: {property.specs.electricity}</span>
-                </div>
-              )}
-              {property.specs.water && (
-                <div className="flex items-center gap-2 p-2.5 rounded-lg bg-cyan-50/70 dark:bg-cyan-950/40 text-cyan-900 dark:text-cyan-200">
-                  <Droplets className="w-4 h-4 text-cyan-500 shrink-0" />
-                  <span>Water: {property.specs.water}</span>
-                </div>
-              )}
-              {property.hasPool && (
-                <div className="flex items-center gap-2 p-2.5 rounded-lg bg-sky-50/70 dark:bg-sky-950/40 text-sky-900 dark:text-sky-200">
-                  <Waves className="w-4 h-4 text-sky-500 shrink-0" />
-                  <span>Swimming Pool</span>
-                </div>
-              )}
-              {property.specs.cleaning && (
-                <div className="flex items-center gap-2 p-2.5 rounded-lg bg-emerald-50/70 dark:bg-emerald-950/40 text-emerald-900 dark:text-emerald-200">
-                  <Sparkles className="w-4 h-4 text-emerald-500 shrink-0" />
-                  <span>{property.specs.cleaning}</span>
+          {/* State only verified rental terms; a one-month deposit does not imply a cash amount. */}
+          {(property.depositUsd !== null || property.depositMonths != null || property.minLeaseMonths !== null) && (
+            <div className="space-y-2">
+              <h3 className="text-sm font-bold text-zinc-900 dark:text-zinc-100 uppercase tracking-wider">Rental Terms</h3>
+              <div className="grid grid-cols-2 gap-2.5">
+                {(property.depositUsd !== null || property.depositMonths != null) && (
+                  <div className="p-3 bg-zinc-50 dark:bg-zinc-800/40 rounded-xl border border-zinc-100 dark:border-zinc-800">
+                    <span className="text-xs text-zinc-400 block">Deposit</span>
+                    <span className="text-sm font-semibold text-zinc-800 dark:text-zinc-200">
+                      {property.depositUsd !== null ? `$${property.depositUsd}` : `${property.depositMonths} ${property.depositMonths === 1 ? 'month' : 'months'}`}
+                    </span>
+                  </div>
+                )}
+                {property.minLeaseMonths !== null && (
+                  <div className="p-3 bg-zinc-50 dark:bg-zinc-800/40 rounded-xl border border-zinc-100 dark:border-zinc-800">
+                    <span className="text-xs text-zinc-400 block">Min. Lease</span>
+                    <span className="text-sm font-semibold text-zinc-800 dark:text-zinc-200">
+                      {property.minLeaseMonths} months
+                    </span>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* Utility charging terms are key rental costs, shown apart from amenity/filter chips. */}
+          {(property.specs.electricity || property.specs.water) && (
+            <div className="space-y-2">
+              <h3 className="text-sm font-bold text-zinc-900 dark:text-zinc-100 uppercase tracking-wider">
+                Utility Rates
+              </h3>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
+                {property.specs.electricity && (
+                  <div className="flex items-center gap-2 p-2.5 rounded-lg bg-amber-50/70 dark:bg-amber-950/40 text-amber-900 dark:text-amber-200">
+                    <Zap className="w-4 h-4 text-amber-500 shrink-0" />
+                    <span>Electricity: {property.specs.electricity}</span>
+                  </div>
+                )}
+                {property.specs.water && (
+                  <div className="flex items-center gap-2 p-2.5 rounded-lg bg-cyan-50/70 dark:bg-cyan-950/40 text-cyan-900 dark:text-cyan-200">
+                    <Droplets className="w-4 h-4 text-cyan-500 shrink-0" />
+                    <span>Water: {property.specs.water}</span>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* Other amenities remain separate from rental charges. */}
+          {(property.hasPool || property.specs.cleaning || property.specs.amenities.length > 0) && (
+            <div className="space-y-2">
+              <h3 className="text-sm font-bold text-zinc-900 dark:text-zinc-100 uppercase tracking-wider">
+                Amenities & Services
+              </h3>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
+                {property.hasPool && (
+                  <div className="flex items-center gap-2 p-2.5 rounded-lg bg-sky-50/70 dark:bg-sky-950/40 text-sky-900 dark:text-sky-200">
+                    <Waves className="w-4 h-4 text-sky-500 shrink-0" />
+                    <span>Swimming Pool</span>
+                  </div>
+                )}
+                {property.specs.cleaning && (
+                  <div className="flex items-center gap-2 p-2.5 rounded-lg bg-emerald-50/70 dark:bg-emerald-950/40 text-emerald-900 dark:text-emerald-200">
+                    <Sparkles className="w-4 h-4 text-emerald-500 shrink-0" />
+                    <span>{property.specs.cleaning}</span>
+                  </div>
+                )}
+              </div>
+
+              {/* Amenities chips */}
+              {property.specs.amenities.length > 0 && (
+                <div className="flex flex-wrap gap-1.5 pt-1">
+                  {property.specs.amenities.map((a, i) => (
+                    <span
+                      key={i}
+                      className="px-2.5 py-1 rounded-lg bg-zinc-100 dark:bg-zinc-800 text-zinc-700 dark:text-zinc-300 text-[11px] font-medium"
+                    >
+                      {a}
+                    </span>
+                  ))}
                 </div>
               )}
             </div>
-
-            {/* Amenities chips */}
-            {property.specs.amenities.length > 0 && (
-              <div className="flex flex-wrap gap-1.5 pt-1">
-                {property.specs.amenities.map((a, i) => (
-                  <span
-                    key={i}
-                    className="px-2.5 py-1 rounded-lg bg-zinc-100 dark:bg-zinc-800 text-zinc-700 dark:text-zinc-300 text-[11px] font-medium"
-                  >
-                    {a}
-                  </span>
-                ))}
-              </div>
-            )}
-          </div>
+          )}
 
           {/* House Rules & Restrictions */}
           {property.specs.restrictions.length > 0 && (

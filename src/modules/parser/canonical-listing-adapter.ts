@@ -7,7 +7,10 @@ export type AdaptedListingExtraction = LLMExtractedListing & { canonical_facts: 
 function utilityLabel(type: UtilityType, rate: string | null, utility: 'electricity' | 'water'): string | null {
   if (type === 'included') return 'Included';
   if (type === 'not_included') return 'Not included';
-  if (type === 'state_rate') return utility === 'electricity' ? 'EDC (State Rate)' : 'State Rate';
+  if (type === 'state_rate') {
+    const label = utility === 'electricity' ? 'EDC (State Rate)' : 'State Rate';
+    return rate ? `${label} (${rate})` : label;
+  }
   if (type === 'fixed') return rate ? `Fixed Rate (${rate})` : 'Fixed Rate';
   return null;
 }

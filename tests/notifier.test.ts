@@ -283,7 +283,7 @@ describe('Dynamic Telegram Listing Card Formatter', () => {
         ...baseProperty,
         description: 'Apartment for rent. Electricity: EDC state rate $0.20/kwh. Free water included.',
       });
-      expect(cardWithUtilities).toContain('⚡ EDC (State Rate) ~$0.20/kWh · 💧 Included');
+      expect(cardWithUtilities).toContain('⚡ EDC (State Rate) ($0.20/kWh) · 💧 Included');
 
       const cardWithFixedRates = formatListingCard({
         ...baseProperty,

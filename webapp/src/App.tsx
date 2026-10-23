@@ -117,6 +117,7 @@ export const App: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [retryRequest, setRetryRequest] = useState(0);
   const queryGeneration = useRef(0);
   const loadMoreRequest = useRef<{ id: number; generation: number } | null>(null);
   const loadMoreRequestId = useRef(0);
@@ -126,7 +127,7 @@ export const App: React.FC = () => {
   useLayoutEffect(() => {
     queryGeneration.current += 1;
     loadMoreRequest.current = null;
-  }, [filters]);
+  }, [filters, retryRequest]);
 
   // Modal & Favorites
   const [mapReturnProperty, setMapReturnProperty] = useState<PropertyDTO | null>(null);
@@ -212,7 +213,11 @@ export const App: React.FC = () => {
           .catch((err) => {
             if (!active || queryGeneration.current !== generation) return;
             console.error('Failed to fetch properties:', err);
-            setError(err.message || 'Failed to load properties');
+            const networkFailure = err instanceof TypeError
+              && /failed to fetch|load failed|networkerror|network request failed/i.test(err.message);
+            setError(networkFailure
+              ? 'Could not connect to the server. Check your connection and try again.'
+              : err instanceof Error ? err.message : 'Could not load properties. Please try again.');
             setLoading(false);
           });
       },
@@ -223,7 +228,7 @@ export const App: React.FC = () => {
       active = false;
       clearTimeout(timer);
     };
-  }, [filters, isStorageReady]);
+  }, [filters, isStorageReady, retryRequest]);
 
   // Load more pages
   const handleLoadMore = async () => {
@@ -417,9 +422,18 @@ export const App: React.FC = () => {
 
             {/* Error Message */}
             {error && (
-              <div className="p-4 rounded-2xl bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-900/50 flex items-center gap-3 text-rose-700 dark:text-rose-300 text-sm">
-                <AlertCircle className="w-5 h-5 shrink-0" />
-                <span>{error}</span>
+              <div role="alert" className="p-4 rounded-2xl bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-900/50 flex items-start gap-3 text-rose-700 dark:text-rose-300 text-sm">
+                <AlertCircle className="w-5 h-5 shrink-0 mt-0.5" />
+                <div className="space-y-3">
+                  <p>{error}</p>
+                  <button
+                    type="button"
+                    onClick={() => setRetryRequest((previous) => previous + 1)}
+                    className="px-4 py-2 rounded-lg bg-rose-700 dark:bg-rose-500 text-white font-semibold hover:bg-rose-800 dark:hover:bg-rose-400"
+                  >
+                    Try again
+                  </button>
+                </div>
               </div>
             )}
 

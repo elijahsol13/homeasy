@@ -289,7 +289,7 @@ describe('CanonicalListingRepository', () => {
     expect(Object.fromEntries(meta.categories.map(({category, count}) => [category, count])))
       .toEqual({ apartment: 503, house: 1, room: 2 });
     expect(Object.fromEntries(meta.locations.map(({location, count}) => [location, count])))
-      .toEqual({ 'Sala Kamreuk': 504, 'Wat Bo': 1, 'Historic Quarter': 1, 'siem_reap': 1 });
+      .toEqual({ 'Sala Kamreuk': 504 });
   });
 
   it('returns zero price range and no groups when every candidate is moderated out', () => {
@@ -297,9 +297,9 @@ describe('CanonicalListingRepository', () => {
     expect(repository.getMetadata('siem_reap')).toEqual({ locations: [], categories: [], priceRange: { minPrice: 0, maxPrice: 0 } });
   });
 
-  it('can filter the city fallback location advertised by metadata without including listings with specific locations', () => {
+  it('keeps unspecified city locations out of dropdowns but supports legacy exact-location queries', () => {
     db.prepare("UPDATE canonical_listings SET explicit_location=' ',sangkat=' ',city='siem_reap' WHERE id=1").run();
-    expect(repository.getMetadata('siem_reap').locations).toEqual([{ location: 'siem_reap', count: 1 }]);
+    expect(repository.getMetadata('siem_reap').locations).toEqual([]);
     expect(repository.searchProperties({city:'siem_reap',type:'rent',locations:['siem_reap']}).items.map(p=>p.id)).toEqual([1]);
 
     db.prepare("UPDATE canonical_listings SET sangkat='Wat Bo' WHERE id=1").run();
@@ -308,18 +308,44 @@ describe('CanonicalListingRepository', () => {
 
     db.prepare("INSERT INTO canonical_properties(id,city) VALUES(901,'siem_reap')").run();
     db.prepare("UPDATE canonical_listings SET city=NULL,property_id=901,sangkat=NULL WHERE id=1").run();
-    expect(repository.getMetadata('siem_reap').locations).toEqual([{ location: 'siem_reap', count: 1 }]);
+    expect(repository.getMetadata('siem_reap').locations).toEqual([]);
     expect(repository.searchProperties({city:'siem_reap',type:'rent',locations:['siem_reap']}).items.map(p=>p.id)).toEqual([1]);
   });
 
-  it('T10: location filters match only the advertised primary location and support map cluster aliases', () => {
-    // A secondary sangkat mentioning Sala Kamreuk must not inflate its bucket.
+  it('T10: strict sangkat filters fall back from vague landmarks to explicit administrative fields', () => {
     db.prepare(`INSERT INTO canonical_properties(id,city,sangkat) VALUES(902,'siem_reap','Sala Kamreuk')`).run();
     db.prepare("UPDATE canonical_listings SET property_id=902,explicit_location='Wat Bo',sangkat='Sala Kamreuk' WHERE id=1").run();
-    expect(repository.getMetadata('siem_reap').locations).toEqual([{ location: 'Wat Bo', count: 1 }]);
-    expect(repository.searchProperties({ city:'siem_reap',type:'rent',locations:['Sala Kamreuk'] }).total).toBe(0);
+    expect(repository.getMetadata('siem_reap').locations).toEqual([{ location: 'Sala Kamreuk', count: 1 }]);
+    expect(repository.searchProperties({ city:'siem_reap',type:'rent',locations:['Sala Kamreuk'] }).total).toBe(1);
     expect(repository.searchProperties({ city:'siem_reap',type:'rent',locations:['Wat Bo'] }).total).toBe(1);
+    expect(repository.searchProperties({ city:'siem_reap',type:'rent',locations:['Sla Kram'] }).total).toBe(0);
     expect(repository.searchProperties({ city:'siem_reap',type:'rent',locations:['Wat Bo','Sla Kram'] }).total).toBe(1);
+
+    // An actual first-field sangkat outranks a contradictory secondary field.
+    db.prepare("UPDATE canonical_listings SET explicit_location='Sla Kram' WHERE id=1").run();
+    expect(repository.getMetadata('siem_reap').locations).toEqual([{ location: 'Sla Kram', count: 1 }]);
+    expect(repository.searchProperties({ city:'siem_reap',type:'rent',locations:['Sala Kamreuk'] }).total).toBe(0);
+    expect(repository.searchProperties({ city:'siem_reap',type:'rent',locations:['Sla Kram'] }).total).toBe(1);
+  });
+
+  it('combines verified sangkat variants without publishing marketing addresses or generic city mentions', () => {
+    db.prepare("UPDATE canonical_listings SET explicit_location='Wat Bo Village',sangkat=NULL WHERE id=1").run();
+    db.prepare("UPDATE canonical_listings SET availability_status='available',explicit_location='Slorkram',sangkat=NULL WHERE id=2").run();
+    db.prepare("UPDATE canonical_listings SET status='active',explicit_location='Pub Street',sangkat=NULL WHERE id=3").run();
+    db.prepare("UPDATE canonical_listings SET status='active',availability_status='available',explicit_location='Siem Reap City',sangkat=NULL WHERE id=4").run();
+    db.prepare("UPDATE canonical_listing_source_occurrences SET is_current=1 WHERE id=105").run();
+    db.prepare("UPDATE canonical_listings SET explicit_location='Sangkat Siem Reap',sangkat=NULL WHERE id=5").run();
+    const locations = repository.getMetadata('siem_reap').locations;
+    expect(locations).toEqual([{ location:'Siem Reap',count:1 },{ location:'Sla Kram',count:1 }]);
+    expect(repository.searchProperties({city:'siem_reap',type:'rent',locations:['Sla Kram']}).total).toBe(1);
+    expect(repository.searchProperties({city:'siem_reap',type:'rent',locations:['Siem Reap']}).total).toBe(1);
+    expect(repository.searchProperties({city:'siem_reap',type:'rent',locations:['Pub Street']}).total).toBe(1);
+  });
+
+  it('does not infer a sangkat from a landmark even when source city columns are missing', () => {
+    db.prepare("UPDATE canonical_listings SET city=NULL,explicit_location='Wat Bo',sangkat=NULL WHERE id=1").run();
+    expect(repository.getMetadata('siem_reap').locations).toEqual([]);
+    expect(repository.searchProperties({city:'siem_reap',type:'rent',locations:['Sla Kram']}).total).toBe(0);
   });
 
   it('T20: rejects a reversed price interval even when the listing price is unknown', () => {

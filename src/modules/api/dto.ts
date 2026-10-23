@@ -12,6 +12,7 @@ import { findLandmarksInText, getLandmarkByCanonicalName, type LandmarkEntry } f
 import { extractCoordinatesFromMapsUrl } from '../../config/locations';
 import { formatDomesticPhone, normalizePhoneNumber, normalizePhoneToE164 } from '../parser/normalizer';
 import { getPhoneActionLink, getTelegramContactLink } from './contact-links';
+import { CANONICAL_AMENITIES } from '../../config/amenities';
 
 const AMENITY_LABELS: Record<string, string> = {
   parking: 'Parking',
@@ -100,13 +101,21 @@ function titleCaseAmenity(value: string): string {
   });
 }
 
+const CANONICAL_AMENITY_LABELS = new Map(CANONICAL_AMENITIES.map((item) => [amenityKey(item.id), item.nameEn]));
+const SUPPORTED_AMENITY_LABELS = new Set([
+  ...CANONICAL_AMENITIES.map((item) => amenityKey(item.nameEn)),
+  ...Object.values(AMENITY_LABELS).map(amenityKey),
+]);
+
 function normalizeAmenityTags(amenities: string[], hasPool: boolean): string[] {
   const normalized = new Map<string, string>();
   for (const raw of amenities) {
     const key = amenityKey(raw);
     if (!key) continue;
-    const label = AMENITY_LABELS[key] ?? titleCaseAmenity(raw);
+    const label = CANONICAL_AMENITY_LABELS.get(key) ?? AMENITY_LABELS[key] ?? titleCaseAmenity(raw);
     const labelKey = amenityKey(label);
+    // Legacy arbitrary tags stay in source data, but cannot expand public chips.
+    if (!SUPPORTED_AMENITY_LABELS.has(labelKey)) continue;
     if (hasPool && label === 'Swimming Pool') continue;
     if (!normalized.has(labelKey)) normalized.set(labelKey, label);
   }
@@ -129,6 +138,7 @@ export interface PropertyDTO {
   bedrooms: number | null;
   bathrooms: number | null;
   depositUsd: number | null;
+  depositMonths?: number | null;
   minLeaseMonths: number | null;
   hasPool: boolean | null;
   location: string;
@@ -215,6 +225,17 @@ function landmarkNameToDTO(
 /**
  * Transforms an internal database Property entity into a rich, frontend-friendly PropertyDTO.
  */
+function explicitDepositMonths(json: string | null | undefined): number | null {
+  if (!json) return null;
+  try {
+    const facts: unknown = JSON.parse(json);
+    if (!facts || typeof facts !== 'object') return null;
+    const months = (facts as Record<string, unknown>).deposit_months;
+    return typeof months === 'number' && Number.isFinite(months) && months > 0 && months <= 120
+      ? months : null;
+  } catch { return null; }
+}
+
 export function toPropertyDTO(
   property: Property,
   isFavorite?: boolean,
@@ -317,6 +338,7 @@ export function toPropertyDTO(
     bedrooms: property.bedrooms,
     bathrooms: property.bathrooms,
     depositUsd: property.deposit ? Math.round(property.deposit / 100) : null,
+    depositMonths: explicitDepositMonths(property.listing_facts_json),
     minLeaseMonths: property.min_lease,
     hasPool: property.has_pool,
     location: property.location,

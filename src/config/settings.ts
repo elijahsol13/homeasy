@@ -1,3 +1,5 @@
+import { CAMBODIA_LOCATIONS } from './locations';
+
 // ─── Rate Limiting ────────────────────────────────────────────────────────────
 
 export const RATE_LIMIT = {
@@ -17,16 +19,9 @@ export const CITIES = {
 export type CityKey = keyof typeof CITIES;
 
 export const DISTRICTS: Record<CityKey, readonly string[]> = {
-  siem_reap: [
-    'Svay Dangkum',
-    'Sala Kamreuk',
-    'Sla Kram',
-    'Chreav',
-    'Nokor Thum',
-    'Sambuor',
-    'Krang',
-    'Siem Reap Thmey',
-  ],
+  siem_reap: CAMBODIA_LOCATIONS
+    .filter((entry) => entry.city === 'siem_reap' && entry.administrativeType === 'sangkat')
+    .map((entry) => entry.canonicalName),
   phnom_penh: [
     'BKK1 (Boeung Keng Kang 1)',
     'BKK2 (Boeung Keng Kang 2)',

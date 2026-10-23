@@ -11,6 +11,10 @@ jest.mock('../src/modules/parser/extractor', () => {
 
 import { extractListingsBatchWithLLM } from '../src/modules/parser/extractor';
 import { classifyKhmer24Listing, enrichListingsWithLLM } from '../src/modules/parser/khmer24.scraper';
+import { sanitizeListingFacts } from '../src/modules/parser/listing-extraction';
+import { toLegacyListingExtraction } from '../src/modules/parser/canonical-listing-adapter';
+import { normalizeRawToClean } from '../src/modules/parser/ingestor';
+import { RawListingSchema } from '../src/modules/parser/schemas';
 
 const mockedBatch = extractListingsBatchWithLLM as jest.Mock;
 
@@ -128,14 +132,17 @@ describe('Khmer24: AI batch enrichment (enrichListingsWithLLM)', () => {
     expect(result).toHaveLength(0);
   });
 
-  test('falls back to original scraped text when the batch call fails entirely', async () => {
+  test('failed batch keeps raw source but publishes only verified factual fallback in pending review', async () => {
     mockedBatch.mockRejectedValue(new Error('Gemini 503'));
 
-    const original = makeListing();
+    const original = makeListing({ title: 'House for rent', raw_text: 'House for rent. 2 bedrooms, 1 bathroom. Call 012345678!!!',
+      bedrooms: 2, bathrooms: 1 });
     const [result] = await enrichListingsWithLLM([original]);
 
     expect(result.title).toBe(original.title);
-    expect(result.description).toBe(original.description);
+    expect(result.raw_text).toBe(original.raw_text);
+    expect(result.description).toBe('House for rent with 2 bedrooms and 1 bathroom.');
+    expect(result.review_status).toBe('pending');
   });
 
   test('falls back to original text for items the batch response omitted', async () => {
@@ -148,7 +155,23 @@ describe('Khmer24: AI batch enrichment (enrichListingsWithLLM)', () => {
     const [resultFirst, resultSecond] = await enrichListingsWithLLM([first, second]);
 
     expect(resultFirst.title).toBe('Original Untranslated Title 1');
+    expect(resultFirst.description).toBe('House for rent.');
+    expect(resultFirst.review_status).toBe('pending');
     expect(resultSecond.title).toBe('Charming House Near Market');
+  });
+
+  test('empty AI description produces bounded copy without overriding canonical unknown room counts', async () => {
+    const source = makeListing({ title: 'Apartment', source_title: 'Apartment',
+      raw_text: '2 bedrooms. 3 bedrooms. 1 bathroom. 2 bathrooms. Contact 012345678.', bedrooms: 3, bathrooms: 3 });
+    const facts = sanitizeListingFacts({ is_supported_listing: true, title_en: 'Apartment',
+      description_en: '', category: 'apartment', property_type: 'Apartment',
+      bedrooms: null, bathrooms: null, price: 350, currency: 'USD' }, source.raw_text!, {})!;
+    mockedBatch.mockResolvedValue(new Map([[0, toLegacyListingExtraction(facts)]]));
+    const [result] = await enrichListingsWithLLM([source]);
+    expect(result.description).toBe('Apartment for rent.');
+    expect(result.bedrooms).toBeUndefined();
+    expect(result.bathrooms).toBeUndefined();
+    expect(result.raw_text).toBe(source.raw_text);
   });
 
   test('never overrides the reliable Khmer24-scraped price, photos, or phone', async () => {
@@ -166,6 +189,74 @@ describe('Khmer24: AI batch enrichment (enrichListingsWithLLM)', () => {
     expect(result.source_price_origin).toBe('khmer24_json_ld_offer');
     expect(result.phone).toBe('012345678');
     expect(result.photos).toEqual(original.photos);
+  });
+
+  test('author price and room counts prevail over conflicting Khmer24 form values all the way to clean columns', async () => {
+    const source = makeListing({
+      title: 'House for rent', source_title: 'House for rent',
+      raw_text: 'House for rent $1000/month, 2 bedrooms and 1 bathroom.',
+      price: 800, source_price: 800, source_price_currency: 'USD',
+      bedrooms: 3, bathrooms: 2,
+    });
+    const facts = sanitizeListingFacts({
+      is_supported_listing: true, title_en: '2 Bedroom House',
+      description_en: 'House for rent with 2 bedrooms and 1 bathroom.',
+      price: 1000, currency: 'USD', bedrooms: 2, bathrooms: 1,
+      property_type: 'Private House',
+    }, `${source.source_title}\n${source.raw_text}`, {
+      asking_price: 800, platform_bedrooms: 3, platform_bathrooms: 2,
+    })!;
+    mockedBatch.mockResolvedValue(new Map([[0, toLegacyListingExtraction(facts)]]));
+
+    const [result] = await enrichListingsWithLLM([source]);
+    expect(result).toMatchObject({ price: 1000, bedrooms: 2, bathrooms: 1 });
+    const clean = normalizeRawToClean(RawListingSchema.parse(result))!;
+    expect(clean).toMatchObject({ price: 100000, bedrooms: 2, bathrooms: 1 });
+    expect(JSON.parse(clean.listing_facts_json!)).toMatchObject({ price: 1000, bedrooms: 2, bathrooms: 1 });
+  });
+
+  test('an intentional null price and conflicting room count stay unknown in legacy and clean columns', async () => {
+    const source = makeListing({
+      title: 'House for rent', source_title: 'House for rent',
+      raw_text: 'House for rent, contact for price. 2 bedrooms, 3 bedrooms.',
+      price: 800, source_price: 800, bedrooms: 4,
+    });
+    const facts = sanitizeListingFacts({
+      is_supported_listing: true, title_en: '4 Bedroom House',
+      description_en: 'House with 4 bedrooms is available.',
+      price: null, currency: null, bedrooms: 4, property_type: 'Private House',
+    }, `${source.source_title}\n${source.raw_text}`, {
+      asking_price: 800, platform_bedrooms: 4,
+    })!;
+    mockedBatch.mockResolvedValue(new Map([[0, toLegacyListingExtraction(facts)]]));
+
+    const [result] = await enrichListingsWithLLM([source]);
+    expect(result.price).toBeUndefined();
+    expect(result.bedrooms).toBeUndefined();
+    expect(result.review_status).toBe('pending');
+    expect(result.title).not.toMatch(/4\s*bedroom/i);
+    const clean = normalizeRawToClean(RawListingSchema.parse(result))!;
+    expect(clean).toMatchObject({ price: 0, bedrooms: null });
+    expect(JSON.parse(clean.listing_facts_json!)).toMatchObject({ price: null, bedrooms: null });
+  });
+
+  test('when author omits room counts, matching AI and platform counts survive', async () => {
+    const source = makeListing({
+      title: 'House for rent', source_title: 'House for rent',
+      raw_text: 'House available for monthly rent.', bedrooms: 3, bathrooms: 2,
+    });
+    const facts = sanitizeListingFacts({
+      is_supported_listing: true, title_en: '3 Bedroom House',
+      description_en: 'House with 3 bedrooms and 2 bathrooms.',
+      price: 350, currency: 'USD', bedrooms: 3, bathrooms: 2,
+    }, `${source.source_title}\n${source.raw_text}`, {
+      platform_bedrooms: 3, platform_bathrooms: 2,
+    })!;
+    mockedBatch.mockResolvedValue(new Map([[0, toLegacyListingExtraction(facts)]]));
+
+    const [result] = await enrichListingsWithLLM([source]);
+    expect(result).toMatchObject({ bedrooms: 3, bathrooms: 2 });
+    expect(normalizeRawToClean(RawListingSchema.parse(result))).toMatchObject({ bedrooms: 3, bathrooms: 2 });
   });
 
   test('keeps a source map while rejecting an AI map to a promotional landmark', async () => {

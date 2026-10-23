@@ -1,6 +1,7 @@
 import {
   formatGoogleMapsUrl,
   findCanonicalLocation,
+  getFilterSangkat,
   extractCoordinatesFromMapsUrl,
   calculateDistanceKm,
   isCoordinateInSanityBounds,
@@ -8,16 +9,47 @@ import {
   canonicalizeLocation,
   getCanonicalLocationKey,
 } from '../src/config/locations';
+import { DISTRICTS } from '../src/config/settings';
 
 describe('Cambodia Locations & Smart Google Maps Link Generator', () => {
   describe('Canonical location identity', () => {
-    it.each(['Sla Kram', 'Slor Kram', 'Wat Bo'])('maps %s to one stable key', (input) => {
+    it('exposes exactly the 12 official Siem Reap sangkats for user selection', () => {
+      expect(DISTRICTS.siem_reap).toHaveLength(12);
+      expect(DISTRICTS.siem_reap).toContain('Kouk Chak');
+      expect(DISTRICTS.siem_reap).toContain('Chong Kneas');
+      expect(DISTRICTS.siem_reap).not.toContain('Krang');
+      expect(DISTRICTS.siem_reap).not.toContain('Siem Reap Thmey');
+      expect(DISTRICTS.siem_reap).not.toContain('Bakong');
+    });
+
+    it.each([
+      ['Sala Kamroek', 'Sala Kamreuk'],
+      ['Salakomreuk', 'Sala Kamreuk'],
+      ['Kork Chork', 'Kouk Chak'],
+      ['Kok Chork, Siem Reap, Siem Reap', 'Kouk Chak'],
+      ['Slorkram, Siem Reap, Siem Reap', 'Sla Kram'],
+      ['Sangkat ស្វាយដង្គំ, Krong Siem Reap', 'Svay Dangkum'],
+    ])('recognizes verified spelling %s as %s', (name, canonical) => {
+      expect(getFilterSangkat(name, 'siem_reap')?.canonicalName).toBe(canonical);
+    });
+
+    it.each(['Siem Reap', 'Svay', 'Wat Bo', 'Airport Road', 'Bakong',
+      'Boeng Kak Pir, Tuol Kouk, Phnom Penh', 'Near Pub Street', 'Unknown Place'])
+    ('does not assert an administrative sangkat based on %s', (name) => {
+      expect(getFilterSangkat(name, 'siem_reap')).toBeUndefined();
+    });
+    it.each(['Sla Kram', 'Slor Kram'])('maps %s to one stable key', (input) => {
       expect(getCanonicalLocationKey(input, 'siem_reap')).toBe('siem_reap:sla_kram');
       expect(canonicalizeLocation(input, 'siem_reap')).toMatchObject({
         key: 'siem_reap:sla_kram',
         name: 'Sla Kram',
         city: 'siem_reap',
       });
+    });
+
+    it('maps Wat Bo village to Sala Kamreuk for approximate map searches only', () => {
+      expect(findCanonicalLocation('Wat Bo', 'siem_reap')?.canonicalName).toBe('Sala Kamreuk');
+      expect(getFilterSangkat('Wat Bo', 'siem_reap')).toBeUndefined();
     });
 
     it('canonicalizes a full Khmer24 address and corrects its city', () => {
@@ -51,10 +83,10 @@ describe('Cambodia Locations & Smart Google Maps Link Generator', () => {
       expect(decoded).toContain('Sangkat Svay Dangkum, Krong Siem Reap, Cambodia');
     });
 
-    it('maps Wat Bo to Sangkat Sla Kram administrative boundary', () => {
+    it('maps Wat Bo to its Sala Kamreuk administrative boundary', () => {
       const url = formatGoogleMapsUrl('Wat Bo', 'siem_reap');
       const decoded = decodeURIComponent(url);
-      expect(decoded).toContain('Sangkat Sla Kram, Krong Siem Reap, Cambodia');
+      expect(decoded).toContain('Sangkat Sala Kamreuk, Krong Siem Reap, Cambodia');
     });
 
     it('maps Wat Damnak to Sangkat Sala Kamreuk administrative boundary', () => {

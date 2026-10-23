@@ -71,6 +71,7 @@ function listingFacts(listing: RawListing, sourceType: SourceType): Record<strin
   try { canonicalFacts = listing.listing_facts_json ? JSON.parse(listing.listing_facts_json) : null; } catch { canonicalFacts = null; }
   const facts = canonicalFacts && typeof canonicalFacts === 'object' && !Array.isArray(canonicalFacts)
     ? { ...canonicalFacts as Record<string, unknown> } : {};
+  const hasCanonicalFacts = canonicalFacts !== null && typeof canonicalFacts === 'object' && !Array.isArray(canonicalFacts);
   // Both Khmer24 and Facebook may include literal room counts that contradict
   // AI extraction (e.g. "02 – Bedroom" incorrectly returned as one bedroom).
   // Only the retained original is independent evidence; generated summaries
@@ -124,10 +125,11 @@ function listingFacts(listing: RawListing, sourceType: SourceType): Record<strin
   return {
     ...facts,
     title_en: listing.title ?? null, description_en: listing.description ?? null,
-    price: typeof listing.price === 'number' ? listing.price : null, currency: listing.currency ?? null,
+    price: hasCanonicalFacts ? facts.price ?? null : (typeof listing.price === 'number' ? listing.price : null),
+    currency: hasCanonicalFacts ? facts.currency ?? null : listing.currency ?? null,
     category: listing.category ?? null, property_type: listing.property_type ?? null,
-    bedrooms: sourceRooms?.conflictingBedrooms ? null : sourceRooms?.bedrooms ?? validRoomCount(listing.bedrooms) ?? validRoomCount((canonicalFacts as Record<string, unknown> | null)?.bedrooms),
-    bathrooms: sourceRooms?.conflictingBathrooms ? null : sourceRooms?.bathrooms ?? validRoomCount(listing.bathrooms) ?? validRoomCount((canonicalFacts as Record<string, unknown> | null)?.bathrooms),
+    bedrooms: sourceRooms.conflictingBedrooms ? null : sourceRooms.bedrooms ?? (hasCanonicalFacts ? validRoomCount(facts.bedrooms) : validRoomCount(listing.bedrooms)),
+    bathrooms: sourceRooms.conflictingBathrooms ? null : sourceRooms.bathrooms ?? (hasCanonicalFacts ? validRoomCount(facts.bathrooms) : validRoomCount(listing.bathrooms)),
     location: listing.location ?? null, city: listing.city ?? null,
   };
 }

@@ -122,6 +122,16 @@ export function normalizeRawToClean(
 
   const warnings: string[] = [];
   const hasCanonicalFacts = typeof raw.listing_facts_json === 'string' && raw.listing_facts_json.length > 0;
+  let canonicalFacts: Record<string, unknown> | null = null;
+  if (hasCanonicalFacts) {
+    try {
+      const parsed: unknown = JSON.parse(raw.listing_facts_json!);
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        canonicalFacts = parsed as Record<string, unknown>;
+      }
+    } catch { /* Legacy paths may retain invalid JSON; do not treat it as verified facts. */ }
+  }
+  const canonicalHasPrice = canonicalFacts !== null && Object.prototype.hasOwnProperty.call(canonicalFacts, 'price');
   let cleanReviewStatus: 'approved' | 'pending' = raw.review_status ?? 'approved';
   let cleanReviewReason: string | null = raw.review_reason ?? null;
 
@@ -157,7 +167,15 @@ export function normalizeRawToClean(
   let declaredCurrency: string | null = null;
   let priceSourceText = '';
 
-  if (typeof raw.price === 'number' && raw.price > 0) {
+  if (canonicalHasPrice) {
+    // A canonical null is intentional uncertainty: raw Khmer24 form values
+    // must never silently reappear in the monetary columns.
+    if (typeof canonicalFacts!.price === 'number' && Number.isFinite(canonicalFacts!.price) &&
+        canonicalFacts!.price > 0 && (canonicalFacts!.currency === 'USD' || canonicalFacts!.currency === 'KHR')) {
+      amount = canonicalFacts!.price;
+      declaredCurrency = canonicalFacts!.currency;
+    }
+  } else if (typeof raw.price === 'number' && raw.price > 0) {
     amount = raw.price;
     declaredCurrency = raw.currency ?? null;
   } else if (raw.price !== undefined && raw.price !== null) {
@@ -200,7 +218,9 @@ export function normalizeRawToClean(
     let finalCur: 'USD' | 'KHR';
     // In Cambodia listings, a ฿/baht marker is almost always a mistagged riel
     // price, not an actual Thai baht value. Treat it as KHR.
-    if (hasThbMarker && !hasDollarSign && amount >= 1_000) {
+    if (canonicalHasPrice && (declaredCurrency === 'USD' || declaredCurrency === 'KHR')) {
+      finalCur = declaredCurrency;
+    } else if (hasThbMarker && !hasDollarSign && amount >= 1_000) {
       finalCur = 'KHR';
     } else if (hasCanonicalFacts && (declaredCurrency === 'USD' || declaredCurrency === 'KHR')) {
       finalCur = declaredCurrency;
@@ -244,7 +264,10 @@ export function normalizeRawToClean(
 
   // ── Bedrooms ───────────────────────────────────────────────────────────────
   let bedrooms: number | null = null;
-  if (raw.bedrooms !== undefined && raw.bedrooms !== null) {
+  if (canonicalFacts && Object.prototype.hasOwnProperty.call(canonicalFacts, 'bedrooms')) {
+    const count = canonicalFacts.bedrooms;
+    bedrooms = typeof count === 'number' && Number.isInteger(count) && count >= 0 && count <= 30 ? count : null;
+  } else if (raw.bedrooms !== undefined && raw.bedrooms !== null) {
     const n = parseInt(String(raw.bedrooms), 10);
     bedrooms = isNaN(n) ? (hasCanonicalFacts ? null : extractBedrooms(combinedText)) : n;
   } else {
@@ -256,7 +279,10 @@ export function normalizeRawToClean(
 
   // ── Bathrooms ──────────────────────────────────────────────────────────────
   let bathrooms: number | null = null;
-  if (raw.bathrooms !== undefined && raw.bathrooms !== null) {
+  if (canonicalFacts && Object.prototype.hasOwnProperty.call(canonicalFacts, 'bathrooms')) {
+    const count = canonicalFacts.bathrooms;
+    bathrooms = typeof count === 'number' && Number.isInteger(count) && count >= 0 && count <= 30 ? count : null;
+  } else if (raw.bathrooms !== undefined && raw.bathrooms !== null) {
     const n = parseInt(String(raw.bathrooms), 10);
     bathrooms = isNaN(n) ? (hasCanonicalFacts ? null : extractBathrooms(combinedText)) : n;
   } else {

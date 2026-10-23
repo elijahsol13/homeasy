@@ -94,6 +94,16 @@ describe('Facebook Scraper', () => {
   describe('parseFacebookPostText heuristics', () => {
     jest.setTimeout(30000);
 
+    test('failed AI editorial produces factual copy, keeps source verbatim and stays pending', async () => {
+      const raw = 'Apartment for rent: 2 bedrooms, 1 bathroom. Call 012345678!!!';
+      const listing = await parseFacebookPostText(raw, defaultTarget, 'https://facebook.com/groups/test/posts/77', [], undefined, null);
+      expect(listing).not.toBeNull();
+      expect(listing!.raw_text).toBe(raw);
+      expect(listing!.description).toBe('Apartment for rent with 2 bedrooms and 1 bathroom.');
+      expect(listing!.review_status).toBe('pending');
+      expect(listing!.description).not.toContain('012345678');
+    });
+
     const postText = `
 🏡 Modern 3-Bedroom Villa with Swimming Pool for Rent
 📍 Location: Sala Kamreuk, Siem Reap
@@ -265,11 +275,16 @@ describe('Facebook Scraper', () => {
       expect(stories[0]!.post_id).toBe('9988776655');
     });
 
-    test('extractTextFromStory extracts complete message and strips UI noise', () => {
+    test('extractTextFromStory extracts complete message', () => {
       const text = extractTextFromStory(sampleStory);
       expect(text).toContain('Modern 2BR apartment for rent in Wat Bo');
       expect(text).toContain('$450/month');
-      expect(text).not.toContain('See more');
+    });
+
+    test('preserves the exact GraphQL message even when UI words and line breaks occur in the post', () => {
+      const original = 'Apartment in See translation neighborhood\nUnit A: $300\nUnit B: $300\n... See more details';
+      const text = extractTextFromStory({ message: { text: original } } as FbGraphQLStoryNode);
+      expect(text).toBe(original);
     });
 
     test('extractPhotosFromStory extracts primary and subattachment photo URLs', () => {

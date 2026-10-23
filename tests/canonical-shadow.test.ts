@@ -17,6 +17,25 @@ describe('Phase 4 shadow ingestion and canonicalization', () => {
   beforeEach(() => { db = new DatabaseSync(':memory:'); runMigrations(db); legacyBaseline = snapshotLegacyProperties(db); });
   afterEach(() => { assertLegacyPropertiesUnchanged(db, legacyBaseline); db.close(); });
 
+  it('uses source-verified factual copy for absent canonical editorial while preserving source text', () => {
+    const repo = new SourceIngestionRepository(db);
+    const source = repo.upsertSource({ sourceType: 'FACEBOOK_GROUP', externalSourceId: 'editorial-fallback', name: 'FB fixture' });
+    const raw = 'Apartment for rent. 2 bedrooms, 1 bathroom. Call 012345678!!!';
+    const itemId = repo.upsertSourceItemDetailed(source, {
+      sourceType: 'FACEBOOK_GROUP', externalId: 'fb-fallback-1', rawText: raw,
+      sourceUrl: 'https://facebook.com/groups/test/posts/7766', contentHash: 'editorial-fallback',
+      classification: 'HOUSING_SUPPLY', rawPayload: { listingExtraction: {
+        title_en: 'Apartment for rent', price: 350, currency: 'USD', property_type: 'Apartment',
+        category: 'apartment', bedrooms: 2, bathrooms: 1, city: 'siem_reap', sangkat: 'Sala Kamreuk', offer_type: 'rent',
+      }, photos: [] },
+    }).id;
+    new CanonicalShadowService(db).run({ dryRun: false });
+    const row = db.prepare(`SELECT l.description, s.raw_text FROM canonical_listings l
+      JOIN canonical_listing_source_occurrences o ON o.listing_id=l.id
+      JOIN source_items s ON s.id=o.source_item_id WHERE s.id=?`).get(itemId) as { description: string; raw_text: string };
+    expect(row).toEqual({ description: 'Apartment for rent with 2 bedrooms and 1 bathroom.', raw_text: raw });
+  });
+
   it('automatically approves corroborated source rentals and keeps the decision on rebuild', () => {
     const repo = new SourceIngestionRepository(db);
     const source = repo.upsertSource({ sourceType: 'KHMER24', externalSourceId: 'auto-review-test', name: 'K24' });

@@ -33,6 +33,7 @@ import { launchCamoufox, type CamoufoxBrowser } from './camoufox-server';
 import { attachTrafficGuard } from './traffic-guard';
 import { isStaleKhmer24Original, khmer24OriginalPostedAt, khmer24PublishedAt, khmer24SourceLocation } from './khmer24-http';
 import { isKnownKhmer24AdministrativePin } from './source-geography';
+import { factualListingFallback } from './listing-editorial';
 
 export const K24_SESSION_PATH = path.join(process.cwd(), 'data', 'k24_session.json');
 export const K24_DEVICE_PATH = path.join(process.cwd(), 'data', 'k24_device.json');
@@ -537,22 +538,15 @@ const LLM_BATCH_SIZE = 6;
  * text rather than being silently discarded.
  */
 const KHMER24_EXTRACTION_HINTS = `
-Source: Khmer24.com listing page. The page JSON-LD already supplies a numeric price,
-unmasked phone(s), high-res photos, and a district-level address.
-Use the description/title as the ground truth for transaction type, lease duration,
-and monthly rent — Khmer24 browse pages are sometimes miscategorized, so a
-"house-for-rent" URL can still contain a sale listing. If the price looks like a total
-sale price or the text says "for sale", set is_real_estate: false.
-
-Examples of valid monthly rentals for this MVP (set is_real_estate: true):
-- "បន្ទប់ជួល / Room for Rent" with "$100/ខែ" — this is a room, category: room.
-- "House for rent in Svay Dangkum, 1 year contract, $600/month" — category: house.
-- "2BR apartment in Sla Kram, $350/month" — category: apartment.
-
-If the actual location is in Phnom Penh, Sihanoukville, or another city, return that
-city's district in location; the ingestor will reject it automatically.
-Translate Khmer text to English, keep original proper nouns, and do not add
-unsupported adjectives to title_en.
+Source: Khmer24. For each item, text includes the source heading and body. The separate
+platform_metadata object comes from Khmer24's structured page fields and may contain
+defaults, stale categories or errors inserted by the seller. Compare every metadata value
+with the headline and free-form description. Explicit text overrides a contradictory form
+field; when either is unclear or genuinely conflicting, return null for the disputed fact.
+Do not assume an address/price/room-count field exists if it was not supplied. A "for-rent"
+section can still contain a sale listing: use is_supported_listing=false for a clear sale.
+Return exactly the shared canonical JSON keys including city, sangkat and rejection_reason.
+Preserve stated Khmer facts, amounts, units, rates and conditions in accurate English.
 `;
 
 /** A missing enrichment result is inconclusive: the extractor also omits low-quality translations. */
@@ -596,6 +590,15 @@ export async function enrichListingsWithLLM(
       // Use the source post, not a potentially normalized/translated display
       // description, when extracting facts or verifying literal room counts.
       text: `${listing.source_title ?? listing.title ?? ''}\n\n${listing.raw_text ?? listing.description ?? ''}`.trim(),
+      platformMetadata: {
+        ...(listing.source_price != null ? { asking_price: listing.source_price } : {}),
+        ...(listing.source_price_currency ? { asking_currency: listing.source_price_currency } : {}),
+        ...(listing.source_price_origin ? { asking_price_origin: listing.source_price_origin } : {}),
+        ...(listing.location ? { platform_location: listing.location } : {}),
+        ...(listing.category ? { platform_category: listing.category } : {}),
+        ...(listing.bedrooms != null ? { platform_bedrooms: String(listing.bedrooms) } : {}),
+        ...(listing.bathrooms != null ? { platform_bathrooms: String(listing.bathrooms) } : {}),
+      },
     }));
 
     console.log(
@@ -615,11 +618,24 @@ export async function enrichListingsWithLLM(
   }
 
   const enriched: RawListing[] = [];
+  const fallbackDescription = (listing: RawListing, values: {
+    propertyType?: string | null; category?: string | null;
+    bedrooms?: number | string | null; bathrooms?: number | string | null;
+  } = {}) => factualListingFallback({
+    sourceText: `${listing.source_title ?? listing.title ?? ''}\n${listing.raw_text ?? listing.description ?? ''}`,
+    propertyType: values.propertyType ?? listing.property_type,
+    category: values.category ?? listing.category,
+    bedrooms: typeof (values.bedrooms === undefined ? listing.bedrooms : values.bedrooms) === 'number'
+      ? Number(values.bedrooms === undefined ? listing.bedrooms : values.bedrooms) : null,
+    bathrooms: typeof (values.bathrooms === undefined ? listing.bathrooms : values.bathrooms) === 'number'
+      ? Number(values.bathrooms === undefined ? listing.bathrooms : values.bathrooms) : null,
+  });
   candidates.forEach(({ listing, originalIndex }, idx) => {
     const llm = llmResults.get(idx);
     if (!llm) {
       const unclassified: RawListing = {
         ...listing,
+        description: fallbackDescription(listing),
         review_status: 'pending',
         review_reason: 'LLM extraction unavailable',
         ...(options.inclusive ? { is_real_estate: null } : {}),
@@ -645,10 +661,9 @@ export async function enrichListingsWithLLM(
     }
     const canonicalFacts = llm.canonical_facts;
     const reviewStatus: 'approved' | 'pending' = llm.is_real_estate === true &&
-      (!canonicalFacts || (canonicalFacts.price === null && listing.price != null) ||
-        (canonicalFacts.price !== null && canonicalFacts.currency !== null)) ? 'approved' : 'pending';
+      (!canonicalFacts || (canonicalFacts.price !== null && canonicalFacts.currency !== null)) ? 'approved' : 'pending';
     const reviewReason = reviewStatus === 'pending'
-      ? (canonicalFacts && (canonicalFacts.price === null && listing.price == null || canonicalFacts.price !== null && canonicalFacts.currency === null)
+      ? (canonicalFacts && (canonicalFacts.price === null || canonicalFacts.price !== null && canonicalFacts.currency === null)
         ? 'Monthly rent or currency unknown'
         : llm.admission_reason || 'LLM admission decision missing or uncertain')
       : undefined;
@@ -695,17 +710,22 @@ export async function enrichListingsWithLLM(
     const result: RawListing = {
       ...listing,
       title: llm.title_en?.trim() || listing.title,
-      description: llm.description_en || listing.description,
+      description: llm.description_en?.trim() || fallbackDescription(listing, {
+        propertyType, category,
+        bedrooms: canonicalFacts ? canonicalFacts.bedrooms : llm.bedrooms ?? listing.bedrooms,
+        bathrooms: canonicalFacts ? canonicalFacts.bathrooms : llm.bathrooms ?? listing.bathrooms,
+      }),
       // Explicit rent in post text wins over conflicting platform metadata.
       // Retain structured platform price only when the canonical text has none.
-      price: canonicalFacts?.price != null && canonicalFacts.currency ? canonicalFacts.price : listing.price ?? llm.price ?? undefined,
-      currency: canonicalFacts?.price != null && canonicalFacts.currency ? canonicalFacts.currency : listing.currency,
+      price: canonicalFacts ? canonicalFacts.price != null && canonicalFacts.currency ? canonicalFacts.price : undefined
+        : listing.price ?? llm.price ?? undefined,
+      currency: canonicalFacts ? canonicalFacts.currency ?? undefined : listing.currency,
       // (llm.category === 'land' already handled above.)
       category,
       city,
-      bedrooms: llm.bedrooms ?? listing.bedrooms,
-      bathrooms: llm.bathrooms ?? listing.bathrooms,
-      deposit: llm.deposit ?? listing.deposit,
+      bedrooms: canonicalFacts ? canonicalFacts.bedrooms ?? undefined : llm.bedrooms ?? listing.bedrooms,
+      bathrooms: canonicalFacts ? canonicalFacts.bathrooms ?? undefined : llm.bathrooms ?? listing.bathrooms,
+      deposit: canonicalFacts ? canonicalFacts.deposit_amount ?? undefined : llm.deposit ?? listing.deposit,
       min_lease: canonicalFacts ? canonicalFacts.min_lease_months ?? undefined : llm.min_lease ?? listing.min_lease,
       has_pool: canonicalFacts ? canonicalFacts.has_pool : llm.has_pool ?? listing.has_pool,
       location,
@@ -724,7 +744,7 @@ export async function enrichListingsWithLLM(
       review_status: reviewStatus,
       review_reason: reviewReason,
       is_real_estate: llm.is_real_estate,
-      deposit_months: llm.canonical_facts?.deposit_months ?? listing.deposit_months,
+      deposit_months: canonicalFacts ? canonicalFacts.deposit_months ?? undefined : listing.deposit_months,
       listing_facts_json: llm.canonical_facts ? JSON.stringify(llm.canonical_facts) : listing.listing_facts_json,
     };
     enriched.push(result);
@@ -734,7 +754,8 @@ export async function enrichListingsWithLLM(
   console.log(`  ✅ AI enrichment complete: ${enriched.length}/${listings.length} listings kept (rewritten to English).`);
   return options.inclusive
     ? listings.map((listing, index) => inclusiveResults.get(index) ?? {
-      ...listing, is_real_estate: null, review_status: 'pending', review_reason: 'LLM extraction unavailable',
+      ...listing, description: fallbackDescription(listing),
+      is_real_estate: null, review_status: 'pending', review_reason: 'LLM extraction unavailable',
     })
     : enriched;
 }

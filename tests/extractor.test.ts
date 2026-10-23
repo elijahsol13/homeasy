@@ -10,15 +10,21 @@ import {
 
 describe('Extractor: Cambodian Utilities & Property Types', () => {
   describe('LLM input preparation', () => {
-    test('removes duplicate lines and Facebook UI noise without removing Khmer text', () => {
+    test('preserves repeated facts and removes only standalone UI labels', () => {
       const input = 'ផ្ទះជួល ស្លក្រាម\n$350/month\n$350/month\nLike\nComment\nPhone 012 345 678';
-      expect(prepareLlmInput(input)).toBe('ផ្ទះជួល ស្លក្រាម\n$350/month\nPhone 012 345 678');
+      expect(prepareLlmInput(input)).toBe('ផ្ទះជួល ស្លក្រាម\n$350/month\n$350/month\nPhone 012 345 678');
     });
 
-    test('bounds oversized text while preserving its tail', () => {
-      const prepared = prepareLlmInput(`start ${'x'.repeat(9000)} phone 012345678`, 8000);
-      expect(prepared.length).toBeLessThanOrEqual(8003);
-      expect(prepared).toContain('phone 012345678');
+    test('keeps both price lines in separate units and all oversized source evidence', () => {
+      const input = 'Unit A\nPrice: $300\nUnit B\nPrice: $300';
+      expect(prepareLlmInput(input)).toBe(input);
+      const longSource = `start ${'x'.repeat(9000)} phone 012345678`;
+      expect(prepareLlmInput(longSource)).toBe(longSource);
+    });
+
+    test('keeps UI words embedded in property details and original line boundaries', () => {
+      const input = 'Apartment in See translation neighborhood\r\nShow translation is part of the listing\r\nSee translation\r\n2 baths';
+      expect(prepareLlmInput(input)).toBe('Apartment in See translation neighborhood\nShow translation is part of the listing\n2 baths');
     });
   });
 
@@ -30,9 +36,16 @@ describe('Extractor: Cambodian Utilities & Property Types', () => {
     });
 
     test('extracts EDC / State Rate', () => {
-      expect(extractElectricity('Electricity: EDC rate')).toBe('EDC (State Rate) ~$0.20/kWh');
-      expect(extractElectricity('State electric rate billed monthly')).toBe('EDC (State Rate) ~$0.20/kWh');
-      expect(extractElectricity('ភ្លើងរដ្ឋ តាមកុងទ័រ')).toBe('EDC (State Rate) ~$0.20/kWh');
+      expect(extractElectricity('Electricity: EDC rate')).toBe('EDC (State Rate)');
+      expect(extractElectricity('State electric rate billed monthly')).toBe('EDC (State Rate)');
+      expect(extractElectricity('ភ្លើងរដ្ឋ តាមកុងទ័រ')).toBe('EDC (State Rate)');
+      expect(extractElectricity('Electricity: EDC state rate $0.20/kwh. Free water included.'))
+        .toBe('EDC (State Rate) ($0.20/kWh)');
+      expect(extractElectricity('Electricity: EDC (720 Riels)')).toBe('EDC (State Rate) (720៛)');
+      expect(extractElectricity('Electricity: EDC state rate. Rent: $450/month'))
+        .toBe('EDC (State Rate)');
+      expect(extractElectricity('Electricity: EDC state rate; Water $5/person'))
+        .toBe('EDC (State Rate)');
     });
 
     test('extracts fixed USD rates per kWh', () => {
@@ -48,7 +61,6 @@ describe('Extractor: Cambodian Utilities & Property Types', () => {
       expect(extractElectricity('Electricity: 1200 riel per kwh')).toBe('Fixed Rate (1200៛/kWh)');
       expect(extractElectricity('electricity 1,000 riels/kwh')).toBe('Fixed Rate (1000៛/kWh)');
       expect(extractElectricity('ភ្លើង 1000៛/unit')).toBe('Fixed Rate (1000៛/kWh)');
-      expect(extractElectricity('Electricity: EDC (720 Riels)')).toBe('EDC (State Rate) ~$0.20/kWh');
     });
 
     test('returns null when electricity is not mentioned', () => {
@@ -65,10 +77,12 @@ describe('Extractor: Cambodian Utilities & Property Types', () => {
     });
 
     test('extracts State Rate water', () => {
-      expect(extractWater('State water rate directly from meter')).toBe('State Rate (~1000៛/m³)');
-      expect(extractWater('ទឹកដ្ឋ តាមកុងទ័រ')).toBe('State Rate (~1000៛/m³)');
-      expect(extractWater('Water: 1000 r/m3')).toBe('State Rate (~1000៛/m³)');
-      expect(extractWater('Water: PPWSA state rate')).toBe('State Rate (~1000៛/m³)');
+      expect(extractWater('State water rate directly from meter')).toBe('State Rate');
+      expect(extractWater('ទឹកដ្ឋ តាមកុងទ័រ')).toBe('State Rate');
+      expect(extractWater('Water: 1000 r/m3')).toBe('State Rate (1000៛/m³)');
+      expect(extractWater('Water: PPWSA state rate')).toBe('State Rate');
+      expect(extractWater('Water: PPWSA state rate $0.35/m³')).toBe('State Rate ($0.35/m³)');
+      expect(extractWater('Water: PPWSA state rate. Rent: $450/month')).toBe('State Rate');
     });
 
     test('extracts fixed water rates per person or per month', () => {

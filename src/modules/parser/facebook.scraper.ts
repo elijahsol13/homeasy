@@ -60,6 +60,7 @@ import { FacebookLiveAdapter, facebookGroupEnvelope } from './live-source-adapte
 import { installLegacyPropertiesWriteGuard } from '../../database/legacy-write-guard';
 import type { IngestionBatchResult } from './ingestion-contracts';
 import { resolvePropertyMapFromText } from './source-map-location';
+import { factualListingFallback } from './listing-editorial';
 
 export { FB_SESSION_PATH } from './fb-runtime';
 export const BROWSER_CACHE_DIR = path.join(process.cwd(), 'data', 'browser_cache');
@@ -390,7 +391,9 @@ export async function parseFacebookPostText(
   const phone = uniquePhones.length > 0 ? uniquePhones.join(' / ') : undefined;
   const telegram_contact = directContacts.telegram;
 
-  const description = llm?.description_en || text;
+  const description = llm?.description_en?.trim() || factualListingFallback({
+    sourceText: text, propertyType, category, bedrooms, bathrooms,
+  });
 
   // Title: use catchy LLM title (max 5 words) or clean fallback
   let title = llm?.title_en?.trim() || '';
@@ -637,14 +640,9 @@ export function extractStoriesFromGraphQL(root: unknown): FbGraphQLStoryNode[] {
 
 function cleanFbText(rawText: string): string {
   if (!rawText) return '';
-  return rawText
-    .replace(
-      /\b(?:Показать перевод|Show translation|See translation|See original|Поделился\/-ась|Подписаться|Общедоступная группа)\b/gi,
-      '',
-    )
-    .replace(/\.\.\.\s*(?:Ещё|See more|See More)/gi, '')
-    .replace(/\s+/g, ' ')
-    .trim();
+  // This feeds the persisted raw_text. GraphQL message content is the source of
+  // truth: UI-looking words may be part of real location or amenity sentences.
+  return rawText;
 }
 
 function isUiNoiseText(t: string): boolean {
@@ -1100,7 +1098,7 @@ export async function batchExtractFbPosts(fetched: FetchedFbPost[]): Promise<Map
       `   🚀 [AI Batch ${Math.floor(i / FB_LLM_BATCH_SIZE) + 1}/${Math.ceil(candidateIndices.length / FB_LLM_BATCH_SIZE)}] Rewriting ${batchInput.length} posts with Gemini...`,
     );
     try {
-      const batchResult = await extractListingsBatchWithLLM(batchInput);
+      const batchResult = await extractListingsBatchWithLLM(batchInput, `Source: Facebook group post. Only free-form author text is available; no required platform form fields can corroborate bedrooms, baths, price or facilities. Derive each value from the post itself. If several offers are advertised together, do not combine their attributes into one fictitious unit.`);
       for (const [id, llm] of batchResult) {
         results.set(Number(id), llm);
       }

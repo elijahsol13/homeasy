@@ -1,0 +1,270 @@
+{
+  "description": "Reviewed primary-source annotations; null means unverified, not absent. Source text remains only in read-only SQLite.",
+  "source": "reports/homeasy-ai-extraction-real-source-gold-20261023.md",
+  "pairs": [
+    {
+      "id": 9,
+      "source": "Facebook",
+      "sourceSha256": "8812131aceec5cd20db8faa28613e775a1187b55d8a7b403bfbe0972f732e1cc",
+      "bedrooms": 0,
+      "bathrooms": null
+    },
+    {
+      "id": 20,
+      "source": "Facebook",
+      "sourceSha256": "b22178a82bb3ee6b1e0d2fd46fbb8a39b32043ae0edd9390b3c8e63a1709f7a4",
+      "bedrooms": 0,
+      "bathrooms": null
+    },
+    {
+      "id": 70,
+      "source": "Khmer24",
+      "sourceSha256": "b1c386d3fc93a65dc0bc3147ebf168f4b371df79fcfa2e4d1a29aa594d50c0dc",
+      "bedrooms": 0,
+      "bathrooms": 1
+    },
+    {
+      "id": 110,
+      "source": "Facebook",
+      "sourceSha256": "89662ad3300be70d4155d0d1d358e3d008f231a882ec47a66ffc2d6acc779789",
+      "bedrooms": 2,
+      "bathrooms": 2,
+      "monthlyRentUsd": 450
+    },
+    {
+      "id": 138,
+      "source": "Facebook",
+      "sourceSha256": "63d80e76089926282217253bdd6840b3995c3d8e3969bbbf65ebec570652447d",
+      "bedrooms": 2,
+      "bathrooms": 3,
+      "monthlyRentUsd": 380
+    },
+    {
+      "id": 250,
+      "source": "Facebook",
+      "sourceSha256": "f3504a01f4e4950b6a89ddf9739936004c680088c588c1c61c4afb21a0176ea0",
+      "bedrooms": 2,
+      "bathrooms": 2,
+      "monthlyRentUsd": 600
+    },
+    {
+      "id": 412,
+      "source": "Facebook",
+      "sourceSha256": "8f08f123978f34f11da2be9e727105cd8a512b52dd53e04088c2412086e0b248",
+      "bedrooms": 2,
+      "bathrooms": 2,
+      "monthlyRentUsd": 550
+    },
+    {
+      "id": 2067,
+      "source": "Khmer24",
+      "sourceSha256": "dd993cdb729b7168729eef3fb57befcabe1f0ffd526c17dde565f161e6d471c0",
+      "bedrooms": 3,
+      "bathrooms": 4
+    },
+    {
+      "id": 2653,
+      "source": "Khmer24",
+      "sourceSha256": "90575792ef34308a2b5f69d9417ef9b57255b3ba3bc16b00a543679f57b8c4b8",
+      "bedrooms": 2,
+      "bathrooms": 3
+    },
+    {
+      "id": 2659,
+      "source": "Khmer24",
+      "sourceSha256": "4cd9de18e5d207c81ec461bc7439def2b69d41c9359a0fc0da29bafe5ebb4ff1",
+      "bedrooms": 2,
+      "bathrooms": 3
+    },
+    {
+      "id": 2726,
+      "source": "Khmer24",
+      "sourceSha256": "c5695069f6ac3b4359c26d3137fb0a9314475d827f3154eac3bcc39b758ae0ba",
+      "bedrooms": 5,
+      "bathrooms": 6
+    },
+    {
+      "id": 2732,
+      "source": "Khmer24",
+      "sourceSha256": "c8768fa5484419088e7dfae14a604b55b247ec06d1d0b43c955770e9ded8abd3",
+      "bedrooms": 4,
+      "bathrooms": 5
+    },
+    {
+      "id": 2785,
+      "source": "Khmer24",
+      "sourceSha256": "2bd15aca0ed32740519bea4b89eb0606b1cfbe66b60439464e1bb96beee5ac2e",
+      "bedrooms": 4,
+      "bathrooms": 3
+    },
+    {
+      "id": 5714,
+      "source": "Khmer24",
+      "sourceSha256": "4ed8f20ee4cdc8b930298e9e9a0b68ac181f16396cdcef1ed6ed6c72aa07b70d",
+      "bedrooms": 3,
+      "bathrooms": 3
+    },
+    {
+      "id": 6006,
+      "source": "Khmer24",
+      "sourceSha256": "c35132f9cbfc86894424e0395a323a1b3e9c9c14e171b9508f10246c1a8e7b52",
+      "bedrooms": 2,
+      "bathrooms": 3
+    },
+    {
+      "id": 6990,
+      "source": "Khmer24",
+      "sourceSha256": "da5a58a86f57daf66556c45b62e15aac022253c99c80692be949b2a663c20e81",
+      "bedrooms": 3,
+      "bathrooms": 3
+    },
+    {
+      "id": 9889,
+      "source": "Khmer24",
+      "sourceSha256": "8d8a72e1eb117b11808e32160d1fcad14200a111d2b95417e8cd54df8518d1f7",
+      "bedrooms": 1,
+      "bathrooms": null
+    },
+    {
+      "id": 3,
+      "source": "Facebook",
+      "sourceSha256": "33223ab7e2526a96faf9cfd247ba3c7dff7cafc01f46b6f5ff4f223e239ad074",
+      "bedrooms": 1,
+      "bathrooms": 1
+    },
+    {
+      "id": 71,
+      "source": "Facebook",
+      "sourceSha256": "4887df06856daf2c2a8e11bc5d465c66dda8caae7091ec097d6c7afed78e554a",
+      "bedrooms": 4,
+      "bathrooms": 5
+    },
+    {
+      "id": 134,
+      "source": "Facebook",
+      "sourceSha256": "fd930b03e0561d2c0b4fc398b431ca6c99fd216a2ec66e5f9ab479350112e2ff",
+      "bedrooms": 2,
+      "bathrooms": 2
+    },
+    {
+      "id": 181,
+      "source": "Facebook",
+      "sourceSha256": "14ee69f541f2e0b31cb4f129b0e2d93c8183d103b8ed19207b33b15d99ea94ff",
+      "bedrooms": 1,
+      "bathrooms": 1
+    },
+    {
+      "id": 251,
+      "source": "Facebook",
+      "sourceSha256": "5fc781ef6b1242a9ae2be0dd9e3c286547918ec2377343d85f28c839256da001",
+      "bedrooms": 0,
+      "bathrooms": 1
+    },
+    {
+      "id": 293,
+      "source": "Facebook",
+      "sourceSha256": "6c55c715a60a488435ccde87c4bcb666e161f1fa921e52d39b5abeddeef4236c",
+      "bedrooms": 2,
+      "bathrooms": 2
+    },
+    {
+      "id": 339,
+      "source": "Facebook",
+      "sourceSha256": "7575434ead896e6346615439b4de11d15b659e2af0a7f3618f9c8ba6a486eba2",
+      "bedrooms": 1,
+      "bathrooms": null,
+      "monthlyRentUsd": 450
+    },
+    {
+      "id": 402,
+      "source": "Facebook",
+      "sourceSha256": "e5981fa2b0a9cfea449128e33e169a3fbb9d5e22d5ef03a005fa4b8a56b7c8dc",
+      "bedrooms": 2,
+      "bathrooms": 3
+    },
+    {
+      "id": 4052,
+      "source": "Facebook",
+      "sourceSha256": "2acf78c76fbb9130382259add5c6ac0c2b50a8630b7e5e153feab981a74135b3",
+      "bedrooms": 2,
+      "bathrooms": null
+    },
+    {
+      "id": 8609,
+      "source": "Facebook",
+      "sourceSha256": "82b13adaeef6b77fe00ba2ce5e4de42ebc3ef73f58e336b030bf7869607c6737",
+      "bedrooms": 3,
+      "bathrooms": 4
+    },
+    {
+      "id": 33,
+      "source": "Khmer24",
+      "sourceSha256": "df83eb8344dec0c41f4bd1b8e988d0a7e168026a1bd109ba88f94d18b2ca4048",
+      "bedrooms": 2,
+      "bathrooms": null
+    },
+    {
+      "id": 155,
+      "source": "Khmer24",
+      "sourceSha256": "fb2264755652494406b4ea8589bf0a2d7dc91030996e1a05873a340bdfbc5b64",
+      "bedrooms": null,
+      "bathrooms": null
+    },
+    {
+      "id": 256,
+      "source": "Khmer24",
+      "sourceSha256": "b9871d588c9206f4842ecaca18ab5c78ae976c00dfd4bd7ea02767c6e163b325",
+      "bedrooms": 5,
+      "bathrooms": 6
+    },
+    {
+      "id": 374,
+      "source": "Khmer24",
+      "sourceSha256": "3f563722284786646d0d04d36d9593934060ad6a623ccd80a06decdf9f12512a",
+      "bedrooms": 2,
+      "bathrooms": 1
+    },
+    {
+      "id": 2947,
+      "source": "Khmer24",
+      "sourceSha256": "d6d9b22b17cc7e2aa0dfb1b75a382254085c5d47c9ea85f8be4a3421dcaee765",
+      "bedrooms": 2,
+      "bathrooms": 3
+    },
+    {
+      "id": 6954,
+      "source": "Khmer24",
+      "sourceSha256": "e24216a9a53c075e75d45269351a5401e0dd93b286c64aa2df5156b21c8cf1e2",
+      "bedrooms": 3,
+      "bathrooms": 3
+    },
+    {
+      "id": 9557,
+      "source": "Khmer24",
+      "sourceSha256": "bd61a836f6876308637c2bd07d8a1ca33c7765a8062fc06080d3fce6e52172c8",
+      "bedrooms": 5,
+      "bathrooms": 6
+    },
+    {
+      "id": 9933,
+      "source": "Khmer24",
+      "sourceSha256": "74640a94fc74c369c38a5510cdd3316964d9ff9f254047ec621fe1cbceeb4eba",
+      "bedrooms": 2,
+      "bathrooms": 2
+    },
+    {
+      "id": 15313,
+      "source": "Khmer24",
+      "sourceSha256": "a1390eb45df0305f707ea8f49b85998d549b4fd3024cd3b6bc7284fede8cee87",
+      "bedrooms": 2,
+      "bathrooms": 2
+    },
+    {
+      "id": 16496,
+      "source": "Khmer24",
+      "sourceSha256": "eb173a5d58121223bf93b3ea4ae29affe7a21a0a7e0839676ab4a185d3e13f93",
+      "bedrooms": 2,
+      "bathrooms": 2
+    }
+  ]
+}

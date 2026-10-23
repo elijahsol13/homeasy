@@ -119,7 +119,7 @@ describe('Mini App listing query integration through Fastify and in-memory SQLit
       });
 
       it('uses identical cohort filters for map clusters and list, including cluster-key navigation', async () => {
-        const selectedLocation = path === 'legacy' ? 'Sla Kram' : 'Wat Bo';
+        const selectedLocation = path === 'legacy' ? 'Sala Kamreuk' : 'Wat Bo';
         const params = `category=house&locations_json=${encodeURIComponent(JSON.stringify([selectedLocation]))}&min_price=350&max_price=550&bedrooms=4&bathrooms=2&min_lease_max=6&query=Integration`;
         const feed = await list(params);
         expect(feed.total).toBe(2);
@@ -144,9 +144,9 @@ describe('Mini App listing query integration through Fastify and in-memory SQLit
       });
 
       it('combines category, location, price, rooms, and correct pagination (B, D)', async () => {
-        // Legacy stores the canonical administrative location (Sla Kram),
-        // while canonical uses the source's displayed Wat Bo location.
-        const selectedLocation = path === 'legacy' ? 'Sla Kram' : 'Wat Bo';
+        // Legacy canonicalizes the Wat Bo landmark to Sala Kamreuk on insert;
+        // canonical keeps the source locality and applies strict sangkat filters.
+        const selectedLocation = path === 'legacy' ? 'Sala Kamreuk' : 'Wat Bo';
         const shared = `category=house&locations_json=${encodeURIComponent(JSON.stringify([selectedLocation]))}&min_price=350&max_price=550&bedrooms=4`;
         const asc = await list(`${shared}&sort=price_asc`);
         expect(asc.total).toBe(2);
@@ -166,9 +166,9 @@ describe('Mini App listing query integration through Fastify and in-memory SQLit
       });
 
       it('filters geography without breaking JSON location aliases (B, G)', async () => {
-        const selectedLocation = path === 'legacy' ? 'Sla Kram' : 'Wat Bo';
+        const selectedLocation = path === 'legacy' ? 'Sala Kamreuk' : 'Wat Bo';
         const result = await list(`locations_json=${encodeURIComponent(JSON.stringify([selectedLocation]))}&sort=price_asc`);
-        expect(result.total).toBe(4);
+        expect(result.total).toBe(path === 'legacy' ? 6 : 4);
         expect(result.items.every((item) => item.location === selectedLocation)).toBe(true);
       });
 

@@ -448,6 +448,39 @@ describe('feed sorting and pagination', () => {
     expect([...host.querySelectorAll('[data-testid="property"]')].map((item) => item.textContent)).toEqual(['3']);
   });
 
+  it('shows a useful network error and retries the exact failed feed query without clearing filters', async () => {
+    const log = vi.spyOn(console, 'error').mockImplementation(() => {});
+    await renderWithSavedFilters(JSON.stringify({
+      city: 'siem_reap', locations: ['Wat Bo'], bedrooms: [4], maxPrice: 800, sort: 'price_desc',
+    }));
+    expect(requests).toHaveLength(1);
+    const originalFilters = structuredClone(requests[0].filters);
+    const savedBeforeFailure = localStorage.getItem('homeasy_filters');
+
+    await act(async () => {
+      requests[0].reject(new TypeError('Failed to fetch'));
+      await Promise.resolve();
+    });
+
+    expect(host.textContent).toContain('Could not connect to the server');
+    expect(host.textContent).not.toContain('Failed to fetch');
+    expect(log).toHaveBeenCalledWith('Failed to fetch properties:', expect.objectContaining({ message: 'Failed to fetch' }));
+    expect(button('Try again')).toBeTruthy();
+
+    await act(async () => { button('Try again').click(); await new Promise((resolve) => setTimeout(resolve, 5)); });
+    expect(requests).toHaveLength(2);
+    expect(requests[1].page).toBe(1);
+    expect(requests[1].filters).toEqual(originalFilters);
+    expect(localStorage.getItem('homeasy_filters')).toBe(savedBeforeFailure);
+
+    await act(async () => {
+      requests[1].resolve({ total: 1, page: 1, limit: 20, totalPages: 1, items: [property(88)] });
+      await Promise.resolve();
+    });
+    expect(host.textContent).not.toContain('Could not connect to the server');
+    expect([...host.querySelectorAll('[data-testid="property"]')].map((item) => item.textContent)).toEqual(['88']);
+  });
+
   it('keeps newest as the default and drops an old first page after sorting changes', async () => {
     localStorage.removeItem('homeasy_filters');
     await act(async () => {

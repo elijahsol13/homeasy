@@ -13,11 +13,11 @@ export const CAMBODIA_LOCATIONS: LocationEntry[] = [
   // ─── Siem Reap Sangkats & Districts ──────────────────────────────────────────
   {
     canonicalName: 'Svay Dangkum',
-    khmerName: 'ស្វាយដង្គុំ',
+    khmerName: 'ស្វាយដង្គំ',
     city: 'siem_reap',
     administrativeType: 'sangkat',
     aliases: [
-      'svay dangkum', 'svay dang kum', 'svaydangkum', 'svay',
+      'svay dangkum', 'svay dang kum', 'svaydangkum', 'svay', 'ស្វាយដង្គុំ',
       'phsa kraom', 'phsa kraom residence', 'phsar kraom', 'phsar kraom residence',
       'phsar kraoum', 'psar kraom', 'psar kroam', 'phsar kroam',
     ],
@@ -28,7 +28,7 @@ export const CAMBODIA_LOCATIONS: LocationEntry[] = [
     khmerName: 'សាលាកំរើក',
     city: 'siem_reap',
     administrativeType: 'sangkat',
-    aliases: ['sala kamreuk', 'sala kamreak', 'sala kamraeuk', 'salakamreuk', 'wat damnak'],
+    aliases: ['sala kamreuk', 'sala kamreak', 'sala kamraeuk', 'salakamreuk', 'sala kamroek', 'salakomreuk', 'wat damnak', 'wat bo'],
     googleMapsPlaceQuery: 'Sangkat Sala Kamreuk, Krong Siem Reap, Cambodia',
   },
   {
@@ -36,7 +36,7 @@ export const CAMBODIA_LOCATIONS: LocationEntry[] = [
     khmerName: 'ស្លក្រាម',
     city: 'siem_reap',
     administrativeType: 'sangkat',
-    aliases: ['sla kram', 'slor kram', 'slakram', 'wat bo'],
+    aliases: ['sla kram', 'slor kram', 'slakram', 'slorkram', 'slokram', 'slarkram'],
     googleMapsPlaceQuery: 'Sangkat Sla Kram, Krong Siem Reap, Cambodia',
   },
   {
@@ -52,7 +52,7 @@ export const CAMBODIA_LOCATIONS: LocationEntry[] = [
     khmerName: 'គោកចក',
     city: 'siem_reap',
     administrativeType: 'sangkat',
-    aliases: ['kouk chak', 'kok chak', 'koukchak'],
+    aliases: ['kouk chak', 'kok chak', 'koukchak', 'kork chork', 'kok chork'],
     googleMapsPlaceQuery: 'Sangkat Kouk Chak, Krong Siem Reap, Cambodia',
   },
   {
@@ -375,6 +375,44 @@ export function getCanonicalLocationKey(location: string, city?: CityKey): strin
   if (!canonical) return null;
   const slug = normalizeLoc(canonical.canonicalName).replace(/\s+/g, '_');
   return `${canonical.city}:${slug}`;
+}
+
+/** Areas eligible for administrative location filters. Generic city labels,
+ * marketing landmarks and neighboring districts are deliberately excluded. */
+export function getFilterSangkat(location: string, city: CityKey): LocationEntry | undefined {
+  const normalized = normalizeLoc(location.replace(/_/g, ' '));
+  if (!normalized) return undefined;
+  // Reject explicit references to another city before matching an embedded area.
+  if (city === 'siem_reap' && /\bphnom penh\b/.test(normalized)) return undefined;
+  if (city === 'phnom_penh' && /\bsiem reap\b/.test(normalized)) return undefined;
+
+  // A neighborhood or landmark is only an approximate map/search hint. For
+  // administrative filters accept the actual sangkat name or a spelling variant.
+  // Khmer24 often appends ", Siem Reap, Siem Reap" to the first address segment.
+  const segment = normalizeLoc(location.replace(/_/g, ' ').split(',')[0]);
+  const candidate = segment.replace(/^(?:location|address)\s+/, '').replace(/^sangkat\s+/, '');
+  for (const entry of CAMBODIA_LOCATIONS) {
+    if (entry.city !== city || entry.administrativeType !== 'sangkat') continue;
+    const names = [entry.canonicalName, entry.khmerName, ...entry.aliases];
+    for (const name of names) {
+      // The fuzzy dictionary includes landmarks, generic words and aliases of
+      // varying confidence. Only spelling variants of sangkat names qualify.
+      if (city === 'siem_reap' && [
+        'svay', 'wat bo', 'wat damnak', 'airport road', 'phsar leu',
+        'siem reap thmey', 'tonle sap port', 'angkor kyung yu',
+        'phsa kraom', 'phsa kraom residence', 'phsar kraom',
+        'phsar kraom residence', 'phsar kraoum', 'psar kraom',
+        'psar kroam', 'phsar kroam',
+      ].includes(normalizeLoc(name))) continue;
+      if (candidate === normalizeLoc(name)) {
+        // City-only "Siem Reap" must not be interpreted as Sangkat Siem Reap.
+        if (city === 'siem_reap' && candidate === 'siem reap'
+            && !/^sangkat\s+/i.test(segment)) return undefined;
+        return entry;
+      }
+    }
+  }
+  return undefined;
 }
 
 export function canonicalizeLocation(

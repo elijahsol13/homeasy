@@ -61,13 +61,13 @@ describe('live unified source adapters', () => {
     })).toThrow(/structured post ID is invalid/);
   });
 
-  it('retains valid JSON room counts, prefers valid raw counts and rejects invalid counts', () => {
+  it('retains canonical JSON room counts over Khmer24 form values when source text is silent', () => {
     const adapter = new Khmer24LiveAdapter(async function* () {});
     const normalize = (listing: Record<string, unknown>) => adapter.normalize({sourceId:'siem-reap',sourceName:'Khmer24',
       listing: {title:'Apartment',raw_text:'Apartment for rent',source_url:'https://khmer24.com/en/apartment-adid-12345',city:'siem_reap',photos:[],...listing}});
     const facts = (listing: Record<string, unknown>) => (normalize(listing).raw as unknown as {listingExtraction:Record<string,unknown>}).listingExtraction;
     expect(facts({listing_facts_json:JSON.stringify({bedrooms:3,bathrooms:2})})).toMatchObject({bedrooms:3,bathrooms:2});
-    expect(facts({bedrooms:0,bathrooms:4,listing_facts_json:JSON.stringify({bedrooms:3,bathrooms:2})})).toMatchObject({bedrooms:0,bathrooms:4});
+    expect(facts({bedrooms:0,bathrooms:4,listing_facts_json:JSON.stringify({bedrooms:3,bathrooms:2})})).toMatchObject({bedrooms:3,bathrooms:2});
     expect(facts({bedrooms:-1,bathrooms:1.5,listing_facts_json:JSON.stringify({bedrooms:3,bathrooms:2})})).toMatchObject({bedrooms:3,bathrooms:2});
     expect(facts({listing_facts_json:'invalid'})).toMatchObject({bedrooms:null,bathrooms:null});
     expect(facts({listing_facts_json:'[2,3]'})).toMatchObject({bedrooms:null,bathrooms:null});

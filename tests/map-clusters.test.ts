@@ -1,23 +1,25 @@
 import { aggregateUnlocatedMapItems } from '../src/modules/api/map-clusters';
 
 describe('aggregateUnlocatedMapItems', () => {
-  it('groups known location aliases into one district marker and preserves aliases for map focus', () => {
+  it('keeps Wat Bo (Sala Kamreuk) distinct from Sla Kram in map clusters', () => {
     const clusters = aggregateUnlocatedMapItems([
       { city: 'siem_reap', location: 'Wat Bo', locationKey: null, priceUsd: 200 },
       { city: 'siem_reap', location: 'Sla Kram', locationKey: 'siem_reap:sla_kram', priceUsd: 350 },
     ], 'siem_reap');
 
-    expect(clusters).toHaveLength(1);
-    expect(clusters[0]).toMatchObject({
-      location: 'Sla Kram',
-      locationKey: 'siem_reap:sla_kram',
-      count: 2,
-      minPriceUsd: 200,
-      maxPriceUsd: 350,
-      coordinatePrecision: 'district',
-    });
-    expect(clusters[0]!.locationAliases).toEqual(['Wat Bo', 'Sla Kram']);
-    expect(clusters[0]!.lat).not.toBe(13.3611);
+    expect(clusters).toHaveLength(2);
+    expect(clusters).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        location: 'Sala Kamreuk', locationKey: 'siem_reap:sala_kamreuk',
+        count: 1, minPriceUsd: 200, maxPriceUsd: 200,
+        coordinatePrecision: 'district', locationAliases: ['Wat Bo'],
+      }),
+      expect.objectContaining({
+        location: 'Sla Kram', locationKey: 'siem_reap:sla_kram',
+        count: 1, minPriceUsd: 350, maxPriceUsd: 350,
+        coordinatePrecision: 'district', locationAliases: ['Sla Kram'],
+      }),
+    ]));
   });
 
   it('groups unrecognized and cross-city locations into one explicit city-level marker', () => {

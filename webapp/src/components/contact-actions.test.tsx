@@ -159,4 +159,17 @@ describe('contact controls in listing UI', () => {
     expect(onClose).not.toHaveBeenCalled();
     expect(host.querySelector('a[aria-label="Call"]')?.getAttribute('href')).toBe('tel:+85512345678');
   });
+
+  it('clearly separates verified rental terms from amenities and avoids assuming a cash deposit', async () => {
+    await act(async () => {
+      root.render(<PropertyDetailModal property={{ ...property, priceUsd: 0, minLeaseMonths: 6, depositUsd: null, depositMonths: 1 }}
+        onClose={vi.fn()} onToggleFavorite={vi.fn()} onShowOnMap={vi.fn()} />);
+    });
+    expect(host.textContent).toContain('Rental Terms');
+    expect(host.textContent).toContain('6 months');
+    expect(host.textContent).toContain('1 month');
+    expect(host.textContent).toContain('Price not specified');
+    expect(host.textContent).not.toContain('contact the agent');
+    expect(host.textContent).not.toContain('Deposit $');
+  });
 });

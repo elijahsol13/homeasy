@@ -1,6 +1,6 @@
 import type { DatabaseSync } from 'node:sqlite';
 import type { CityKey } from '../../config/settings';
-import { canonicalizeLocation, extractCoordinatesFromMapsUrl, isCoordinateInSanityBounds } from '../../config/locations';
+import { CAMBODIA_LOCATIONS, canonicalizeLocation, extractCoordinatesFromMapsUrl, getCanonicalLocationKey, getFilterSangkat, isCoordinateInSanityBounds } from '../../config/locations';
 import { isKnownKhmer24AdministrativePin } from '../../modules/parser/source-geography';
 import type { Property, PropertyFilterOptions } from './properties.repo';
 
@@ -30,11 +30,38 @@ const OUT_OF_AREA_TERMS = [
 const EXPLICIT_TEXT_CITY_TERMS = ['phnom penh','phnompenh','ភ្នំពេញ','kandal','kandal province','kandal district','kandal, cambodia','ខេត្តកណ្ដាល','sihanoukville','preah sihanouk','takeo','តាកែវ','បាត់ដំបង','ព្រះសីហនុ'];
 const SIEM_REAP_LOCAL_TERMS = ['wat bo','sala kamreuk','sala kamraeuk','svay dangkum','sla kram','chreav','chong kaosou','wat damnak','wat polanka','bakong','pradak','kandaek','phare circus','pub street','old market'];
 const LIKE_ESCAPE = (value: string) => `%${value.toLowerCase().replace(/[!%_]/g,'!$&')}%`;
+const PROJECTED_LOCATION_SQL = `COALESCE(NULLIF(TRIM(l.explicit_location),''),NULLIF(TRIM(l.sangkat),''),
+  NULLIF(TRIM(p.explicit_location),''),NULLIF(TRIM(p.sangkat),''),NULLIF(TRIM(p.canonical_address),''),
+  NULLIF(TRIM(l.city),''),NULLIF(TRIM(p.city),''),'siem_reap')`;
+const FILTER_SANGKAT_SQL = `homeasy_filter_sangkat_candidates(l.explicit_location,l.sangkat,
+  p.explicit_location,p.sangkat,p.canonical_address,?)`;
+
+function firstVerifiedSangkat(values: unknown[], city: CityKey) {
+  for (const value of values) {
+    if (typeof value !== 'string') continue;
+    const sangkat = getFilterSangkat(value, city);
+    if (sangkat) return sangkat;
+  }
+  return undefined;
+}
 
 /** Read-only canonical projection. Filtering, ordering, counting and pagination are executed in SQLite. */
 export class CanonicalListingRepository {
   lastDiagnostics: ReadStats = { queryCount: 2, candidateCount: 0, countMs: 0, listMs: 0, sqlMs: 0, mappingMs: 0, totalMs: 0 };
-  constructor(private readonly db: DatabaseSync) {}
+  constructor(private readonly db: DatabaseSync) {
+    // Read-only derived lookup, shared by metadata and filtered list/map queries.
+    // No stored location or SQLite schema is modified.
+    db.function('homeasy_filter_sangkat_candidates', { deterministic: true }, (
+      explicitLocation: unknown, sangkat: unknown, propertyLocation: unknown,
+      propertySangkat: unknown, propertyAddress: unknown, city: unknown,
+    ) => {
+      if (city !== 'siem_reap' && city !== 'phnom_penh') return null;
+      const entry = firstVerifiedSangkat([
+        explicitLocation, sangkat, propertyLocation, propertySangkat, propertyAddress,
+      ], city);
+      return entry ? getCanonicalLocationKey(entry.canonicalName, city) : null;
+    });
+  }
 
   searchProperties(options: PropertyFilterOptions = {}): { items: Property[]; total: number } {
     const started = performance.now();
@@ -91,10 +118,11 @@ export class CanonicalListingRepository {
     let maxPrice = 0;
     for (const row of rows) {
       const item = row as CanonicalRow;
-      const location = nonEmpty(item.explicit_location) ?? nonEmpty(item.sangkat)
-        ?? nonEmpty(item.property_explicit_location) ?? nonEmpty(item.property_sangkat)
-        ?? nonEmpty(item.canonical_address) ?? nonEmpty(item.projection_city) ?? 'siem_reap';
-      locations.set(location, (locations.get(location) ?? 0) + 1);
+      const sangkat = firstVerifiedSangkat([
+        item.explicit_location, item.sangkat, item.property_explicit_location,
+        item.property_sangkat, item.canonical_address,
+      ], city);
+      if (sangkat) locations.set(sangkat.canonicalName, (locations.get(sangkat.canonicalName) ?? 0) + 1);
       const category = nonEmpty(item.category);
       if (category) categories.set(category, (categories.get(category) ?? 0) + 1);
       const price = Number(item.price);
@@ -102,7 +130,8 @@ export class CanonicalListingRepository {
       if (price > maxPrice) maxPrice = price;
     }
     return {
-      locations: [...locations].map(([location, count]) => ({ location, count })),
+      locations: [...locations].map(([location, count]) => ({ location, count }))
+        .sort((a,b) => b.count - a.count || a.location.localeCompare(b.location)),
       categories: [...categories].map(([category, count]) => ({ category, count })),
       priceRange: { minPrice, maxPrice },
     };
@@ -309,13 +338,28 @@ export class CanonicalListingRepository {
       params.push(options.minLeaseMax);
     }
     if (options.locations?.length) {
-      // Match the *one* displayed location used by cards and metadata counts.
-      // Matching every raw address field inflated selected counts (T10).
-      const projectedLocation = `COALESCE(NULLIF(TRIM(l.explicit_location),''),NULLIF(TRIM(l.sangkat),''),
-        NULLIF(TRIM(p.explicit_location),''),NULLIF(TRIM(p.sangkat),''),NULLIF(TRIM(p.canonical_address),''),
-        NULLIF(TRIM(l.city),''),NULLIF(TRIM(p.city),''),'siem_reap')`;
-      clauses.push(`lower(TRIM(${projectedLocation})) IN (${options.locations.map(() => '?').join(',')})`);
-      params.push(...options.locations.map((location) => location.trim().toLowerCase()));
+      // Filter the same projected primary location that supplies dropdown counts.
+      // Accept old saved raw labels (Wat Bo etc.) and legacy unknown exact labels.
+      const keyed: string[] = [];
+      const raw: string[] = [];
+      for (const location of options.locations) {
+        const city = options.city ?? 'siem_reap';
+        const entry = CAMBODIA_LOCATIONS.find((candidate) => candidate.city === city
+          && candidate.administrativeType === 'sangkat' && candidate.canonicalName.toLowerCase() === location.trim().toLowerCase())
+          ?? getFilterSangkat(location, city);
+        if (entry) keyed.push(getCanonicalLocationKey(entry.canonicalName, city)!);
+        else raw.push(location.trim().toLowerCase());
+      }
+      const alternatives: string[] = [];
+      if (keyed.length) {
+        alternatives.push(`${FILTER_SANGKAT_SQL} IN (${keyed.map(() => '?').join(',')})`);
+        params.push(options.city ?? 'siem_reap', ...keyed);
+      }
+      if (raw.length) {
+        alternatives.push(`lower(TRIM(${PROJECTED_LOCATION_SQL})) IN (${raw.map(() => '?').join(',')})`);
+        params.push(...raw);
+      }
+      clauses.push(`(${alternatives.join(' OR ')})`);
     }
     if (options.query?.trim()) {
       const pattern=LIKE_ESCAPE(options.query.trim());
@@ -442,8 +486,8 @@ export class CanonicalListingRepository {
     const restrictions=stringList(row.restrictions);
     const factsLandmarks=stringList(row.facts_landmarks??facts.landmarks);
     const marketing=stringList(row.facts_marketing_landmarks??facts.marketing_landmarks);
-    const electricity=this.utilityFact(facts.electricity_type,facts.electricity_rate??row.electricity_rate);
-    const water=this.utilityFact(facts.water_type,facts.water_rate??row.water_rate);
+    const electricity=this.utilityFact(facts.electricity_type,facts.electricity_rate??row.electricity_rate,'electricity');
+    const water=this.utilityFact(facts.water_type,facts.water_rate??row.water_rate,'water');
     const category=nonEmpty(row.category) as Property['category'];
     const offerType=nonEmpty(row.offer_type)??nonEmpty(facts.offer_type);
     const matchTier=row.match_tier==='EXACT'||row.match_tier==='PROBABLE'||row.match_tier==='UNKNOWN'?row.match_tier:undefined;
@@ -467,9 +511,9 @@ export class CanonicalListingRepository {
     };
   }
 
-  private utilityFact(kind: unknown, rate: unknown): string | null {
+  private utilityFact(kind: unknown, rate: unknown, utility: 'electricity' | 'water'): string | null {
     if(kind==='included')return 'Included'; if(kind==='not_included')return 'Not included';
-    if(kind==='state_rate')return 'EDC (State Rate)';
+    if(kind==='state_rate')return `${utility==='electricity'?'EDC (State Rate)':'State Rate'}${rate?` (${String(rate)})`:''}`;
     if(kind==='fixed')return rate?`Fixed Rate (${String(rate)})`:'Fixed Rate';
     return null;
   }

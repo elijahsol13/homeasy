@@ -62,6 +62,13 @@ describe('canonical facts → legacy projection', () => {
   });
 
   test('preserves uncertainty and does not invent a lease, tariff or address', () => {
+    const body = 'House for rent. Please contact us for details.';
+    const raw = { title_en: 'Three Bedroom House', description_en: 'The house has three bedrooms.', bedrooms: 3 };
+    expect(sanitizeListingFacts(raw, body, { platform_bedrooms: '3' }))
+      .toMatchObject({ bedrooms: 3, title_en: '3 Bedroom House' });
+    expect(sanitizeListingFacts({ ...raw, bedrooms: 2 }, body, { platform_bedrooms: '3' }))
+      .toMatchObject({ bedrooms: null, title_en: 'House' });
+    expect(sanitizeListingFacts(raw, body)).toMatchObject({ bedrooms: null });
     const legacy = toLegacyListingExtraction(facts);
     expect(legacy.min_lease).toBeNull();
     expect(legacy.electricity).toBe('EDC (State Rate)');
@@ -88,6 +95,33 @@ describe('canonical facts → legacy projection', () => {
     const unknownCurrency = { ...facts, currency: null };
     expect(toLegacyListingExtraction(unknownCurrency).price).toBeNull();
     expect(toLegacyListingExtraction(unknownCurrency).canonical_facts.price).toBe(250);
+  });
+
+  test('keeps explicitly extracted state tariffs in legacy card fields', () => {
+    const withRates = { ...facts, electricity_rate: '0.20 USD/kWh', water_type: 'state_rate' as const,
+      water_rate: '1000 KHR/m3' };
+    const legacy = toLegacyListingExtraction(withRates);
+    expect(legacy.electricity).toBe('EDC (State Rate) (0.20 USD/kWh)');
+    expect(legacy.water).toBe('State Rate (1000 KHR/m3)');
+  });
+
+  test('clean monetary and room columns honor canonical facts over stale raw fields', () => {
+    const clean = normalizeRawToClean(RawListingSchema.parse({
+      title: 'House', description: 'House for rent.', price: 900, currency: 'USD',
+      bedrooms: 5, bathrooms: 4, city: 'siem_reap', type: 'rent',
+      listing_facts_json: JSON.stringify({ ...facts, price: 250, currency: 'USD', bedrooms: 2, bathrooms: null }),
+    }))!;
+    expect(clean).toMatchObject({ price: 25000, bedrooms: 2, bathrooms: null });
+  });
+
+  test('clean monetary column never resurrects a canonical null price or missing currency', () => {
+    for (const unknown of [{ price: null, currency: null }, { price: 250, currency: null }]) {
+      const clean = normalizeRawToClean(RawListingSchema.parse({
+        title: 'House', description: 'House for rent.', price: 900, currency: 'USD',
+        city: 'siem_reap', type: 'rent', listing_facts_json: JSON.stringify({ ...facts, ...unknown }),
+      }))!;
+      expect(clean.price).toBe(0);
+    }
   });
 
   test('stores full facts in the property row', () => {

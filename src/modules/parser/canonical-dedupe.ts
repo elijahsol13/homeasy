@@ -7,6 +7,7 @@ import { CanonicalReviewAlertsRepository } from '../../database/repositories/can
 import { sourceListingFacts, validRoomCount } from './source-listing-facts';
 import { env } from '../../config/env';
 import { reviewDefaultPending } from './canonical-moderation-policy';
+import { factualListingFallback } from './listing-editorial';
 
 export const CANONICAL_DEDUPE_VERSION = 'canonical-dedupe-v1';
 
@@ -1171,7 +1172,10 @@ export class CanonicalShadowService {
           .all(this.algorithmVersion,...memberIds) as Array<{listing_id:number}>;
         if(bound.length===1)this.db.prepare('UPDATE canonical_listings SET canonical_key=? WHERE id=?').run(group.key,bound[0]!.listing_id);
         upsertListing.run(propertyId(group.propertyKey),crypto.randomBytes(16).toString('hex').replace(/^/,'lst_'),best.price?Math.round(best.price*100):null,best.currency,text(fact(best,'title_en'))||best.normalizedText.slice(0,220)||`Listing ${best.representativeSourceItemId}`,
-          text(fact(best,'description_en'))||best.normalizedText,sqlValue(fact(best,'property_type')),sqlValue(fact(best,'category'))||null,num(fact(best,'bedrooms')),num(fact(best,'bathrooms')),
+          text(fact(best,'description_en'))||factualListingFallback({ sourceText: original.raw_text ?? best.normalizedText,
+            propertyType: text(fact(best,'property_type')), category: text(fact(best,'category')),
+            bedrooms: num(fact(best,'bedrooms')), bathrooms: num(fact(best,'bathrooms')),
+          }),sqlValue(fact(best,'property_type')),sqlValue(fact(best,'category'))||null,num(fact(best,'bedrooms')),num(fact(best,'bathrooms')),
           num(fact(best,'min_lease_months','min_lease')),text(fact(best,'lease_term_text'))||null,num(fact(best,'deposit_amount','deposit')),num(fact(best,'deposit_months')),
           typeof fact(best,'pet_friendly')==='boolean'?Number(fact(best,'pet_friendly')):null,JSON.stringify(fact(best,'discovered_amenities')??fact(best,'amenities')??[]),
           JSON.stringify(fact(best,'restrictions')??[]),sqlValue(fact(best,'electricity_type')),sqlValue(fact(best,'electricity_rate')),sqlValue(fact(best,'water_type')),sqlValue(fact(best,'water_rate')),city,

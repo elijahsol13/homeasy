@@ -238,25 +238,25 @@ describe('Wat Bo text/voice search: count, pages, card and saved alert', () => {
     max_price: 200, locations: ['Wat Bo'],
   };
   const fixtures = [
-    { slug: 'a', location: 'Sla Kram', price: 15000, category: 'room' },
+    { slug: 'a', location: 'Sala Kamreuk', price: 15000, category: 'room' },
     { slug: 'b', location: 'Wat Bo', price: 17500, category: 'room' },
-    { slug: 'c', location: 'Slor Kram', price: 19900, category: 'room' },
-    { slug: 'd', location: 'Sangkat Sla Kram', price: 20000, category: 'room' },
-    { slug: 'expensive', location: 'Sla Kram', price: 25000, category: 'room' },
-    { slug: 'elsewhere', location: 'Sala Kamreuk', price: 12000, category: 'room' },
+    { slug: 'c', location: 'Sala Kamroek', price: 19900, category: 'room' },
+    { slug: 'd', location: 'Sangkat Sala Kamreuk', price: 20000, category: 'room' },
+    { slug: 'expensive', location: 'Sala Kamreuk', price: 25000, category: 'room' },
+    { slug: 'elsewhere', location: 'Sla Kram', price: 12000, category: 'room' },
     { slug: 'apartment', location: 'Wat Bo', price: 11000, category: 'apartment' },
   ] as const;
 
   it('shows $200/month and recovers both new cards and historical cents-based cards', () => {
     const card = renderCriteriaMessage(criteria, 4);
     expect(card.text).toContain('Up to $200 (USD/month)');
-    expect(card.text).toContain('Wat Bo (searching Sla Kram area)');
+    expect(card.text).toContain('Wat Bo (searching Sala Kamreuk area)');
     expect(card.text).toContain('4</b> matching listing(s)');
     expect(extractDraftFromCriteriaText(card.text)).toMatchObject(draft);
 
     const historical = card.text
       .replace('Up to $200 (USD/month)', 'Up to $20,000')
-      .replace('Wat Bo (searching Sla Kram area)', 'Wat Bo');
+      .replace('Wat Bo (searching Sala Kamreuk area)', 'Wat Bo');
     expect(extractDraftFromCriteriaText(historical)?.max_price).toBe(200);
     expect(extractDraftFromCriteriaText(historical)?.locations).toEqual(['Wat Bo']);
   });

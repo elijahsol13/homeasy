@@ -181,7 +181,7 @@ export const PropertyCard: React.FC<PropertyCardProps> = ({
               </>
             ) : (
               <span className="text-[11px] font-semibold text-zinc-500 dark:text-zinc-400 bg-zinc-100 dark:bg-zinc-700/60 px-2 py-1 rounded-lg">
-                Price on request
+                Price not specified
               </span>
             )}
           </div>

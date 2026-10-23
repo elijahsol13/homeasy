@@ -53,6 +53,9 @@ describe('deterministic original-source room counts', () => {
   });
 
   it('does not confuse beds/furniture with bedrooms or guess a studio layout', () => {
+    expect(sourceRoomCounts('បន្ទប់គេង\u200b ០២\nបន្ទប់ទឹក\u200b០៣')).toMatchObject({
+      bedrooms: 2, bathrooms: 3, conflictingBedrooms: false, conflictingBathrooms: false,
+    });
     expect(sourceRoomCounts('2 beds, sofa bed')).toMatchObject({ bedrooms: null, conflictingBedrooms: false });
   });
 
@@ -110,5 +113,18 @@ describe('deterministic original-source room counts', () => {
       .toMatchObject({ bedrooms: 2, bathrooms: 3 });
     expect((normalized.raw.listing as { source_title?: string }).source_title)
       .toBe('2-Bedroom house for rent');
+  });
+
+  it('keeps disputed form rooms and price unknown when canonical facts explicitly say null', () => {
+    const adapter = new Khmer24LiveAdapter(async function* () {});
+    const normalized = adapter.normalize({ sourceId: 'siem-reap', sourceName: 'Khmer24',
+      listing: { source_url: 'https://www.khmer24.com/en/post-adid-12346',
+        title: 'Villa for rent', source_title: 'Villa for rent', raw_text: 'Contact for details.',
+        bedrooms: 3, bathrooms: 4, price: 800, city: 'siem_reap', category: 'house',
+        listing_facts_json: JSON.stringify({ bedrooms: null, bathrooms: null, price: null, currency: null }), photos: [],
+      },
+    });
+    const facts = (normalized.raw as unknown as { listingExtraction: Record<string, unknown> }).listingExtraction;
+    expect(facts).toMatchObject({ bedrooms: null, bathrooms: null, price: null, currency: null });
   });
 });

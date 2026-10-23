@@ -755,9 +755,10 @@ describe('Telegram Mini App (TMA) Backend API', () => {
         expect(categoryCounts.house).toBe(baselineCategory('house') + 1);
         expect(categoryCounts.room).toBe(baselineCategory('room') + 1);
         expect(locationCounts['Sala Kamreuk']).toBe(baselineLocation('Sala Kamreuk') + 499);
-        expect(locationCounts.siem_reap).toBe(baselineLocation('siem_reap') + 1);
-        expect(locationCounts['Wat Bo']).toBe(baselineLocation('Wat Bo') + 1);
-        expect(locationCounts['Old Market']).toBe(baselineLocation('Old Market') + 1);
+        expect(locationCounts['Sla Kram'] ?? 0).toBe(baselineLocation('Sla Kram'));
+        expect(locationCounts.siem_reap).toBeUndefined();
+        expect(locationCounts['Wat Bo']).toBeUndefined();
+        expect(locationCounts['Old Market']).toBeUndefined();
         expect(body.priceRange).toEqual({ minUsd: 50, maxUsd: 9900 });
 
         const cityFiltered = await app.inject({ method: 'GET', url: '/api/v1/properties?locations=siem_reap&limit=50', headers: { 'X-Dev-Telegram-Id': String(canaryId) } });

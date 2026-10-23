@@ -56,6 +56,15 @@ export const CANONICAL_AMENITIES: AmenityDefinition[] = [
 
   // ── 2. Comfort & Climate Control ──────────────────────────────────────────
   {
+    id: 'air_conditioner',
+    nameEn: 'Air Conditioning',
+    nameKh: 'ម៉ាស៊ីនត្រជាក់',
+    nameRu: 'Кондиционер',
+    category: 'appliances',
+    icon: '❄️',
+    isFilterable: false,
+  },
+  {
     id: 'ac_all_rooms',
     nameEn: 'Air Conditioning (All Rooms)',
     nameKh: 'ម៉ាស៊ីនត្រជាក់គ្រប់បន្ទប់',
@@ -263,7 +272,7 @@ export const CANONICAL_AMENITIES: AmenityDefinition[] = [
   // ── 6. Parking ────────────────────────────────────────────────────────────
   {
     id: 'car_parking',
-    nameEn: 'Car Parking (Covered / Secure)',
+    nameEn: 'Car Parking',
     nameKh: 'ចំណតរថយន្ត',
     nameRu: 'Парковка для авто',
     category: 'parking',
@@ -283,7 +292,7 @@ export const CANONICAL_AMENITIES: AmenityDefinition[] = [
   // ── 7. Services & Inclusions ──────────────────────────────────────────────
   {
     id: 'free_wifi',
-    nameEn: 'Free High-Speed WiFi',
+    nameEn: 'Free WiFi',
     nameKh: 'អ៊ីនធឺណិតឥតគិតថ្លៃ',
     nameRu: 'Бесплатный Wi-Fi',
     category: 'services',

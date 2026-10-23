@@ -26,7 +26,8 @@ export function sourceRoomCounts(text: string): {
   conflictingBedrooms: boolean; conflictingBathrooms: boolean;
 } {
   // Khmer numerals are frequently used in original Facebook adverts.
-  const normalized = text.replace(/[០-៩]/g, digit => String(digit.charCodeAt(0) - 0x17e0));
+  const normalized = text.replace(/[\u200b-\u200d\ufeff]/g, ' ')
+    .replace(/[០-៩]/g, digit => String(digit.charCodeAt(0) - 0x17e0));
   const get = (kind: 'bed' | 'bath'): { value: number | null; conflict: boolean } => {
     // Furniture counts ("2 beds") are not numbers of rooms.
     const noun = kind === 'bed' ? 'bed\\s*rooms?|BR' : 'bath\\s*rooms?|baths?';

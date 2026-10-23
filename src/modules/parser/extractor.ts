@@ -40,25 +40,13 @@ export interface LLMExtractedListing {
 }
 
 
-/**
- * Checks if a text has more than `threshold` (default 10%) Khmer characters.
- */
-export function prepareLlmInput(text: string, maxChars = 8_000): string {
-  const seen = new Set<string>();
-  const cleanedLines = text
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter((line) => {
-      if (!line || /^(?:see more|like|comment|share|send message)$/i.test(line)) return false;
-      const key = line.toLowerCase().replace(/\s+/g, ' ');
-      if (seen.has(key)) return false;
-      seen.add(key);
-      return true;
-    });
-  const cleaned = cleanedLines.join('\n').replace(/[ \t]{2,}/g, ' ').trim();
-  if (cleaned.length <= maxChars) return cleaned;
-  const tailSize = Math.min(1_000, Math.floor(maxChars / 4));
-  return `${cleaned.slice(0, maxChars - tailSize)}\n…\n${cleaned.slice(-tailSize)}`;
+/** Keep every source fact and section boundary for extraction; only remove standalone UI controls. */
+export function prepareLlmInput(text: string): string {
+  return text.replace(/\r\n?/g, '\n')
+    .split('\n')
+    .filter((line) => !/^(?:see more|like|comment|share|send message|show translation|see translation|see original)$/i.test(line.trim()))
+    .join('\n')
+    .trim();
 }
 
 export function isExcessiveKhmer(text: string | null | undefined, threshold = 0.10): boolean {
@@ -72,6 +60,31 @@ export function isExcessiveKhmer(text: string | null | undefined, threshold = 0.
 
 
 // ─── Regex Heuristic Fallbacks for Utilities & Property Types ─────────────────
+
+/** Preserve an explicitly written state tariff, without assuming a unit or typical rate. */
+function explicitStateTariff(text: string, kind: 'electricity' | 'water'): string | null {
+  const marker = kind === 'electricity'
+    ? /\b(?:edc|electricity|electric|power)\b|ភ្លើង/i
+    : /\b(?:ppwsa|water)\b|ទឹក/i;
+  for (const line of text.split(/\r?\n/)) {
+    const start = marker.exec(line);
+    if (!start) continue;
+    // Never borrow a tariff from the other utility or a different line/unit.
+    const afterMarker = line.slice(start.index + start[0].length)
+      .split(kind === 'electricity' ? /\bwater\b|ទឹក/i : /\belectricity\b|ភ្លើង/i)[0]!
+      .split(/[.;]\s*(?=[a-z])|\b(?:rent|deposit|price)\s*:/i)[0]!;
+    const amount = /(?:\$\s*(\d+(?:\.\d+)?)|(\d+(?:\.\d+)?)\s*(?:USD|\$)|([\d,]+)\s*(?:riels?|r\b|៛)|៛\s*([\d,]+))/i.exec(afterMarker);
+    if (!amount) continue;
+    const unit = /\s*(?:\/\s*|per\s+)(kwh|kw|unit|m3|m³|cubic\s*meter|person|pax|month|mo)(?![a-z0-9])/i.exec(afterMarker.slice(amount.index + amount[0].length));
+    const rawUnit = unit?.[1]?.toLowerCase();
+    const normalizedUnit = rawUnit === 'kwh' ? 'kWh'
+      : rawUnit === 'm3' || rawUnit === 'm³' ? 'm³' : rawUnit ?? null;
+    const value = amount[1] ?? amount[2];
+    const formatted = value !== undefined ? `$${value}` : `${(amount[3] ?? amount[4] ?? '').replace(/,/g, '')}៛`;
+    return `${formatted}${normalizedUnit ? `/${normalizedUnit}` : ''}`;
+  }
+  return null;
+}
 
 export function extractElectricity(text: string): string | null {
   // 1. Included / All inclusive
@@ -88,7 +101,8 @@ export function extractElectricity(text: string): string | null {
     /ភ្លើងរដ្ឋ/.test(text) ||
     /(?:electricity|electric|ភ្លើង)\s*:\s*(?:720|740)\s*(?:r|riel|៛)/i.test(text)
   ) {
-    return 'EDC (State Rate) ~$0.20/kWh';
+    const rate = explicitStateTariff(text, 'electricity');
+    return rate ? `EDC (State Rate) (${rate})` : 'EDC (State Rate)';
   }
 
   // 3a. Fixed dollar rate with explicit electricity keyword (e.g. "Electricity: $0.25/kWh", "Electric 0.25$", "Electricity: 0.25")
@@ -147,7 +161,8 @@ export function extractWater(text: string): string | null {
     /(?:water|ទឹក)\s*:\s*(?:state|gov|រដ្ឋ|1000\s*(?:r|riel|៛)?\s*\/\s*m[3³])/i.test(text) ||
     /ទឹករដ្ឋ|ទឹកដ្ឋ/.test(text)
   ) {
-    return 'State Rate (~1000៛/m³)';
+    const rate = explicitStateTariff(text, 'water');
+    return rate ? `State Rate (${rate})` : 'State Rate';
   }
 
   // 3a. Fixed per cubic meter ($/m3, e.g. "$0.50/m3", "0.5$/m³")
@@ -314,13 +329,19 @@ export async function extractListingWithLLM(
 }
 
 export async function extractListingsBatchWithLLM(
-  items: Array<{ id: string | number; text: string }>,
+  items: Array<{
+    id: string | number;
+    text: string;
+    platformMetadata?: Record<string, string | number | boolean | null>;
+  }>,
   sourceNotes?: string,
 ): Promise<Map<string | number, LLMExtractedListing>> {
   const results = new Map<string | number, LLMExtractedListing>();
   if (!items.length) return results;
   const extracted = await extractCanonicalListingsBatch(
-    items.map((item) => ({ id: item.id, text: prepareLlmInput(item.text) })),
+    items.map((item) => ({
+      id: item.id, text: prepareLlmInput(item.text), platformMetadata: item.platformMetadata,
+    })),
     sourceNotes,
   );
   for (const [id, facts] of extracted) results.set(id, toLegacyListingExtraction(facts));

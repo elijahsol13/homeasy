@@ -16,6 +16,7 @@ export interface PropertyDTO {
   bedrooms: number | null;
   bathrooms: number | null;
   depositUsd: number | null;
+  depositMonths?: number | null;
   minLeaseMonths: number | null;
   hasPool: boolean | null;
   location: string;
