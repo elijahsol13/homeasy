@@ -207,9 +207,12 @@ docker compose logs --tail=80 bot
 Khmer24 **не проверялся** с IP дата-центра Сингапура. Даже HTTP 200 с сайта ещё не гарантирует, что Camoufox извлекает объявления. Сначала выполните **один ограниченный проход по одной категории, максимум одно объявление**, через уже существующий CLI Khmer24. Он использует временную SQLite и `--dump-raw`, поэтому не импортирует найденное в рабочую базу и не вызывает AI-обогащение. Команда запускает отдельный одноразовый контейнер, а не постоянный сервис:
 
 ```bash
-curl -I --max-time 10 https://www.khmer24.com/
+curl -sS --max-time 15 -D /tmp/k24.headers -o /dev/null -w 'http=%{http_code} remote_ip=%{remote_ip}\n' 'https://www.khmer24.com/en/c-house-for-rent?province=siem-reap&sortby=newads&date=last-7-days'
+grep -i '^cf-ray:' /tmp/k24.headers || true
 docker compose run --rm --no-deps scraper node dist/modules/parser/khmer24.scraper.js --target=0 --limit-listings=1 --no-enrich --dump-raw=/tmp/k24-smoke.json --db-path=/tmp/k24-smoke.db
 ```
+
+HTTP-статус и `cf-ray` выше относятся к обычному `curl`; это дополнительный сетевой ориентир, а не замена браузерному smoke и не доказательство, что Camoufox получает тот же ответ.
 
 **Смотрите фактический итог в stdout:** нужно `Total Scraped` больше нуля при `Errors: 0`. Нулевое число объявлений или успешный код выхода сами по себе ничего не доказывают. При Cloudflare `Access denied`, пустой выдаче или иных ошибках не запускайте постоянный скрапер. Сам smoke не меняет рабочую SQLite: используется `/tmp/k24-smoke.db`, а `--dump-raw` пропускает canonical ingestion. Первый запуск Camoufox создаёт закреплённый `data/k24_device.json` в VPS `./data` bind mount; сохраните этот VPS-файл и не заменяйте Mac-версией.
 
@@ -223,18 +226,26 @@ npm run k24:login
 
 ```bash
 chmod 600 data/k24_session.json
-scp -p data/k24_session.json USER@VPS_IP:homeasy/data/k24_session.json
+scp -p data/k24_session.json USER@VPS_IP:homeasy/data/k24_session.from_mac.json
 ```
 
-На VPS:
+На VPS установите загруженную сессию, предварительно сохранив прежнюю, если она была:
 
 ```bash
 cd ~/homeasy
+test -s data/k24_session.from_mac.json || { echo 'СТОП: новая сессия не передана'; exit 1; }
+if test -s data/k24_session.json; then
+  SESSION_BACKUP="data/k24_session.before_transfer_$(date -u +%Y%m%dT%H%M%SZ).json"
+  cp -p data/k24_session.json "$SESSION_BACKUP"
+  chmod 600 "$SESSION_BACKUP"
+  echo "Старая сессия сохранена: $SESSION_BACKUP"
+fi
+mv data/k24_session.from_mac.json data/k24_session.json
 chmod 600 data/k24_session.json
 test -s data/k24_session.json || { echo 'СТОП: сессия не передана'; exit 1; }
 ```
 
-Файл содержит активные учетные cookies: не добавляйте его в Git, не вставляйте в чат или логи и оставьте режим `600`. **Не копируйте `k24_device.json` с Mac:** на VPS должен остаться уже созданный VPS device identity. Cookie-сессия может быть привязана к IP или устройству, поэтому её перенос не гарантирует снятия Cloudflare-блокировки. Повторите только ограниченный smoke выше; если снова приходит Cloudflare `Access denied`, остановитесь — постоянный скрапер не запускайте. Если smoke прошёл с `Total Scraped` больше нуля и `Errors: 0`, включите штатный цикл:
+Файл содержит активные учетные cookies: не добавляйте его в Git, не вставляйте в чат или логи и оставьте режим `600`. Сохранённую сессию VPS не удаляйте: если проверка не поможет, восстановите её командой `cp -p data/k24_session.before_transfer_YYYYMMDDTHHMMSSZ.json data/k24_session.json`, заменив имя на точное, напечатанное выше. **Не копируйте `k24_device.json` с Mac:** на VPS должен остаться уже созданный VPS device identity. Cookie-сессия может быть привязана к IP или устройству, поэтому её перенос не гарантирует снятия Cloudflare-блокировки. Повторите только ограниченный smoke выше; если снова приходит Cloudflare `Access denied`, остановитесь — постоянный скрапер не запускайте. Если smoke прошёл с `Total Scraped` больше нуля и `Errors: 0`, включите штатный цикл:
 
 ```bash
 docker compose up -d --no-deps scraper
