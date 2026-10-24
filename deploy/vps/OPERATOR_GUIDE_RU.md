@@ -211,7 +211,30 @@ curl -I --max-time 10 https://www.khmer24.com/
 docker compose run --rm --no-deps scraper node dist/modules/parser/khmer24.scraper.js --target=0 --limit-listings=1 --no-enrich --dump-raw=/tmp/k24-smoke.json --db-path=/tmp/k24-smoke.db
 ```
 
-**Смотрите фактический итог в stdout:** нужно `Total Scraped` больше нуля при `Errors: 0`. Нулевое число объявлений или успешный код выхода сами по себе ничего не доказывают. При Cloudflare 403, отсутствии объявлений или иных ошибках не запускайте постоянный скрапер. `npm run k24:login` предполагает интерактивное графическое окно Camoufox: на обычном VPS без графической сессии этот сценарий автоматически не заработает; понадобится отдельный ручной способ входа на Linux. Если ограниченный проход действительно успешен, включите штатный цикл:
+**Смотрите фактический итог в stdout:** нужно `Total Scraped` больше нуля при `Errors: 0`. Нулевое число объявлений или успешный код выхода сами по себе ничего не доказывают. При Cloudflare `Access denied`, пустой выдаче или иных ошибках не запускайте постоянный скрапер. Сам smoke не меняет рабочую SQLite: используется `/tmp/k24-smoke.db`, а `--dump-raw` пропускает canonical ingestion. Первый запуск Camoufox создаёт закреплённый `data/k24_device.json` в VPS `./data` bind mount; сохраните этот VPS-файл и не заменяйте Mac-версией.
+
+Если для доступа нужна Khmer24-сессия, войдите в аккаунт в Camoufox **на Mac**, а затем передайте только файл сессии. В корне проекта на Mac выполните:
+
+```bash
+npm run k24:login
+```
+
+В открывшемся окне завершите вход, убедитесь, что Khmer24 действительно показывает авторизованный аккаунт, и нажмите Enter в терминале. Скрипт сохраняет cookies и localStorage в `data/k24_session.json`, но сам не проверяет, что вход удался. Затем ограничьте доступ к файлу и передайте его по SSH/SCP на VPS:
+
+```bash
+chmod 600 data/k24_session.json
+scp -p data/k24_session.json USER@VPS_IP:homeasy/data/k24_session.json
+```
+
+На VPS:
+
+```bash
+cd ~/homeasy
+chmod 600 data/k24_session.json
+test -s data/k24_session.json || { echo 'СТОП: сессия не передана'; exit 1; }
+```
+
+Файл содержит активные учетные cookies: не добавляйте его в Git, не вставляйте в чат или логи и оставьте режим `600`. **Не копируйте `k24_device.json` с Mac:** на VPS должен остаться уже созданный VPS device identity. Cookie-сессия может быть привязана к IP или устройству, поэтому её перенос не гарантирует снятия Cloudflare-блокировки. Повторите только ограниченный smoke выше; если снова приходит Cloudflare `Access denied`, остановитесь — постоянный скрапер не запускайте. Если smoke прошёл с `Total Scraped` больше нуля и `Errors: 0`, включите штатный цикл:
 
 ```bash
 docker compose up -d --no-deps scraper
