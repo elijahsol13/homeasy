@@ -27,6 +27,24 @@ describe('Facebook delivery outbox', () => {
     expect(fs.readdirSync(directory).filter((f) => f.endsWith('.json'))).toHaveLength(0);
   });
 
+  it('acknowledges local durability before a failed network request', async () => {
+    const durable = jest.fn(() => {
+      const queued = fs.readdirSync(directory).filter((f) => f.endsWith('.json'));
+      expect(queued).toHaveLength(1);
+      expect((JSON.parse(fs.readFileSync(path.join(directory, queued[0]!), 'utf8')) as { listings: unknown[] }).listings).toHaveLength(1);
+    });
+    const offline = jest.fn(async () => { throw new Error('offline'); }) as unknown as typeof fetch;
+    await expect(queueFacebookBatch(target, listings, directory, url, token, offline, durable)).rejects.toThrow('offline');
+    expect(durable).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not acknowledge durability if validation rejects a post', async () => {
+    const durable = jest.fn();
+    await expect(queueFacebookBatch(target, [{ ...listings[0], raw_text: 'x'.repeat(1024 * 1024) }],
+      directory, url, token, fetch, durable)).rejects.toThrow('1 MiB');
+    expect(durable).not.toHaveBeenCalled();
+  });
+
   it('does not delete a batch if the server reports partial failure', async () => {
     const partial = jest.fn(async () => new Response('{"errors":[{"message":"ingest failed"}]}', { status: 503 })) as unknown as typeof fetch;
     await expect(queueFacebookBatch(target, listings, directory, url, token, partial)).rejects.toThrow();

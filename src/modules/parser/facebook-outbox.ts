@@ -55,10 +55,13 @@ export async function flushFacebookOutbox(
 
 export async function queueFacebookBatch(
   target: Group, listings: RawListing[], outboxDir: string, url: string, token: string,
-  transport: typeof fetch = fetch,
+  transport: typeof fetch = fetch, onDurable?: () => void,
 ): Promise<BatchSummary> {
   requireSecureTransport(url, token);
-  if (!listings.length) return flushFacebookOutbox(outboxDir, url, token, transport);
+  if (!listings.length) {
+    onDurable?.();
+    return flushFacebookOutbox(outboxDir, url, token, transport);
+  }
   fs.mkdirSync(outboxDir, { recursive: true, mode: 0o700 });
   // Validate ALL items before creating any queue files. Keep each request below
   // Fastify's 1 MiB limit and the server's 10-listing count limit.
@@ -84,19 +87,24 @@ export async function queueFacebookBatch(
     fs.writeFileSync(tmpPath, JSON.stringify({ target, listings: listingsChunk }), { mode: 0o600, flag: 'wx' });
     fs.renameSync(tmpPath, readyPath);
   }
+  // The producer may safely advance its seen-state once every new batch is
+  // durable, even if the HTTP attempt fails and the outbox must retry later.
+  onDurable?.();
   return flushFacebookOutbox(outboxDir, url, token, transport);
 }
 
 /** Local mode stays compatible; VPS mode never writes Facebook rows to the Mac's SQLite. */
 export async function submitFacebookListings(
-  container: AppContainer | undefined, target: Group, listings: RawListing[],
+  container: AppContainer | undefined, target: Group, listings: RawListing[], onDurable?: () => void,
 ): Promise<BatchSummary> {
   if (!env.FB_INGEST_URL) {
     if (!container) throw new Error('Local Facebook ingestion needs a database container');
-    return ingestFacebookGroupListings(container, target, listings);
+    const result = await ingestFacebookGroupListings(container, target, listings);
+    if (!result.errors.length) onDurable?.();
+    return result;
   }
   if (!env.FB_INGEST_TOKEN) throw new Error('FB_INGEST_URL is set but FB_INGEST_TOKEN is missing');
-  return queueFacebookBatch(target, listings, OUTBOX_DIR, env.FB_INGEST_URL, env.FB_INGEST_TOKEN);
+  return queueFacebookBatch(target, listings, OUTBOX_DIR, env.FB_INGEST_URL, env.FB_INGEST_TOKEN, fetch, onDurable);
 }
 
 export async function flushConfiguredFacebookOutbox(): Promise<BatchSummary> {

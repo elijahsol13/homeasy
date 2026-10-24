@@ -966,6 +966,16 @@ export interface ScrapeGroupResult {
   wireBytes: number;
   cachedHits: number;
   networkHits: number;
+  progress?: { groupId: string; processedIds: string[]; freshCount: number };
+}
+
+/** Advance adaptive seen-state only after local DB ingest or durable Mac outbox enqueue. */
+export function commitFacebookGroupProgress(progress: NonNullable<ScrapeGroupResult['progress']>): void {
+  const state = loadGroupState(progress.groupId);
+  updateRecentIds(state, progress.processedIds);
+  updateAdaptiveInterval(state, progress.freshCount);
+  state.lastCheckedAt = Date.now();
+  saveGroupState(progress.groupId, state);
 }
 
 export async function scrapeFacebookGroup(
@@ -1016,6 +1026,7 @@ export async function scrapeFacebookGroup(
     const llmResults = await batchExtractFbPosts(fetched);
 
     const listings: RawListing[] = [];
+    const processedIds: string[] = [];
     for (let i = 0; i < batch.length; i++) {
         const post = batch[i]!;
         const precomputedLlm = llmResults.has(i) ? llmResults.get(i)! : null;
@@ -1031,24 +1042,19 @@ export async function scrapeFacebookGroup(
                 post.facebookPostId,
             );
             if (listing) listings.push(listing);
+            const postId = post.id ?? post.postUrl;
+            if (postId) processedIds.push(postId);
         } catch (err: unknown) {
             console.warn(`   ⚠️ Failed to parse post ${post.postUrl}:`, err instanceof Error ? err.message : String(err));
         }
     }
-
-    updateRecentIds(
-        state,
-        intercepted.map((p) => p.id ?? p.postUrl ?? '').filter(Boolean),
-    );
-    updateAdaptiveInterval(state, fresh.length);
-    state.lastCheckedAt = Date.now();
-    saveGroupState(groupId, state);
 
     return {
         listings,
         wireBytes: 0,
         cachedHits: 0,
         networkHits: intercepted.length,
+        progress: { groupId, processedIds, freshCount: fresh.length },
     };
 }
 
@@ -1489,7 +1495,10 @@ export async function runFacebookScraper(
 
         console.log(`\n📥 Ingesting ${listings.length} listings from [${target.name}]...`);
 
-        const result = await submitFacebookListings(container, target, listings);
+        const result = await submitFacebookListings(
+          container, target, listings,
+          () => { if (groupResult.progress) commitFacebookGroupProgress(groupResult.progress); },
+        );
         totalInserted += result.newSourceItems;
         totalDuplicates += result.unchangedSourceItems;
         totalErrors += result.errors.length;
