@@ -59,7 +59,19 @@ nano .env
 scp deploy/cloudflared/7d65861e-355d-45ce-8adf-498432aa148f.json USER@VPS_IP:homeasy/deploy/cloudflared/
 ```
 
-На VPS: `chmod 600 deploy/cloudflared/*.json`. Не создавайте новый Cloudflare Tunnel и не меняйте DNS: используется **тот же named tunnel**. **Пока не запускайте сервис `tunnel` на VPS**, чтобы старый Mac-коннектор продолжал обслуживать трафик.
+На VPS проверьте пользователя контейнера и дайте ему доступ к credentials, не открывая файл другим пользователям хоста:
+
+```bash
+docker image inspect cloudflare/cloudflared:latest --format '{{.Config.User}}'
+# Для официального образа ожидается 65532:65532.
+sudo chgrp 65532 deploy/cloudflared
+sudo chmod 750 deploy/cloudflared
+sudo chgrp 65532 deploy/cloudflared/7d65861e-355d-45ce-8adf-498432aa148f.json
+sudo chmod 640 deploy/cloudflared/7d65861e-355d-45ce-8adf-498432aa148f.json
+stat -c '%A %U:%G %a %n' deploy/cloudflared deploy/cloudflared/7d65861e-355d-45ce-8adf-498432aa148f.json
+```
+
+В официальном Docker image `cloudflared` работает с UID/GID `65532:65532` ([Dockerfile Cloudflare](https://github.com/cloudflare/cloudflared/blob/master/Dockerfile)). Поэтому `chmod 600` на credential JSON не подходит: контейнер не владеет файлом и не может его прочитать. Если `docker image inspect` показывает другой UID/GID, замените `65532` на фактическую группу контейнера. Не создавайте новый Cloudflare Tunnel и не меняйте DNS: используется **тот же named tunnel**. **Пока не запускайте сервис `tunnel` на VPS**, чтобы старый Mac-коннектор продолжал обслуживать трафик.
 
 Соберите образы заранее (этап сборки скрапера с Camoufox может оказаться самым тяжёлым для 4 ГБ RAM):
 
@@ -150,6 +162,17 @@ docker compose logs --tail=80 api backup
 
 ## 5. Переключить Cloudflare Tunnel и Telegram-бота
 
+Сначала убедитесь, что локальный API на VPS отвечает. Если API log сообщает `FB_INGEST_URL: Invalid url`, удалите эту строку **из VPS `.env`** (не оставляйте пустое значение): переменная нужна только на Mac. Пересоздайте только API и проверьте локальный health:
+
+```bash
+docker compose up -d --no-deps --force-recreate api
+curl -fsS http://127.0.0.1:3000/health
+```
+
+Если `cloudflared` ранее сообщал `permission denied` для JSON credentials, сначала исправьте права на каталог и файл по командам шага 1. Не исправляйте это через `chmod 644` или `chmod 666`.
+
+**Не переходите дальше, пока локальная проверка API не проходит.**
+
 Только после проверки VPS API — на Mac:
 
 ```bash
@@ -161,8 +184,18 @@ docker stop homeasy-tunnel
 ```bash
 docker compose up -d --no-deps tunnel
 docker compose logs --tail=80 tunnel
-curl -fsS https://api.rustycat.cc/health
-curl -fsS https://api.rustycat.cc/api/v1/filters/metadata
+if curl -fsS https://api.rustycat.cc/health >/dev/null && \
+   curl -fsS https://api.rustycat.cc/api/v1/filters/metadata >/dev/null; then
+  echo 'Публичный API отвечает; можно переходить к запуску бота.'
+else
+  echo 'СТОП: публичный API не прошёл обе проверки. Не запускайте bot или scraper.'
+  exit 1
+fi
+```
+
+**Запускайте бота только если обе проверки выше прошли.** Если случайно запустили его во время диагностики: `docker compose stop bot`. Затем отдельной командой:
+
+```bash
 docker compose up -d --no-deps bot
 docker compose logs --tail=80 bot
 ```
