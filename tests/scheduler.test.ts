@@ -151,6 +151,8 @@ describe('ScraperWorker Heartbeat and Statistics', () => {
   test('bounded live-worker mode finishes two Khmer24 cycles and skips Facebook', async () => {
     const maintenance = jest.spyOn(ScraperWorker.prototype as any, 'checkAndRunMaintenance')
       .mockResolvedValue(undefined);
+    // The VPS must skip Facebook even if the persisted global scraper setting enables it.
+    const settingsSpy = jest.spyOn(settings, 'getScraperSettings').mockReturnValue({ facebookEnabled: true });
     const scrapeSpy = jest.spyOn(khmer24, 'runKhmer24Scraper').mockResolvedValue({
       totalScraped: 2, inserted: 0, duplicates: 2, errors: 0,
     });
@@ -168,9 +170,11 @@ describe('ScraperWorker Heartbeat and Statistics', () => {
       expect(worker.getHourlyStats().cyclesCompleted).toBe(2);
       expect(worker.getHourlyStats().khmer24.scraped).toBe(4);
       expect(worker.getStatus()).toEqual({ isRunning: false, isWorking: false });
+      expect(settingsSpy).not.toHaveBeenCalled();
     } finally {
       worker.stop();
       maintenance.mockRestore();
+      settingsSpy.mockRestore();
       scrapeSpy.mockRestore();
       sleep.mockRestore();
     }

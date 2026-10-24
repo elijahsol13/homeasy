@@ -17,6 +17,7 @@ deploy.sh
 data/*.db-wal
 data/*.db-shm
 data/fb_session.json
+data/fb_outbox/
 data/mac_fb_session.json
 data/mac_fb_session.json.tmp
 data/k24_session.json

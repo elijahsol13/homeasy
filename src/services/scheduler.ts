@@ -1,12 +1,10 @@
 import fs from 'node:fs';
 import { runKhmer24Scraper } from '../modules/parser/khmer24.scraper';
 import type { RunKhmer24Options } from '../modules/parser/khmer24.scraper';
-import { runFacebookScraper } from '../modules/parser/facebook.scraper';
 import { createDatabaseBackup } from '../database/backup';
 import type { AppContainer } from '../container';
 import { env } from '../config/env';
 import { getScraperSettings } from './settings';
-import { loadFacebookSafetyState } from '../modules/parser/fb-runtime';
 
 export interface ScraperCategoryStats {
   scraped: number;
@@ -213,68 +211,67 @@ export class ScraperWorker {
 
         if (!this.isRunning) break;
 
-        // Cooldown between scrapers (20 seconds)
-        console.log('⏳ [Worker] Cooldown 20s before Facebook scrape...');
-        await this.sleep(20000);
-
-        if (!this.isRunning) break;
-
-        // ── 3. Facebook Scraper ─────────────────────────────────────────────
-        const settings = getScraperSettings();
-        const safetyState = loadFacebookSafetyState();
-        if (this.options.skipFacebook || !settings.facebookEnabled) {
-          console.log(`\n⏰ [Worker] Skipping Facebook scrape (disabled in settings).`);
-        } else if (safetyState.status === 'blocked') {
-          console.log(`\n⛔ [Worker] Skipping Facebook scrape (safety-locked: ${safetyState.reason ?? 'manual login required'}).`);
-        } else {
-          console.log(`\n⏰ [Worker] Starting Facebook scrape at ${new Date().toISOString()}...`);
-          const fbStart = Date.now();
-          try {
-            // Humanized jitter (5s - 15s)
-          const jitterMs = Math.floor(Math.random() * 10000) + 5000;
-          console.log(`🎲 [Worker] Anti-bot jitter: waiting ${Math.round(jitterMs / 1000)}s...`);
-          await this.sleep(jitterMs);
-
-          if (!this.isRunning) break;
-
-          const fbStats = await runFacebookScraper(this.container);
-          const durationMs = Date.now() - fbStart;
-
-          if (fbStats) {
-            this.hourlyStats.facebook.scraped += fbStats.totalScraped;
-            this.hourlyStats.facebook.inserted += fbStats.inserted;
-            this.hourlyStats.facebook.duplicates += fbStats.duplicates;
-            this.hourlyStats.facebook.errors += fbStats.errors;
-
-            // Zero Yield Anomaly: warn admins if Facebook returned 0 listings
-            if (fbStats.inserted === 0 && fbStats.totalScraped === 0) {
-              await this.container.alertService.warn(
-                '<b>Zero Yield:</b> Facebook scraper finished with 0 posts found. Verify GraphQL response or cookies.',
-              );
-            }
-
-            // Persist to historical metrics table
+        // ── 3. Facebook runs only in the explicitly local, combined worker. ──
+        // Avoid loading any Facebook automation modules on the VPS worker.
+        if (!this.options.skipFacebook && getScraperSettings().facebookEnabled) {
+          const { loadFacebookSafetyState } = await import('../modules/parser/fb-runtime');
+          const safetyState = loadFacebookSafetyState();
+          if (safetyState.status === 'blocked') {
+            console.log(`\n⛔ [Worker] Facebook safety-locked: ${safetyState.reason ?? 'manual login required'}`);
+          } else {
+            console.log('⏳ [Worker] Cooldown 20s before Facebook scrape...');
+            await this.sleep(20000);
+            if (!this.isRunning) break;
+            console.log(`\n⏰ [Worker] Starting Facebook scrape at ${new Date().toISOString()}...`);
+            const fbStart = Date.now();
             try {
-              this.container.metricsRepo.recordScraperRun({
-                service: 'facebook',
-                total_scraped: fbStats.totalScraped,
-                inserted: fbStats.inserted,
-                duplicates: fbStats.duplicates,
-                errors: fbStats.errors,
-                duration_ms: durationMs,
-              });
-            } catch (err) {
-              console.warn('[Worker] Failed to persist Facebook metrics:', err);
+              // Humanized jitter (5s - 15s)
+              const jitterMs = Math.floor(Math.random() * 10000) + 5000;
+              console.log(`🎲 [Worker] Anti-bot jitter: waiting ${Math.round(jitterMs / 1000)}s...`);
+              await this.sleep(jitterMs);
+
+              if (!this.isRunning) break;
+
+              const { runFacebookScraper } = await import('../modules/parser/facebook.scraper');
+              const fbStats = await runFacebookScraper(this.container);
+              const durationMs = Date.now() - fbStart;
+
+              if (fbStats) {
+                this.hourlyStats.facebook.scraped += fbStats.totalScraped;
+                this.hourlyStats.facebook.inserted += fbStats.inserted;
+                this.hourlyStats.facebook.duplicates += fbStats.duplicates;
+                this.hourlyStats.facebook.errors += fbStats.errors;
+
+                // Zero Yield Anomaly: warn admins if Facebook returned 0 listings
+                if (fbStats.inserted === 0 && fbStats.totalScraped === 0) {
+                  await this.container.alertService.warn(
+                    '<b>Zero Yield:</b> Facebook scraper finished with 0 posts found. Verify GraphQL response or cookies.',
+                  );
+                }
+
+                // Persist to historical metrics table
+                try {
+                  this.container.metricsRepo.recordScraperRun({
+                    service: 'facebook',
+                    total_scraped: fbStats.totalScraped,
+                    inserted: fbStats.inserted,
+                    duplicates: fbStats.duplicates,
+                    errors: fbStats.errors,
+                    duration_ms: durationMs,
+                  });
+                } catch (err) {
+                  console.warn('[Worker] Failed to persist Facebook metrics:', err);
+                }
+              }
+            } catch (err: unknown) {
+              this.hourlyStats.facebook.errors++;
+              const msg = err instanceof Error ? err.message : String(err);
+              console.error(`💥 [Worker] Error during Facebook scrape: ${msg}`);
+            } finally {
+              this.triggerGc('Facebook');
+              console.log('🏁 [Worker] Facebook scrape finished.');
             }
           }
-        } catch (err: unknown) {
-          this.hourlyStats.facebook.errors++;
-          const msg = err instanceof Error ? err.message : String(err);
-          console.error(`💥 [Worker] Error during Facebook scrape: ${msg}`);
-        } finally {
-          this.triggerGc('Facebook');
-          console.log('🏁 [Worker] Facebook scrape finished.');
-        }
         }
 
         this.hourlyStats.cyclesCompleted++;
@@ -496,13 +493,17 @@ let activeWorkerTask: Promise<void> | null = null;
  * Starts the sequential scraper worker.
  * @param pauseMinutes Time in minutes to pause between scraping cycles (default: 12m).
  */
-export function startWorker(container: AppContainer, pauseMinutes = env.SCRAPER_CYCLE_PAUSE_MINUTES ?? 45): ScraperWorker {
+export function startWorker(
+  container: AppContainer,
+  pauseMinutes = env.SCRAPER_CYCLE_PAUSE_MINUTES ?? 45,
+  options: ScraperWorkerOptions = {},
+): ScraperWorker {
   if (activeWorkerInstance) {
     console.log('⚠️ [Worker] Worker already running.');
     return activeWorkerInstance;
   }
 
-  const worker = new ScraperWorker(container, pauseMinutes * 60 * 1000);
+  const worker = new ScraperWorker(container, pauseMinutes * 60 * 1000, options);
   activeWorkerInstance = worker;
   // The caller can continue startup, but graceful shutdown must retain the
   // worker promise until all in-flight scraper/maintenance DB writes finish.

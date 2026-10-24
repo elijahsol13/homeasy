@@ -32,6 +32,7 @@ import {
   detectFacebookChallenge,
   getAuthenticatedFacebookAccountId,
   loadFacebookSafetyState,
+  assertFacebookLocalHost,
 } from './fb-runtime';
 import { FB_GROUPS, type CityKey, type PropertyCategory } from '../../config/settings';
 import { loadGroupState, saveGroupState, type FBGroupState } from './fb-state';
@@ -56,9 +57,8 @@ import {
 import { cleanPhotoUrls, extractDirectContacts, formatDomesticPhone } from './normalizer';
 import { isNonRealEstateSpam } from './spam-detector';
 import { findCanonicalLocation } from '../../config/locations';
-import { FacebookLiveAdapter, facebookGroupEnvelope } from './live-source-adapters';
+import { submitFacebookListings, flushConfiguredFacebookOutbox } from './facebook-outbox';
 import { installLegacyPropertiesWriteGuard } from '../../database/legacy-write-guard';
-import type { IngestionBatchResult } from './ingestion-contracts';
 import { resolvePropertyMapFromText } from './source-map-location';
 import { factualListingFallback } from './listing-editorial';
 
@@ -155,18 +155,7 @@ export interface FBGroupTarget {
 }
 
 /** One canonical entry point shared by the normal scraper and feed re-parser. */
-export async function ingestFacebookGroupListings(
-  container: AppContainer,
-  target: FBGroupTarget,
-  listings: RawListing[],
-): Promise<IngestionBatchResult> {
-  const adapter = new FacebookLiveAdapter(async function* () {
-    for (const listing of listings) yield facebookGroupEnvelope(listing, target);
-  });
-  return container.ingestionService.ingestBatch(adapter, {
-    runType: 'DISCOVERY', ingestionMethod: 'CAMOUFOX', parserVersion: 'facebook-canonical-v1',
-  });
-}
+export { ingestFacebookGroupListings } from './facebook-ingestion';
 
 export const FB_GROUP_TARGETS: FBGroupTarget[] = FB_GROUPS
   .filter((group) => group.city === 'siem_reap')
@@ -983,7 +972,7 @@ export async function scrapeFacebookGroup(
   context: BrowserContext | null,
   target: FBGroupTarget,
   maxPosts = 10,
-  container: AppContainer,
+  _container?: AppContainer,
   maxScrolls = 3,
 ): Promise<ScrapeGroupResult> {
     const groupId = target.url.match(/groups\/([^/?]+)/)?.[1] || "unknown";
@@ -1121,6 +1110,8 @@ export async function reparseFacebookViaGroupFeed(
   totalInserted: number;
   errors: number;
 }> {
+  assertFacebookLocalHost();
+  if (env.FB_INGEST_URL) throw new Error('Facebook feed reparse against local SQLite is disabled in remote ingest mode');
   console.log('═══════════════════════════════════════════════════════════════');
   console.log('🌐 Facebook Feed-Based Safe Re-Parser (GraphQL + Stealth)');
   console.log('═══════════════════════════════════════════════════════════════');
@@ -1203,7 +1194,7 @@ export async function reparseFacebookViaGroupFeed(
             console.error(`  ❌ Failed to reparse ${post.postUrl}:`, error);
           }
         }
-        const ingested = await ingestFacebookGroupListings(container, target, listings);
+        const ingested = await submitFacebookListings(container, target, listings);
         totalInserted += ingested.newSourceItems;
         totalUpdated += ingested.updatedSourceItems;
         errors += ingested.errors.length;
@@ -1271,6 +1262,8 @@ export async function runFacebookFreshnessSweep(
     containerInstance?: AppContainer,
     options: FbFreshnessSweepOptions = {},
 ): Promise<{ checked: number; alive: number; dead: number; unknown: number; errors: number }> {
+    assertFacebookLocalHost();
+    if (env.FB_INGEST_URL) throw new Error('Local Facebook freshness DB writes are disabled in remote ingest mode');
     const container = containerInstance ?? createContainer();
     runMigrations(container.db);
 
@@ -1415,13 +1408,28 @@ export async function runFacebookScraper(
   errors: number;
   wireBytesTransferred: number;
 }> {
+  assertFacebookLocalHost();
   console.log('═══════════════════════════════════════════════════════════════');
   console.log('🤖 Facebook Groups Real Estate Scraper — HomEasy');
   console.log('═══════════════════════════════════════════════════════════════');
 
-  const container = containerInstance ?? createContainer();
-  runMigrations(container.db);
-  installLegacyPropertiesWriteGuard(container.db);
+  const remoteMode = Boolean(env.FB_INGEST_URL);
+  // On the Mac remote-mode owns only pinned browser/session files and its durable outbox.
+  // The VPS API is the sole canonical database writer.
+  const container = remoteMode ? undefined : (containerInstance ?? createContainer());
+  if (!remoteMode && container) {
+    runMigrations(container.db);
+    installLegacyPropertiesWriteGuard(container.db);
+  }
+  if (remoteMode) {
+    if (!env.FB_INGEST_TOKEN) throw new Error('FB_INGEST_TOKEN is required when FB_INGEST_URL is set');
+    try {
+      const replayed = await flushConfiguredFacebookOutbox();
+      console.log(`📤 Replayed Facebook outbox: ${replayed.newSourceItems} new, ${replayed.updatedSourceItems} updated.`);
+    } catch (err) {
+      console.warn('⚠️ Facebook outbox still pending; newly collected posts will be queued locally:', err);
+    }
+  }
 
   const safetyState = loadFacebookSafetyState();
   if (safetyState.status === 'blocked') {
@@ -1432,7 +1440,7 @@ export async function runFacebookScraper(
   if (!fs.existsSync(FB_SESSION_PATH)) {
     console.warn(`\n⚠️  Facebook session not found at: ${FB_SESSION_PATH}`);
     console.warn('👉 Run "npm run fb:login" locally.\n');
-    await container.notifierService.notifyAdmins(
+    await container?.notifierService.notifyAdmins(
       '⚠️ <b>Facebook session not found.</b> Run <code>npm run fb:login</code> on the scraper host.',
     );
     return { totalScraped: 0, inserted: 0, duplicates: 0, errors: 1, wireBytesTransferred: 0 };
@@ -1481,7 +1489,7 @@ export async function runFacebookScraper(
 
         console.log(`\n📥 Ingesting ${listings.length} listings from [${target.name}]...`);
 
-        const result = await ingestFacebookGroupListings(container, target, listings);
+        const result = await submitFacebookListings(container, target, listings);
         totalInserted += result.newSourceItems;
         totalDuplicates += result.unchangedSourceItems;
         totalErrors += result.errors.length;
@@ -1493,7 +1501,7 @@ export async function runFacebookScraper(
             reason: err.message,
             detectedUrl: context?.pages().at(-1)?.url(),
           });
-          await container.alertService.critical(
+          await container?.alertService.critical(
             '<b>Facebook automation safety-locked.</b> Run <code>npm run fb:login</code> locally to inspect and restore the session.',
           );
           totalErrors++;
@@ -1515,7 +1523,7 @@ export async function runFacebookScraper(
     if (err instanceof FacebookSessionExpiredError) {
       sessionSafe = false;
       blockFacebookAutomation({ reason: err.message, detectedUrl: context?.pages().at(-1)?.url() });
-      await container.alertService.critical(
+      await container?.alertService.critical(
         '<b>Facebook automation safety-locked.</b> Run <code>npm run fb:login</code> locally to restore the session.',
       );
     } else {
@@ -1527,7 +1535,7 @@ export async function runFacebookScraper(
     if (context) await context.close().catch(() => {});
     if (camoufox) await camoufox.close().catch(() => {});
     releaseLock();
-    await container.notifierService.flushNotificationQueue().catch((err) => console.error('[Notifier] Flush error:', err));
+    await container?.notifierService.flushNotificationQueue().catch((err) => console.error('[Notifier] Flush error:', err));
   }
 
   const totalMb = (totalWireBytes / 1024 / 1024).toFixed(2);

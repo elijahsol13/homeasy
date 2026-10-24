@@ -1,5 +1,5 @@
 services:
-  # ─── Independent verified SQLite snapshots on the MacBook ───────────────────
+  # ─── Independent verified SQLite snapshots ───────────────────────────────────
   # This process runs even when scraping is paused or blocked by a challenge.
   # The mounted directory is shared with the app; S3 comes in a later phase.
   backup:
@@ -13,6 +13,7 @@ services:
     command: node dist/database/backup-worker.js
     environment:
       - NODE_ENV=production
+      - HOMEASY_DEPLOYMENT_ROLE=vps
       - DATABASE_PATH=/app/data/homeasy.db
     volumes:
       - ./data:/app/data
@@ -22,7 +23,6 @@ services:
       timeout: 15s
       retries: 2
       start_period: 5m
-    mem_limit: 150m
     logging:
       driver: "json-file"
       options:
@@ -41,6 +41,7 @@ services:
     command: npm run start:bot
     environment:
       - NODE_ENV=production
+      - HOMEASY_DEPLOYMENT_ROLE=vps
       - DATABASE_PATH=/app/data/homeasy.db
       - SERVICE_TYPE=bot
       - LISTING_READ_PATH=canonical
@@ -50,18 +51,13 @@ services:
       - .env
     volumes:
       - ./data:/app/data
-    deploy:
-      resources:
-        limits:
-          memory: 200M
-    mem_limit: 200m
     logging:
       driver: "json-file"
       options:
         max-size: "10m"
         max-file: "3"
 
-  # ─── Camoufox Scraper Worker ────────────────────────────────────────────────
+  # ─── VPS Khmer24-only scraper; Facebook always runs on the Mac ──────────────
   scraper:
     build:
       context: .
@@ -73,11 +69,12 @@ services:
     # synchronous (node:sqlite) and can exceed Docker's 10s default, causing
     # SIGKILL mid-write and SQLite corruption ("database disk image is malformed").
     stop_grace_period: 120s
-    command: npm run start:scraper
+    command: npm run start:scraper:vps
     environment:
       - NODE_ENV=production
       - DATABASE_PATH=/app/data/homeasy.db
       - SERVICE_TYPE=scraper
+      - HOMEASY_DEPLOYMENT_ROLE=vps
       - LISTING_READ_PATH=canonical
       - CANONICAL_READ_CANARY_TELEGRAM_IDS=
       - CANONICAL_ALERTS_ENABLED=true
@@ -85,11 +82,6 @@ services:
       - .env
     volumes:
       - ./data:/app/data
-    deploy:
-      resources:
-        limits:
-          memory: 750M
-    mem_limit: 750m
     logging:
       driver: "json-file"
       options:
@@ -110,6 +102,7 @@ services:
       - "127.0.0.1:3000:3000"
     environment:
       - NODE_ENV=production
+      - HOMEASY_DEPLOYMENT_ROLE=vps
       - DATABASE_PATH=/app/data/homeasy.db
       - API_PORT=3000
       - API_HOST=0.0.0.0
@@ -120,11 +113,6 @@ services:
       - .env
     volumes:
       - ./data:/app/data
-    deploy:
-      resources:
-        limits:
-          memory: 350M
-    mem_limit: 350m
     logging:
       driver: "json-file"
       options:

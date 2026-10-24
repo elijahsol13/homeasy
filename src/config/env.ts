@@ -51,6 +51,11 @@ const EnvSchema = z.object({
   POSTHOG_API_KEY: z.string().optional(),
   POSTHOG_HOST: z.string().default('https://eu.i.posthog.com'),
   BRIGHTDATA_API_KEY: z.string().optional(),
+  /** Shared only between the local Facebook producer and the server importer. */
+  FB_INGEST_TOKEN: z.string().min(32).optional(),
+  /** Explicit opt-in: local Facebook results are sent to the VPS instead of local SQLite. */
+  FB_INGEST_URL: z.string().url().optional(),
+  HOMEASY_DEPLOYMENT_ROLE: z.enum(['vps']).optional(),
   GROQ_API_KEY: z.string().optional(),
   CLOUDFLARE_API_KEY: z.string().optional(),
   CLOUDFLARE_ACCOUNT_ID: z.string().optional(),

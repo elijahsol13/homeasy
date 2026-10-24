@@ -1,11 +1,11 @@
 import 'dotenv/config';
 import { createContainer } from './container';
 import { runMigrations } from './database/migrate';
-import { startWorker, stopWorkerAndWait } from './services/scheduler';
+import { startWorker, stopWorkerAndWait, type ScraperWorkerOptions } from './services/scheduler';
 import { closeDatabase } from './database/db';
 import { env } from './config/env';
 
-export async function runScraper(): Promise<void> {
+export async function runScraper(options: ScraperWorkerOptions = {}): Promise<void> {
   console.log('');
   console.log('🕷️ Starting HomEasy Scraper Worker Service');
   console.log(`📍 Environment : ${env.NODE_ENV}`);
@@ -17,7 +17,7 @@ export async function runScraper(): Promise<void> {
   runMigrations(container.db);
 
   // 2. Start sequential scraper worker (configurable interval; default 110 min)
-  startWorker(container, env.SCRAPER_CYCLE_PAUSE_MINUTES);
+  startWorker(container, env.SCRAPER_CYCLE_PAUSE_MINUTES, options);
 
   // 3. Graceful shutdown on SIGINT / SIGTERM
   const shutdown = async (signal: string) => {

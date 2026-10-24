@@ -10,6 +10,13 @@ export const FB_RUNTIME_LOCK_PATH = path.join(process.cwd(), 'data', 'fb_runtime
 
 export type FacebookOperation = 'login' | 'scrape';
 
+/** A hard runtime interlock: VPS containers must never open Facebook automation. */
+export function assertFacebookLocalHost(): void {
+  if (process.env.HOMEASY_DEPLOYMENT_ROLE === 'vps') {
+    throw new Error('Facebook automation is disabled on the Homeasy VPS');
+  }
+}
+
 export interface FacebookSafetyState {
   status: 'ready' | 'blocked';
   reason?: string;
@@ -102,6 +109,7 @@ function isProcessRunning(pid: number): boolean {
 }
 
 export function acquireFacebookRuntimeLock(operation: FacebookOperation): () => void {
+  assertFacebookLocalHost();
   ensureDataDir();
   const lock: FacebookRuntimeLock = {
     pid: process.pid,
