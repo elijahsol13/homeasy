@@ -1,5 +1,11 @@
 # Homeasy — active handoff (2026-11-21)
 
+## Final GitHub verification, 2026-11-21
+
+- Documentation commit `110a9a6356bfee69d4f43d3c0dd0dd24af493ee6` was pushed to `origin/develop` successfully. Fresh `git ls-remote --heads origin` returned precisely `develop=110a9a6` and `main=7ad0ec7`. The isolated develop checkout was clean with its upstream in sync.
+- GitHub Actions push run `44879956154` on `110a9a6` completed `success`. Its Node 22 backend typecheck, lint, Jest, backend/Bright Data builds, frontend lint, Vitest, Web/TMA builds and SHA-256 artifact verification all passed. Docker `api-runner` image build and provenance capture passed. Artifacts: builds `14697855885`, Docker provenance `14698015441`, expiring 2026-12-05. The artifact ZIP digests are not production Docker registry digests.
+- Fresh local worktree inventory confirms the original Mac `main` remains dirty, all three detached Codex worktrees remain in place, and preservation archives exist at `/private/tmp/homeasy-stage1-20261121-preserve`. This is intentional pending a separate controlled reconciliation of their current changes. No live release or data mutation occurred.
+
 ## Modernization stage 1, Git consolidation
 
 - Approved mapping uses `main` as production (`7ad0ec7b08ab28d4d24cfd638a2be48303bb3774`) and `develop` as integration (`16cf564fa802804fc3db912e573d9f8d6d2a60f6` before this documentation update). Clean integration worktree `/private/tmp/homeasy-develop-20261121`. Original dirty Mac `main` and three detached Codex worktrees preserved. Preservation archives `/private/tmp/homeasy-stage1-20261121-preserve` include original patch and selected source/worktree snapshots. No reset, clean or checkout performed on original trees.
