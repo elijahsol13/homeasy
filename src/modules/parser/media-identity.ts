@@ -21,3 +21,66 @@ export function stableMediaHash(rawUrls: string[]): string | null {
   const identities = [...new Set(rawUrls.map(stableMediaIdentity).filter((value): value is string => Boolean(value)))].sort();
   return identities.length ? createHash('sha256').update(identities.join('\n')).digest('hex') : null;
 }
+
+/**
+ * A partial Facebook observation can refresh a known signed CDN URL without
+ * proving that unobserved gallery photos were removed. Keep the prior payload
+ * (including extraction), replacing only URLs for the same CDN pathname.
+ * New media identities are handled by the normal media-version pipeline.
+ */
+export function mergeKnownFacebookPhotoUrls(previous: unknown, observed: unknown, acceptRenewals: boolean):
+  { payload: Record<string, unknown>; refreshed: boolean } | null {
+  if (!previous || typeof previous !== 'object' || Array.isArray(previous)
+      || !observed || typeof observed !== 'object' || Array.isArray(observed)) return null;
+  const oldPayload = previous as Record<string, unknown>;
+  const newPayload = observed as Record<string, unknown>;
+
+  const getUrls = (payload: Record<string, unknown>): string[] => {
+    const listing = payload.listing;
+    const fromListing = listing && typeof listing === 'object' && !Array.isArray(listing)
+      ? (listing as Record<string, unknown>).photos : undefined;
+    const assets = Array.isArray(payload.photoAssets) ? payload.photoAssets.flatMap((asset: unknown) => {
+      if (!asset || typeof asset !== 'object' || Array.isArray(asset)) return [];
+      return [(asset as Record<string, unknown>).url];
+    }) : [];
+    return [payload.photos, fromListing].flatMap((value) => Array.isArray(value) ? value : [])
+      .concat(assets).filter((url): url is string => typeof url === 'string' && stableMediaIdentity(url) !== null);
+  };
+
+  const oldUrls = getUrls(oldPayload);
+  const newUrls = getUrls(newPayload);
+  if (!oldUrls.length || !newUrls.length) return null;
+  const existing = new Set(oldUrls.map(stableMediaIdentity));
+  if (newUrls.some((url) => !existing.has(stableMediaIdentity(url)))) return null;
+
+  const replacements = new Map<string, string>();
+  if (acceptRenewals) for (const url of newUrls) {
+    const identity = stableMediaIdentity(url);
+    if (identity?.startsWith('fbcdn:')) replacements.set(identity, url);
+  }
+  let refreshed = false;
+  const replaceUrl = (value: unknown): unknown => {
+    if (typeof value === 'string') {
+      const identity = stableMediaIdentity(value);
+      const replacement = identity && replacements.get(identity);
+      if (replacement && replacement !== value) {
+        refreshed = true;
+        return replacement;
+      }
+    }
+    return value;
+  };
+  const payload = { ...oldPayload };
+  if (Array.isArray(payload.photos)) payload.photos = payload.photos.map(replaceUrl);
+  if (Array.isArray(payload.photoAssets)) payload.photoAssets = payload.photoAssets.map((asset: unknown) => {
+    if (!asset || typeof asset !== 'object' || Array.isArray(asset)) return asset;
+    const photo = asset as Record<string, unknown>;
+    return { ...photo, url: replaceUrl(photo.url) };
+  });
+  const listing = payload.listing;
+  if (listing && typeof listing === 'object' && !Array.isArray(listing)) {
+    const current = listing as Record<string, unknown>;
+    if (Array.isArray(current.photos)) payload.listing = { ...current, photos: current.photos.map(replaceUrl) };
+  }
+  return { payload, refreshed };
+}

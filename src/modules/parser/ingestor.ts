@@ -36,6 +36,7 @@ import type { IngestionBatchResult, SourceAdapter, SourceRunContext } from './in
 import { extractDeterministicMetadata } from './deterministic-metadata';
 import type { RepostClusteringService } from './repost-clustering';
 import type { CanonicalShadowService } from './canonical-dedupe';
+import { mergeKnownFacebookPhotoUrls } from './media-identity';
 
 /** Source-confirmed Khmer24 map pins can change without a text or photo edit.
  * Compare the trusted scraper extraction, never AI facts or marketing landmarks. */
@@ -624,6 +625,20 @@ export class IngestionService {
         const priorSourceId = repo.findSourceId(sourceKey);
         const priorState = priorSourceId === undefined ? undefined : repo.findSourceItemState(priorSourceId, item.externalId);
         const sourceContentChanged = !priorState || priorState.contentHash !== (item.contentHash ?? null);
+        let facebookPhotoUrlsRefreshed = false;
+        if (priorState && !sourceContentChanged && priorState.classification === 'HOUSING_SUPPLY'
+          && item.classification === 'HOUSING_SUPPLY'
+          && item.sourceIdentity.sourceType === 'FACEBOOK_GROUP') {
+          try {
+            const oldPayload: unknown = JSON.parse(priorState.rawPayloadJson);
+            const merged = mergeKnownFacebookPhotoUrls(oldPayload, item.raw, observedAt >= priorState.lastSeenAt);
+            if (merged) {
+              item = { ...item, raw: merged.payload as T, mediaHash: priorState.mediaHash ?? undefined,
+                publishedAt: priorState.publishedAt ?? item.publishedAt };
+              facebookPhotoUrlsRefreshed = merged.refreshed;
+            }
+          } catch { /* Preserve the normal ingestion path for malformed historical payloads. */ }
+        }
         const sourceMediaChanged = !priorState || priorState.mediaHash !== (item.mediaHash ?? null);
         let previousPayload: Record<string, unknown> | null = null;
         if (priorState && item.sourceIdentity.sourceType === 'KHMER24') {
@@ -748,7 +763,7 @@ export class IngestionService {
           const resolvedSource = repo.upsertSourceDetailed(item.sourceIdentity);
           sourceIds.set(sourceKey, resolvedSource);
           const upsert = repo.upsertSourceItemDetailed(resolvedSource.id, sourceItemInput, observedAt,
-            verifiedMapChanged ? incomingPin ?? undefined : undefined);
+            verifiedMapChanged ? incomingPin ?? undefined : undefined, facebookPhotoUrlsRefreshed);
           if (!upsert.unchanged) {
             repo.replaceIdentifiers(upsert.id, identifiers);
             result.mutationReport.directWrites.identifierSetsReplaced++;
@@ -777,7 +792,8 @@ export class IngestionService {
           result.incrementalRepostClustersUpdated += repost.clustersUpdated;
         }
         const hasCurrentBinding = repo.hasCurrentCanonicalBinding(outcome.upsert.id,item.contentHash??null,item.mediaHash??null);
-        if (this.canonicalShadowService && (sourceContentChanged || sourceMediaChanged || verifiedMapChanged || (eligibleForRepost && !hasCurrentBinding))) {
+        if (this.canonicalShadowService && (sourceContentChanged || sourceMediaChanged || verifiedMapChanged
+          || facebookPhotoUrlsRefreshed || (eligibleForRepost && !hasCurrentBinding))) {
           canonicalSourceItemIds.add(outcome.upsert.id);
         }
         if (outcome.source.inserted) newSourceKeys.add(sourceKey);

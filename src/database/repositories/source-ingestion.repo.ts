@@ -308,14 +308,16 @@ export class SourceIngestionRepository {
   }
 
   findSourceItemState(sourceRegistryId: number, externalId: string): { id: number; classification: string | null;
-    contentHash: string | null; mediaHash: string | null; rawPayloadJson: string } | undefined {
-    return this.db.prepare('SELECT id,classification,content_hash AS contentHash,media_hash AS mediaHash,raw_payload_json AS rawPayloadJson FROM source_items WHERE source_registry_id=? AND external_id=?')
+    contentHash: string | null; mediaHash: string | null; rawPayloadJson: string;
+    lastSeenAt: string; publishedAt: string | null } | undefined {
+    return this.db.prepare('SELECT id,classification,content_hash AS contentHash,media_hash AS mediaHash,raw_payload_json AS rawPayloadJson,last_seen_at AS lastSeenAt,published_at AS publishedAt FROM source_items WHERE source_registry_id=? AND external_id=?')
       .get(sourceRegistryId, externalId) as { id: number; classification: string | null; contentHash: string | null;
-        mediaHash: string | null; rawPayloadJson: string } | undefined;
+        mediaHash: string | null; rawPayloadJson: string; lastSeenAt: string; publishedAt: string | null } | undefined;
   }
 
   upsertSourceItemDetailed(sourceRegistryId: number, item: SourceItemInput, observedAt = new Date().toISOString(),
-    verifiedMapPin?: { latitude: number; longitude: number; mapsUrl?: string }): SourceItemUpsertResult {
+    verifiedMapPin?: { latitude: number; longitude: number; mapsUrl?: string },
+    facebookPhotoUrlsRefreshed = false): SourceItemUpsertResult {
     const payload = JSON.stringify(item.rawPayload ?? {});
     const existing = this.db.prepare(`
       SELECT id, content_hash, raw_text, raw_payload_json, media_hash, last_seen_at, classification
@@ -339,7 +341,7 @@ export class SourceIngestionRepository {
       // source-content version.
       // A source-verified pin is an exception: only those two location fields
       // may change without a content/media version or another AI invocation.
-      let retainedPayload = recoveredClassification ? payload : existing.raw_payload_json;
+      let retainedPayload = recoveredClassification || facebookPhotoUrlsRefreshed ? payload : existing.raw_payload_json;
       if (item.sourceType === 'KHMER24' && (recoveredClassification || verifiedMapPin)) {
         try {
           const oldRaw: unknown = JSON.parse(existing.raw_payload_json);

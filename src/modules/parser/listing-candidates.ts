@@ -71,7 +71,10 @@ function collectUrls(value: unknown, urls = new Set<string>(), path = ''): strin
   } else if (Array.isArray(value)) {
     for (const part of value) collectUrls(part, urls, path);
   } else if (value && typeof value === 'object') {
-    for (const [key, part] of Object.entries(value as Record<string, unknown>)) collectUrls(part, urls, `${path}.${key}`);
+    for (const [key, part] of Object.entries(value as Record<string, unknown>)) {
+      if (path === '' && key === 'providerMetadata') continue;
+      collectUrls(part, urls, `${path}.${key}`);
+    }
   }
   return [...urls].sort();
 }

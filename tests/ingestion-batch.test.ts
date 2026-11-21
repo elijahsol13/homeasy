@@ -627,6 +627,110 @@ describe('IngestionService.ingestBatch', () => {
     expect(db.prepare('SELECT COUNT(*) n FROM canonical_listings').get()).toEqual({n:1});
   });
 
+  it('renews a signed Facebook photo URL while retaining missing gallery photos and extraction', async () => {
+    const original = 'https://scontent-a.fbcdn.net/v/t39.30808-6/a.jpg?oe=old';
+    const renewed = 'https://scontent-b.fbcdn.net/v/t39.30808-6/a.jpg?oe=new';
+    const second = 'https://scontent-a.fbcdn.net/v/t39.30808-6/b.jpg?oe=old';
+    const other = 'https://images.example.com/property.jpg';
+    let aiCalls = 0;
+    const adapter = (photos: string[], postedAt = '2026-09-20T00:00:00Z') => new FacebookLiveAdapter(async function* () {
+      yield { sourceId: 'fb-media-renewal', sourceName: 'Facebook Media', groupId: 'fb-media-renewal',
+        listing: { title: '2BR apartment in Wat Bo', description: 'For rent $400 monthly',
+          raw_text: `For rent $400 monthly, 2BR apartment in Wat Bo. Original source mention ${original}`,
+          is_real_estate: true,
+          source_url: 'https://facebook.com/groups/fb-media-renewal/posts/1001',
+          posted_at: postedAt, city: 'siem_reap', photos } };
+    }, async (_raw, item) => {
+      aiCalls++;
+      return { ...item, raw: { ...item.raw, preservedExtraction: { bedrooms: 2 } } };
+    });
+    const first = await ingestion.ingestBatch(adapter([original, second, other]), {
+      ...context('CAMOUFOX'), runType: 'DISCOVERY', observedAt: '2026-10-07T00:00:00Z',
+    });
+    expect(first.newSourceItems).toBe(1);
+    const initial = db.prepare('SELECT id,content_hash,media_hash,published_at FROM source_items').get() as {
+      id: number; content_hash: string; media_hash: string; published_at: string;
+    };
+    const listing = db.prepare('SELECT id FROM canonical_listings').get() as { id: number };
+    const initialOccurrence = db.prepare('SELECT posted_at,content_changed_at FROM canonical_listing_source_occurrences').get();
+    const saved = JSON.parse((db.prepare('SELECT raw_payload_json FROM source_items').get() as { raw_payload_json: string }).raw_payload_json);
+    saved.providerMetadata = { attributionUrl: original };
+    db.prepare('UPDATE source_items SET raw_payload_json=? WHERE id=?').run(JSON.stringify(saved), initial.id);
+
+    // A follow-up provider may return just one of several known photos.
+    const changed = await ingestion.ingestBatch(adapter([renewed], '2026-10-08T00:00:00Z'), {
+      ...context('BRIGHTDATA'), runType: 'DISCOVERY', observedAt: '2026-10-08T00:00:00Z',
+    });
+    expect(changed).toMatchObject({ unchangedSourceItems: 1, updatedSourceItems: 0, newVersions: 0 });
+    expect(aiCalls).toBe(1);
+    expect(db.prepare('SELECT id,content_hash,media_hash,published_at FROM source_items').get()).toEqual(initial);
+    expect(db.prepare('SELECT posted_at,content_changed_at FROM canonical_listing_source_occurrences').get())
+      .toEqual(initialOccurrence);
+    expect(db.prepare('SELECT COUNT(*) n FROM source_item_versions').get()).toEqual({ n: 1 });
+    const payload = JSON.parse((db.prepare('SELECT raw_payload_json FROM source_items').get() as { raw_payload_json: string }).raw_payload_json);
+    expect(payload.preservedExtraction).toEqual({ bedrooms: 2 });
+    expect(payload.photos).toEqual(expect.arrayContaining([renewed, second, other]));
+    expect(payload.photos).toHaveLength(3);
+    expect(payload.listing.photos).toEqual(expect.arrayContaining([renewed, second, other]));
+    expect(payload.listing.raw_text).toContain(original);
+    expect(payload.listing.raw_text).not.toContain(renewed);
+    expect(payload.providerMetadata.attributionUrl).toBe(original);
+    const media = db.prepare(`SELECT ma.source_url FROM media_asset_source_occurrences mo
+      JOIN media_assets ma ON ma.id=mo.media_asset_id WHERE mo.source_item_id=? ORDER BY ma.source_url`)
+      .all(initial.id) as Array<{ source_url: string }>;
+    expect(media.map((entry) => entry.source_url).sort()).toEqual([renewed, second, other].sort());
+    const property = createContainer({ db }).canonicalListingRepo.getPropertyById(listing.id, true);
+    expect(property?.photos).toEqual(expect.arrayContaining([renewed, second, other]));
+    expect(property?.photos).not.toContain(original);
+
+    const duplicate = await ingestion.ingestBatch(adapter([renewed]), {
+      ...context('CAMOUFOX'), runType: 'DISCOVERY', observedAt: '2026-10-09T00:00:00Z',
+    });
+    expect(duplicate).toMatchObject({ newVersions: 0, incrementalCanonicalItems: 0 });
+    expect(db.prepare('SELECT COUNT(*) n FROM source_item_versions').get()).toEqual({ n: 1 });
+
+    const stale = await ingestion.ingestBatch(adapter([original]), {
+      ...context('BRIGHTDATA'), runType: 'DISCOVERY', observedAt: '2026-10-07T12:00:00Z',
+    });
+    expect(stale.newVersions).toBe(0);
+    const afterStale = JSON.parse((db.prepare('SELECT raw_payload_json FROM source_items').get() as { raw_payload_json: string }).raw_payload_json);
+    expect(afterStale.photos).toContain(renewed);
+    expect(afterStale.photos).not.toContain(original);
+    expect(aiCalls).toBe(1);
+  });
+
+  it('renews the URL inside legacy photoAssets without dropping its perceptual hash', async () => {
+    const oldPhoto = 'https://scontent-a.fbcdn.net/v/t39.30808-6/legacy.jpg?oe=expired';
+    const newPhoto = 'https://scontent-b.fbcdn.net/v/t39.30808-6/legacy.jpg?oe=renewed';
+    const otherPhoto = 'https://example.com/gallery/second.jpg';
+    const perceptualHash = '01'.repeat(32);
+    const content = 'For rent $450 monthly in Wat Bo, 2 bedrooms';
+    const source: ClassifiedReplayPost = {
+      id: '1002', groupUrl: 'https://facebook.com/groups/legacy-media-group',
+      groupName: 'Legacy Media Group', postUrl: 'https://facebook.com/groups/legacy-media-group/posts/1002',
+      content, classification: 'HOUSING_SUPPLY', photos: [oldPhoto, otherPhoto],
+      photoAssets: [{ url: oldPhoto, perceptualHash }, { url: otherPhoto }],
+      listingExtraction: { title_en: '2BR apartment Wat Bo', price: 450, currency: 'USD', offer_type: 'rent', sangkat: 'Wat Bo' },
+    };
+    class FixtureReplay extends ReplayAdapter {
+      async *fetchNewItems(): AsyncIterable<ClassifiedReplayPost> { yield source; }
+    }
+    await ingestion.ingestBatch(new FixtureReplay('not-read'), context('REPLAY'));
+    const renewed = await ingestion.ingestBatch(new FacebookLiveAdapter(async function* () {
+      yield { sourceId: 'legacy-media-group', sourceName: 'Legacy Media Group',
+        listing: { title: '2BR apartment Wat Bo', raw_text: content, is_real_estate: true,
+          source_url: source.postUrl!, city: 'siem_reap', photos: [newPhoto] } };
+    }), { ...context('CAMOUFOX'), runType: 'DISCOVERY', observedAt: '2026-10-08T00:00:00Z' });
+    expect(renewed).toMatchObject({ unchangedSourceItems: 1, newVersions: 0 });
+    const payload = JSON.parse((db.prepare('SELECT raw_payload_json FROM source_items').get() as { raw_payload_json: string }).raw_payload_json);
+    expect(payload.photoAssets).toEqual([{ url: newPhoto, perceptualHash }, { url: otherPhoto }]);
+    expect(payload.photos).toEqual(expect.arrayContaining([newPhoto, otherPhoto]));
+    expect(db.prepare('SELECT COUNT(*) n FROM source_item_versions').get()).toEqual({ n: 1 });
+    expect(db.prepare(`SELECT ma.source_url,ma.perceptual_hash FROM media_asset_source_occurrences mo
+      JOIN media_assets ma ON ma.id=mo.media_asset_id WHERE ma.source_url=?`).get(newPhoto))
+      .toEqual({ source_url: newPhoto, perceptual_hash: perceptualHash });
+  });
+
   it('marks explicit rented edits as availability evidence and keeps source history', async () => {
     const first = new FixtureAdapter({ id: 'availability-1', text: 'For rent $400 Wat Bo' });
     await ingestion.ingestBatch(first, { ...context('REPLAY'), runType: 'DISCOVERY' });
