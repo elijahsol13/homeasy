@@ -272,8 +272,8 @@ describe('feed sorting and pagination', () => {
     await act(async () => { button('Open filters').click(); });
     expect(drawerButton('Newest').className).toContain('bg-sky-500');
     await act(async () => { button('Price: Low').click(); });
-    await act(async () => { button('Show Listings').click(); await new Promise((resolve) => setTimeout(resolve, 5)); });
-    expect(requests.at(-1)?.filters.sort).toBe('price_asc');
+    await act(async () => { button('Show Listings').click(); });
+    await vi.waitFor(() => expect(requests.at(-1)?.filters.sort).toBe('price_asc'));
     expect(JSON.parse(localStorage.getItem('homeasy_filters')!).sort).toBe('price_asc');
   });
 
@@ -285,13 +285,13 @@ describe('feed sorting and pagination', () => {
     await act(async () => { button('Open filters').click(); });
     expect(button('4+ BR').className).toContain('bg-sky-500');
     expect(button('2 BR').className).not.toContain('bg-sky-500');
-    await act(async () => { button('Reset').click(); await new Promise((resolve) => setTimeout(resolve, 5)); });
-    expect(requests.at(-1)?.filters).toEqual({
+    await act(async () => { button('Reset').click(); });
+    await vi.waitFor(() => expect(requests.at(-1)?.filters).toEqual({
       city: 'siem_reap', locations: [], type: 'rent', sort: 'newest',
       category: undefined, minPrice: undefined, maxPrice: undefined,
       bedrooms: undefined, bathrooms: undefined, hasPool: undefined,
       minLeaseMax: undefined, query: undefined, reviewStatus: undefined,
-    });
+    }));
     expect(JSON.parse(localStorage.getItem('homeasy_filters')!).sort).toBe('newest');
   });
 
@@ -359,15 +359,17 @@ describe('feed sorting and pagination', () => {
     await act(async () => { button('Open map tab').click(); await Promise.resolve(); });
     await act(async () => {
       (host.querySelector('[data-testid="map-view"]') as HTMLButtonElement).click();
-      await new Promise((resolve) => setTimeout(resolve, 5));
     });
-    expect(requests.at(-1)?.filters.mapClusterKey).toBe('siem_reap:sla_kram');
+    await vi.waitFor(() => expect(requests.at(-1)?.filters.mapClusterKey).toBe('siem_reap:sla_kram'));
     const aliases = requests.at(-1)!.filters.locations;
 
     await act(async () => { button('Open filters').click(); });
-    await act(async () => { button('Show Listings').click(); await new Promise((resolve) => setTimeout(resolve, 5)); });
+    await act(async () => { button('Show Listings').click(); });
 
-    expect(requests.at(-1)?.filters.locations).toEqual(aliases);
+    await vi.waitFor(() => {
+      expect(requests.at(-1)?.filters.locations).toEqual(aliases);
+      expect(requests.at(-1)?.filters.mapClusterKey).toBeUndefined();
+    });
     expect(requests.at(-1)?.filters.mapClusterKey).toBeUndefined();
     expect(JSON.parse(localStorage.getItem('homeasy_filters')!).mapClusterKey).toBeUndefined();
   });
@@ -441,11 +443,8 @@ describe('feed sorting and pagination', () => {
     expect([...host.querySelectorAll('[data-testid="property"]')].map((item) => item.textContent)).toEqual(['1']);
     expect(button('Load More Listings (21 remaining)')).toBeTruthy();
 
-    await act(async () => {
-      button('Cheapest').click();
-      await new Promise((resolve) => setTimeout(resolve, 5));
-    });
-    expect(requests).toHaveLength(2);
+    await act(async () => { button('Cheapest').click(); });
+    await vi.waitFor(() => expect(requests).toHaveLength(2));
     expect(requests[1].filters.sort).toBe('price_asc');
 
     await act(async () => {
