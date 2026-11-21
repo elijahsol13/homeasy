@@ -301,7 +301,8 @@ describe('feed sorting and pagination', () => {
       if (key === 'homeasy_filters') throw new DOMException('Blocked', 'SecurityError');
       return original.call(this, key);
     });
-    await act(async () => { root.render(<App />); await new Promise((resolve) => setTimeout(resolve, 5)); });
+    await act(async () => { root.render(<App />); });
+    await vi.waitFor(() => expect(requests).toHaveLength(1));
     expect(requests).toHaveLength(1);
     expect(requests[0].filters).toEqual({
       city: 'siem_reap', locations: [], type: 'rent', sort: 'newest',
@@ -331,9 +332,9 @@ describe('feed sorting and pagination', () => {
     expect(JSON.parse(host.querySelector('[data-testid="map-view"]')!.getAttribute('data-filters')!)).toMatchObject({
       locations: ['Wat Bo'], bedrooms: [4], maxPrice: 800, hasPool: false, sort: 'price_desc',
     });
-    await act(async () => { (host.querySelector('[data-testid="map-view"]') as HTMLButtonElement).click(); await new Promise((resolve) => setTimeout(resolve, 5)); });
+    await act(async () => { (host.querySelector('[data-testid="map-view"]') as HTMLButtonElement).click(); });
+    await vi.waitFor(() => expect(requests.at(-1)?.filters.mapClusterKey).toBe('siem_reap:sla_kram'));
     expect(requests.at(-1)?.filters.locations).toEqual(['Wat Bo']);
-    expect(requests.at(-1)?.filters.mapClusterKey).toBe('siem_reap:sla_kram');
     expect(requests.at(-1)?.filters).toMatchObject({ bedrooms: [4], maxPrice: 800, hasPool: false, sort: 'price_desc' });
     expect(host.querySelector('[data-testid="map-view"]')).toBeNull();
   });
@@ -375,10 +376,8 @@ describe('feed sorting and pagination', () => {
   });
 
   it('keeps filters with the selected sort and drops an old page after sorting changes', async () => {
-    await act(async () => {
-      root.render(<App />);
-      await new Promise((resolve) => setTimeout(resolve, 5));
-    });
+    await act(async () => { root.render(<App />); });
+    await vi.waitFor(() => expect(requests).toHaveLength(1));
     expect(requests).toHaveLength(1);
 
     await act(async () => {
@@ -397,9 +396,8 @@ describe('feed sorting and pagination', () => {
       .find((button) => button.textContent?.trim() === 'Cheapest')!;
     await act(async () => {
       cheapest.dispatchEvent(new MouseEvent('click', { bubbles: true }));
-      await new Promise((resolve) => setTimeout(resolve, 5));
     });
-    expect(requests).toHaveLength(3);
+    await vi.waitFor(() => expect(requests).toHaveLength(3));
     expect(requests[2]).toMatchObject({
       page: 1,
       filters: { locations: ['Wat Bo'], maxPrice: 800, sort: 'price_asc' },
@@ -455,11 +453,8 @@ describe('feed sorting and pagination', () => {
     expect(host.querySelector('[data-testid="property"]')).toBeNull();
     expect(host.textContent).not.toContain('Load More Listings');
 
-    await act(async () => {
-      button('Newest').click();
-      await new Promise((resolve) => setTimeout(resolve, 5));
-    });
-    expect(requests).toHaveLength(3);
+    await act(async () => { button('Newest').click(); });
+    await vi.waitFor(() => expect(requests).toHaveLength(3));
     await act(async () => {
       requests[2].resolve({ total: 1, page: 1, limit: 20, totalPages: 1, items: [property(3)] });
       await Promise.resolve();
@@ -487,8 +482,8 @@ describe('feed sorting and pagination', () => {
     expect(log).toHaveBeenCalledWith('Failed to fetch properties:', expect.objectContaining({ message: 'Failed to fetch' }));
     expect(button('Try again')).toBeTruthy();
 
-    await act(async () => { button('Try again').click(); await new Promise((resolve) => setTimeout(resolve, 5)); });
-    expect(requests).toHaveLength(2);
+    await act(async () => { button('Try again').click(); });
+    await vi.waitFor(() => expect(requests).toHaveLength(2));
     expect(requests[1].page).toBe(1);
     expect(requests[1].filters).toEqual(originalFilters);
     expect(localStorage.getItem('homeasy_filters')).toBe(savedBeforeFailure);
@@ -503,10 +498,8 @@ describe('feed sorting and pagination', () => {
 
   it('keeps newest as the default and drops an old first page after sorting changes', async () => {
     localStorage.removeItem('homeasy_filters');
-    await act(async () => {
-      root.render(<App />);
-      await new Promise((resolve) => setTimeout(resolve, 5));
-    });
+    await act(async () => { root.render(<App />); });
+    await vi.waitFor(() => expect(requests).toHaveLength(1));
 
     expect(requests).toHaveLength(1);
     expect(requests[0]).toMatchObject({
@@ -523,9 +516,8 @@ describe('feed sorting and pagination', () => {
       .find((button) => button.textContent?.trim() === 'Most expensive')!;
     await act(async () => {
       mostExpensive.dispatchEvent(new MouseEvent('click', { bubbles: true }));
-      await new Promise((resolve) => setTimeout(resolve, 5));
     });
-    expect(requests).toHaveLength(2);
+    await vi.waitFor(() => expect(requests).toHaveLength(2));
     expect(requests[1]).toMatchObject({ page: 1, filters: { sort: 'price_desc' } });
 
     await act(async () => {
@@ -542,10 +534,8 @@ describe('feed sorting and pagination', () => {
   });
 
   it('opens the drawer with the applied feed sort and discards changes cancelled on close', async () => {
-    await act(async () => {
-      root.render(<App />);
-      await new Promise((resolve) => setTimeout(resolve, 5));
-    });
+    await act(async () => { root.render(<App />); });
+    await vi.waitFor(() => expect(requests).toHaveLength(1));
     const button = (label: string) => Array.from(host.querySelectorAll('button'))
       .find((item) => item.textContent?.trim() === label)!;
 
@@ -575,10 +565,8 @@ describe('feed sorting and pagination', () => {
     const first = deferred<PropertyDTO>();
     const second = deferred<PropertyDTO>();
     api.fetchPropertyById.mockImplementation((id: number) => id === 1 ? first.promise : second.promise);
-    await act(async () => {
-      root.render(<App />);
-      await new Promise((resolve) => setTimeout(resolve, 5));
-    });
+    await act(async () => { root.render(<App />); });
+    await vi.waitFor(() => expect(requests).toHaveLength(1));
     await act(async () => {
       requests[0].resolve({ total: 2, page: 1, limit: 20, totalPages: 1, items: [property(1), property(2)] });
       await Promise.resolve();
@@ -606,7 +594,8 @@ describe('feed sorting and pagination', () => {
     const review = deferred<{ property: PropertyDTO }>();
     api.fetchPropertyById.mockReturnValue(oldDetail.promise);
     api.reviewProperty.mockReturnValue(review.promise);
-    await act(async () => { root.render(<App />); await new Promise((resolve) => setTimeout(resolve, 5)); });
+    await act(async () => { root.render(<App />); });
+    await vi.waitFor(() => expect(requests).toHaveLength(1));
     await act(async () => {
       requests[0].resolve({ total: 1, page: 1, limit: 20, totalPages: 1, items: [{ ...property(1), photos: ['preview'] }] });
       await Promise.resolve();
@@ -636,7 +625,8 @@ describe('feed sorting and pagination', () => {
     const pendingReview = deferred<{ property: PropertyDTO }>();
     api.reviewProperty.mockReturnValue(pendingReview.promise);
     api.fetchPropertyById.mockImplementation((id: number) => Promise.resolve(property(id)));
-    await act(async () => { root.render(<App />); await new Promise((resolve) => setTimeout(resolve, 5)); });
+    await act(async () => { root.render(<App />); });
+    await vi.waitFor(() => expect(requests).toHaveLength(1));
     await act(async () => {
       requests[0].resolve({ total: 2, page: 1, limit: 20, totalPages: 1, items: [property(1), property(2)] });
       await Promise.resolve();
@@ -695,7 +685,7 @@ describe('feed sorting and pagination', () => {
     });
     expect(analytics.captureEvent).toHaveBeenCalledWith('catalog_loaded', { city: 'siem_reap', count: 12 });
     await act(async () => { button('Most expensive').click(); });
-    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 5)); });
+    await vi.waitFor(() => expect(requests).toHaveLength(2));
     await act(async () => {
       requests[1].resolve({ total: 9, page: 1, limit: 20, totalPages: 1, items: [property(2)] });
       await Promise.resolve();
