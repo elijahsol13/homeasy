@@ -1,5 +1,12 @@
 # Homeasy — active handoff (2026-11-21)
 
+## Latest local Git cleanup, 2026-11-21
+
+- The Mac checkout `/Users/lacr0s/!Projects/homeasy` now has a **clean** working tree on `develop=b2d1693165b03c4e12e7c2b3b14442e7455ec1ac`, tracking `origin/develop`. The only registered Git worktree is this checkout. Local branches are `main` and `develop`; GitHub branch enumeration confirmed exactly `main=7ad0ec7b08ab28d4d24cfd638a2be48303bb3774` and `develop=b2d1693`. Default GitHub branch remains `main`.
+- Three detached Codex worktrees (`3cb7`, `analytics-page-type`, `public-nav-links`) were removed after preservation. Seven edited source/test files were individually SHA-256-verified against both the manifest and extracted contents of `/private/tmp/homeasy-stage1-20261121-preserve/detached-worktree-changes.tar.gz` (`detached-worktree-changes.json` is the manifest). Original checkout and VPS overlay preservation also exists under ignored `data/local-git-preservation/2026-11-21-stage1/`. The dynamic `PropertyDetailModal` accessibility change and its regression test had already been incorporated into `develop`, so no duplicate code commit was needed. Shared `webapp/node_modules` survived the old worktree symlink removal.
+- Fresh local tests on this checkout passed: root `npm run typecheck`, root `npm run lint`, frontend Vitest **14 files / 185 tests**, targeted `PropertyDetailModal.accessibility.test.tsx` **4 tests**, and frontend lint **exit 0** (existing warnings). GitHub Actions run `44885760014` on `b2d1693` completed **success**, covering the existing full CI matrix. No production/VPS change was made in this Git cleanup.
+- **Git/worktree cleanup complete.** The remaining Stage 1 release work requires separately approved production image retention/digest recording, Web/TMA artifact-to-deployment provenance, rollback rehearsal, and production smoke checks. VPS still has a historical dirty checkout. Earlier same-day handoffs below describe states **before** this local cleanup.
+
 ## Post-login access and release baseline verification, 2026-11-21
 
 - GitHub remote read-only enumeration still shows **exactly two heads**, `main=7ad0ec7b08ab28d4d24cfd638a2be48303bb3774` and `develop=4fa7f79fd5adafff6d8f76b665ba2c853d7b6e43`. The integration worktree remains clean, with `.githooks` enabled.
