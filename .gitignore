@@ -37,6 +37,8 @@ Thumbs.db
 .idea/
 
 # Tool & agent artifacts
+/.codex/
+/.playwright-mcp/
 .serena/cache/
 .serena/memories/
 .serena/logs/
