@@ -1,7 +1,8 @@
 import type { DatabaseSync } from 'node:sqlite';
 import type { CityKey } from '../../config/settings';
-import { CAMBODIA_LOCATIONS, canonicalizeLocation, extractCoordinatesFromMapsUrl, getCanonicalLocationKey, getFilterSangkat, isCoordinateInSanityBounds } from '../../config/locations';
+import { CAMBODIA_LOCATIONS, extractCoordinatesFromMapsUrl, extractPropertyPinCoordinatesFromMapsUrl, getCanonicalLocationKey, getFilterSangkat, isCoordinateInSanityBounds } from '../../config/locations';
 import { isKnownKhmer24AdministrativePin } from '../../modules/parser/source-geography';
+import { extractPropertyMapUrlFromText, isGoogleMapsDestinationUrl, isGoogleMapsUrl } from '../../modules/parser/source-map-location';
 import type { Property, PropertyFilterOptions } from './properties.repo';
 
 type CanonicalRow = Record<string, unknown>;
@@ -254,7 +255,11 @@ export class CanonicalListingRepository {
       (${this.rentTierSql(options)}) AS match_tier,
       (${this.cityTierSql(options.city)}) AS city_tier,
       (${this.cityEvidenceSql(options.city)}) AS city_evidence,
-      json_extract(l.listing_facts_json,'$.maps_urls[0]') AS facts_maps_url,
+      json_extract(s.raw_payload_json,'$.listing.latitude') AS source_latitude,
+      json_extract(s.raw_payload_json,'$.listing.longitude') AS source_longitude,
+      json_extract(s.raw_payload_json,'$.listing.maps_url') AS source_maps_url,
+      json_extract(s.raw_payload_json,'$.listing.source_map_url') AS source_map_original_url,
+      json_extract(s.raw_payload_json,'$.listing.source_title') AS source_title,
       json_extract(l.listing_facts_json,'$.electricity_rate') AS electricity_rate,
       json_extract(l.listing_facts_json,'$.water_rate') AS water_rate,
       json_extract(l.listing_facts_json,'$.landmarks') AS facts_landmarks,
@@ -456,9 +461,7 @@ export class CanonicalListingRepository {
     const verifiedSangkat=firstVerifiedSangkat([
       row.explicit_location,row.sangkat,row.property_explicit_location,row.property_sangkat,row.canonical_address,
     ],city);
-    const locationKey=verifiedSangkat
-      ? getCanonicalLocationKey(verifiedSangkat.canonicalName,city)
-      : canonicalizeLocation(location,city)?.key??null;
+    const locationKey=verifiedSangkat ? getCanonicalLocationKey(verifiedSangkat.canonicalName,city) : null;
     const media=typeof row.occurrence_media==='string'?row.occurrence_media.split('\n').filter(Boolean):[];
     const photos=media.length?media:detail
       ? stringList(raw.photos??payloadListing.photos??raw.image_urls??raw.images).length?stringList(raw.photos??payloadListing.photos??raw.image_urls??raw.images)
@@ -468,24 +471,37 @@ export class CanonicalListingRepository {
     const telegram=nonEmpty(row.contact_telegram)??nonEmpty(payloadContacts.telegram);
     const whatsapp=nonEmpty(payloadContacts.whatsapp);
     const contact={...(phones?{phone:phones}:{}),...(telegram?{telegram}:{}),...(whatsapp?{whatsapp}:{})};
-    const sourceMapsUrl=nonEmpty(row.facts_maps_url)??nonEmpty(facts.maps_url)??nonEmpty(raw.maps_url)??nonEmpty(payloadListing.maps_url);
+    const originalMapsUrl=nonEmpty(row.source_maps_url);
+    const sourceText=[nonEmpty(row.source_title),nonEmpty(row.raw_text)].filter(Boolean).join('\n');
+    const sourceLabelledUrl=extractPropertyMapUrlFromText(sourceText);
+    const sourceMapsUrl=originalMapsUrl && isGoogleMapsUrl(originalMapsUrl) && (
+      row.source_type==='KHMER24'
+      || row.source_type==='FACEBOOK_GROUP' && sourceLabelledUrl===nonEmpty(row.source_map_original_url)
+        && (originalMapsUrl===sourceLabelledUrl || isGoogleMapsDestinationUrl(originalMapsUrl))
+    )
+      ?originalMapsUrl:null;
     const untrustedKhmer24Gps=(lat:unknown,lng:unknown):boolean=>row.source_type==='KHMER24'
       && typeof lat==='number'&&typeof lng==='number'&&isKnownKhmer24AdministrativePin(lat,lng);
     // Prevent a historic district centre from leaking back via a synthesized
     // Maps URL even after the listing fact / property coordinate is suppressed.
     const sourceMapCoords=sourceMapsUrl?extractCoordinatesFromMapsUrl(sourceMapsUrl):null;
-    const mapsUrl=sourceMapCoords&&untrustedKhmer24Gps(sourceMapCoords.latitude,sourceMapCoords.longitude)
+    const sourceMapPin=sourceMapsUrl?extractPropertyPinCoordinatesFromMapsUrl(sourceMapsUrl):null;
+    const mapsUrl=sourceMapCoords&&(!sourceMapPin
+      || untrustedKhmer24Gps(sourceMapCoords.latitude,sourceMapCoords.longitude))
       ?null:sourceMapsUrl;
-    // Facts describe this listing; a canonical property can contain several offers.
+    // Stored facts may be AI-derived, and a canonical property may combine
+    // several offers. A precise point requires original source provenance.
     const validGps=(lat:unknown,lng:unknown):boolean=>typeof lat==='number'&&typeof lng==='number'
       &&Number.isFinite(lat)&&Number.isFinite(lng)&&isCoordinateInSanityBounds(lat,lng,city)
       &&!untrustedKhmer24Gps(lat,lng);
     let latitude:number|null=null;let longitude:number|null=null;
-    const coordinates: Array<[unknown,unknown]>=[
-      [facts.latitude,facts.longitude],
-      [row.latitude===null||row.latitude===undefined?null:Number(row.latitude),row.longitude===null||row.longitude===undefined?null:Number(row.longitude)],
-    ];
-    if(mapsUrl){const coords=extractCoordinatesFromMapsUrl(mapsUrl);if(coords)coordinates.push([coords.latitude,coords.longitude]);}
+    const coordinates: Array<[unknown,unknown]>=[];
+    if(row.source_type==='KHMER24'&&row.source_latitude!=null&&row.source_longitude!=null
+      && /^-?\d+\.\d{4,}$/.test(String(row.source_latitude))
+      && /^-?\d+\.\d{4,}$/.test(String(row.source_longitude))) {
+      coordinates.push([Number(row.source_latitude),Number(row.source_longitude)]);
+    }
+    if(mapsUrl&&sourceMapPin)coordinates.push([sourceMapPin.latitude,sourceMapPin.longitude]);
     for(const [lat,lng] of coordinates){if(validGps(lat,lng)){latitude=lat as number;longitude=lng as number;break;}}
     const title=nonEmpty(row.title)??'Property'; const description=nonEmpty(row.description)??'';
     const sourceUrl=nonEmpty(row.occurrence_source_url)??nonEmpty(row.item_source_url)??nonEmpty(row.canonical_url);

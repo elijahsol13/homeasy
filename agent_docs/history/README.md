@@ -11,6 +11,7 @@ This folder preserves full, **byte-identical** working memory from immediately b
 - `session_work_2026-11-12_before_full_audit.md` — byte-identical 2026-11-12 handoff covering the VPS refresh, Web/TMA releases, Pending diagnostics and earlier detailed history; SHA-256 `91df81a5d124ad6cdb2f57a51b93e444d2018fe04a0fbd98d163e073e71d4062`. Archived before the 2026-11-21 audit handoff.
 - `session_work_2026-11-21_before_release_baseline.md` — byte-identical 2026-11-21 full-audit handoff, archived before the Git/release-baseline handoff; SHA-256 `476f3195093fca9495f80c868222b2a560b4aab03950700dd8598bf144d8aebe`.
 - `session_work_2026-11-21_before_stage2_handoff.md` — byte-identical 2026-11-21 Git cleanup and production baseline handoff, archived before the Stage 2 implementation handoff; SHA-256 `1f6cea207994b1767b3e6ef503d5131b5475d6b2ca6b8839f447e3cbddbacec3`.
+- `session_work_2026-11-21_before_stage3_handoff.md` — byte-identical 2026-11-21 Stage 2 ingestion/SQLite/alerts verification handoff, archived before Stage 3 catalog work; SHA-256 `4bf02d9338f78583b480fc13a169b34934e8e8b763b1e5dc517536a6f39bc8c6`.
 
 Current progress and work handoff: `../project_progress.md` and `../latest_session_work.md`. Accepted owner decisions: `../decisions.md`; detailed dated evaluation outputs in `../../reports/`.
 

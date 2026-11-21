@@ -363,22 +363,27 @@ describe('Telegram Mini App (TMA) Backend API', () => {
       try {
         const sourceRepo = new SourceIngestionRepository(db);
         const source = sourceRepo.upsertSource({ sourceType: 'FACEBOOK_GROUP', externalSourceId: 'api-canary-fixture', name: 'API canary fixture' });
+        const canaryMapUrl = 'https://www.google.com/maps/search/?api=1&query=13.360000,103.860000';
         const itemId = sourceRepo.upsertSourceItemDetailed(source, {
-          sourceType: 'FACEBOOK_GROUP', externalId: 'api-canary-approved', rawText: 'Apartment for rent in Wat Bo $300/month. WhatsApp +85512345678',
+          sourceType: 'FACEBOOK_GROUP', externalId: 'api-canary-approved', rawText: `Apartment for rent in Wat Bo $300/month. WhatsApp +85512345678\nLocation: ${canaryMapUrl}`,
           sourceUrl: 'https://facebook.com/groups/api-fixture/posts/canary', contentHash: 'api-canary-approved', classification: 'HOUSING_SUPPLY',
-          rawPayload: { listingExtraction: { title_en: 'Canary apartment in Wat Bo', description_en: 'Apartment for rent in Wat Bo, Siem Reap', price: 300, currency: 'USD', category: 'apartment', property_type: 'Apartment', bedrooms: 1, city: 'siem_reap', sangkat: 'Wat Bo', offer_type: 'rent', latitude: 13.36, longitude: 103.86 }, photos: [] },
+          rawPayload: { listing: { source_map_url: canaryMapUrl, maps_url: canaryMapUrl }, listingExtraction: { title_en: 'Canary apartment in Wat Bo', description_en: 'Apartment for rent in Wat Bo, Siem Reap', price: 300, currency: 'USD', category: 'apartment', property_type: 'Apartment', bedrooms: 1, city: 'siem_reap', sangkat: 'Wat Bo', offer_type: 'rent', latitude: 13.36, longitude: 103.86 }, photos: [] },
         }).id;
-        const addMapFixture = (externalId: string, price: number, lat?: number, lng?: number) => sourceRepo.upsertSourceItemDetailed(source, {
+        const addMapFixture = (externalId: string, price: number, lat?: number, lng?: number) => {
+          const mapsUrl = lat !== undefined && lng !== undefined
+            ? `https://www.google.com/maps/search/?api=1&query=${lat.toFixed(6)},${lng.toFixed(6)}` : null;
+          return sourceRepo.upsertSourceItemDetailed(source, {
           sourceType: 'FACEBOOK_GROUP', externalId,
-          rawText: `Distinct apartment ${externalId} for rent in Sala Kamreuk, Siem Reap $${price}/month`,
+          rawText: `Distinct apartment ${externalId} for rent in Sala Kamreuk, Siem Reap $${price}/month${mapsUrl ? `\nLocation: ${mapsUrl}` : ''}`,
           sourceUrl: `https://facebook.com/groups/api-fixture/posts/${externalId}`,
           contentHash: externalId, classification: 'HOUSING_SUPPLY',
-          rawPayload: { listingExtraction: {
+          rawPayload: { ...(mapsUrl ? { listing: { source_map_url: mapsUrl, maps_url: mapsUrl } } : {}), listingExtraction: {
             title_en: `Distinct apartment ${externalId}`, description_en: 'For rent in Sala Kamreuk, Siem Reap',
             price, currency: 'USD', category: 'apartment', bedrooms: 1, city: 'siem_reap', sangkat: 'Sala Kamreuk',
             offer_type: 'rent', ...(lat !== undefined && lng !== undefined ? { latitude: lat, longitude: lng } : {}),
           }, photos: [] },
-        }).id;
+          }).id;
+        };
         const outsideId = addMapFixture('api-map-newest-outside', 499, 13.39, 103.80);
         const areaA = addMapFixture('api-map-area-a', 240);
         const areaB = addMapFixture('api-map-area-b', 260);
@@ -455,7 +460,7 @@ describe('Telegram Mini App (TMA) Backend API', () => {
         expect(detail.json().publicRef).toBe(listing.public_ref);
         expect(detail.json().coordinates).toEqual({ lat: 13.36, lng: 103.86 });
 
-        // Bad source GPS must never become an exact pin, even when present in facts.
+        // Changes to AI facts must not move a location verified in the original post.
         const originalFacts = (db.prepare('SELECT listing_facts_json AS facts FROM canonical_listings WHERE id=?')
           .get(listing.id) as { facts: string }).facts;
         const invalidFacts = { ...JSON.parse(originalFacts) as Record<string, unknown>, latitude: 13.1, longitude: 103.8 };
@@ -463,10 +468,10 @@ describe('Telegram Mini App (TMA) Backend API', () => {
           .run(JSON.stringify(invalidFacts), listing.id);
         try {
           const invalidDetail = await app.inject({ method: 'GET', url: `/api/v1/properties/${listing.public_ref}`, headers });
-          expect(invalidDetail.json().coordinates).toBeNull();
+          expect(invalidDetail.json().coordinates).toEqual({ lat: 13.36, lng: 103.86 });
           const invalidMap = await app.inject({ method: 'GET', url: '/api/v1/properties/map', headers });
-          expect(invalidMap.json().markers.some((item: { publicRef?: string; isExact: boolean }) =>
-            item.publicRef === listing.public_ref && item.isExact)).toBe(false);
+          expect(invalidMap.json().markers.find((item: { publicRef?: string }) =>
+            item.publicRef === listing.public_ref)?.coordinates).toEqual({ lat: 13.36, lng: 103.86 });
         } finally {
           db.prepare('UPDATE canonical_listings SET listing_facts_json=? WHERE id=?').run(originalFacts, listing.id);
         }

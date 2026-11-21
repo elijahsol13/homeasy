@@ -95,6 +95,7 @@ export const PropertyCard: React.FC<PropertyCardProps> = ({
               <PhotoWithFallback
                 key={`${property.id}:${idx}:${photoUrl}`}
                 src={photoUrl}
+                fallbackSrcs={idx === 0 ? photos.slice(1) : undefined}
                 alt={`${property.title} - photo ${idx + 1}`}
                 className="snap-center shrink-0 w-full h-full object-cover select-none pointer-events-none"
                 loading={idx === 0 ? 'eager' : 'lazy'}

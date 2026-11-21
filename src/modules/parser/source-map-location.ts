@@ -10,7 +10,7 @@ const PROPERTY_MAP_LABEL = /(?:^|[📍\s])(?:(?:exact\s+)?property\s+)?(?:exact\
 const KHMER_PROPERTY_MAP_LABEL = /(?:ទីតាំង(?:ផ្ទះ)?|អាសយដ្ឋាន|ផែនទី)\s*[:៖=\-–]?\s*$/u;
 const PROMOTIONAL_LANDMARK = /(?:\b\d+\s*(?:min(?:ute)?s?|km|meters?)\b|\b(?:near|close\s+to|walking\s+distance|minutes?\s+from)\b)[^\n]{0,100}\b(?:pub\s*street|old\s*market|angkor\s*wat|night\s*market|airport)\b/i;
 
-function isGoogleMapsUrl(value: string): boolean {
+export function isGoogleMapsUrl(value: string): boolean {
   try {
     const url = new URL(value);
     if (url.protocol !== 'https:' && url.protocol !== 'http:') return false;

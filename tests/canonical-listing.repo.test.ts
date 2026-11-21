@@ -168,16 +168,103 @@ describe('CanonicalListingRepository', () => {
     db.prepare('UPDATE canonical_listings SET listing_facts_json=? WHERE id=1').run(JSON.stringify({
       offer_type:'rent',latitude:13.352345,longitude:103.852345,maps_urls:[exactUrl],
     }));
+    db.prepare('UPDATE source_items SET raw_payload_json=? WHERE id=1').run(JSON.stringify({
+      listing:{latitude:13.352345,longitude:103.852345,maps_url:exactUrl},
+    }));
     expect(repository.getPropertyById(1)?.coordinate_precision).toBe('exact');
     expect(repository.getPropertyById(1)?.maps_url).toBe(exactUrl);
     expect(repository.getPropertyById(1)?.latitude).toBe(13.352345);
 
     db.prepare('UPDATE source_items SET source_type=? WHERE id=1').run('FACEBOOK_GROUP');
+    const facebookUrl = 'https://www.google.com/maps/search/?api=1&query=13.35789016603966,103.86067953898747';
+    db.prepare('UPDATE source_items SET raw_text=?,raw_payload_json=? WHERE id=1').run(
+      `Location: ${facebookUrl}`,JSON.stringify({
+        listing:{source_map_url:facebookUrl,maps_url:facebookUrl,
+          latitude:13.35789016603966,longitude:103.86067953898747},
+      }));
     db.prepare('UPDATE canonical_listings SET listing_facts_json=? WHERE id=1').run(JSON.stringify({
       offer_type:'rent',latitude:13.35789016603966,longitude:103.86067953898747,
     }));
     expect(repository.getPropertyById(1)?.coordinate_precision).toBe('exact');
     expect(repository.getPropertyById(1)?.latitude).toBe(13.35789016603966);
+  });
+
+  it('never upgrades AI-only facts, AI map URLs or shared property GPS to an exact property pin', () => {
+    const invented = 'https://www.google.com/maps/search/?api=1&query=13.370000,103.880000';
+    db.prepare('INSERT INTO canonical_properties(id,latitude,longitude) VALUES(990,13.371000,103.881000)').run();
+    db.prepare('UPDATE canonical_listings SET property_id=990,listing_facts_json=? WHERE id=1').run(JSON.stringify({
+      offer_type:'rent',latitude:13.370000,longitude:103.880000,maps_urls:[invented],
+    }));
+    db.prepare('UPDATE source_items SET raw_payload_json=? WHERE id=1').run(JSON.stringify({
+      listing:{},listingExtraction:{latitude:13.370000,longitude:103.880000,maps_url:invented},
+    }));
+    const check = (card: NonNullable<ReturnType<typeof repository.getPropertyById>>) => {
+      expect(card.latitude).toBeNull();
+      expect(card.longitude).toBeNull();
+      expect(card.maps_url).toBeNull();
+      expect(card.coordinate_precision).toBe('district');
+    };
+    check(repository.searchProperties({city:'siem_reap',type:'rent'}).items[0]!);
+    check(repository.getPropertyById(1)!);
+    check(repository.getPropertyById(1,true)!);
+    repository.forEachMapProperty({city:'siem_reap',type:'rent'},check);
+  });
+
+  it('uses an author-labelled Facebook property map, but never its camera or an unlabelled nearby landmark', () => {
+    const propertyPin = 'https://www.google.com/maps/search/?api=1&query=13.364321,103.854321';
+    db.prepare("UPDATE source_items SET source_type='FACEBOOK_GROUP',raw_text=?,raw_payload_json=? WHERE id=1").run(
+      `🟢Location: ${propertyPin}`,JSON.stringify({listing:{source_map_url:propertyPin,maps_url:propertyPin}}));
+    const exact = repository.searchProperties({city:'siem_reap',type:'rent'}).items[0]!;
+    expect(exact).toMatchObject({latitude:13.364321,longitude:103.854321,
+      maps_url:propertyPin,coordinate_precision:'exact'});
+    expect(repository.getPropertyById(1)).toMatchObject({latitude:13.364321});
+
+    const cameraOnly = 'https://www.google.com/maps/@13.364321,103.854321,15z';
+    db.prepare('UPDATE source_items SET raw_text=?,raw_payload_json=? WHERE id=1').run(
+      `Location: ${cameraOnly}`,JSON.stringify({listing:{source_map_url:cameraOnly,maps_url:cameraOnly}}));
+    expect(repository.getPropertyById(1)).toMatchObject({latitude:null,longitude:null,maps_url:null,
+      coordinate_precision:'district'});
+
+    db.prepare('UPDATE source_items SET raw_text=?,raw_payload_json=? WHERE id=1').run(
+      `5 min to Pub Street: ${propertyPin}`,JSON.stringify({listing:{source_map_url:propertyPin,maps_url:propertyPin}}));
+    expect(repository.getPropertyById(1)).toMatchObject({latitude:null,longitude:null,maps_url:null});
+  });
+
+  it('retains a Facebook property pin labelled in the original source title', () => {
+    const propertyPin = 'https://www.google.com/maps/search/?api=1&query=13.364321,103.854321';
+    db.prepare("UPDATE source_items SET source_type='FACEBOOK_GROUP',raw_text=?,raw_payload_json=? WHERE id=1").run(
+      'Apartment for rent',JSON.stringify({
+        listing:{source_title:`Location: ${propertyPin}`,raw_text:'Apartment for rent',
+          source_map_url:propertyPin,maps_url:propertyPin},
+      }));
+    const check = (card: NonNullable<ReturnType<typeof repository.getPropertyById>>) => {
+      expect(card).toMatchObject({latitude:13.364321,longitude:103.854321,
+        maps_url:propertyPin,coordinate_precision:'exact'});
+    };
+    check(repository.searchProperties({city:'siem_reap',type:'rent'}).items[0]!);
+    check(repository.getPropertyById(1)!);
+    repository.forEachMapProperty({city:'siem_reap',type:'rent'},check);
+  });
+
+  it('preserves source-verified Khmer24 GPS when AI facts omit coordinates', () => {
+    db.prepare('UPDATE source_items SET raw_payload_json=? WHERE id=1').run(JSON.stringify({
+      listing:{latitude:13.352345,longitude:103.852345},
+    }));
+    expect(repository.searchProperties({city:'siem_reap',type:'rent'}).items[0])
+      .toMatchObject({latitude:13.352345,longitude:103.852345,coordinate_precision:'exact'});
+    expect(repository.getPropertyById(1)?.latitude).toBe(13.352345);
+  });
+
+  it('uses a Khmer24 property pin provided only as a source map URL', () => {
+    const propertyPin = 'https://www.google.com/maps/search/?api=1&query=13.352345,103.852345';
+    db.prepare('UPDATE source_items SET raw_payload_json=? WHERE id=1').run(JSON.stringify({
+      listing:{maps_url:propertyPin},listingExtraction:{},
+    }));
+    for (const card of [repository.getPropertyById(1)!,
+      repository.searchProperties({city:'siem_reap',type:'rent'}).items[0]!]) {
+      expect(card).toMatchObject({latitude:13.352345,longitude:103.852345,
+        maps_url:propertyPin,coordinate_precision:'exact'});
+    }
   });
 
   it('hides a 30-day-old original consistently in list, detail, map and metadata without losing admin access', () => {
@@ -355,6 +442,22 @@ describe('CanonicalListingRepository', () => {
     db.prepare("UPDATE canonical_listings SET city=NULL,explicit_location='Wat Bo',sangkat=NULL WHERE id=1").run();
     expect(repository.getMetadata('siem_reap').locations).toEqual([]);
     expect(repository.searchProperties({city:'siem_reap',type:'rent',locations:['Sla Kram']}).total).toBe(0);
+    expect(repository.getPropertyById(1)?.location_key).toBeNull();
+  });
+
+  it('leaves DTO location_key empty for city-only or marketing-only locations across list, detail and map', () => {
+    for (const location of ['Siem Reap City', 'Pub Street', 'Wat Bo']) {
+      db.prepare('UPDATE canonical_listings SET explicit_location=?,sangkat=NULL WHERE id=1').run(location);
+      const check = (card: NonNullable<ReturnType<typeof repository.getPropertyById>>) => {
+        expect(card.location).toBe(location);
+        expect(card.location_key).toBeNull();
+      };
+      check(repository.searchProperties({city:'siem_reap',type:'rent'}).items[0]!);
+      check(repository.getPropertyById(1)!);
+      repository.forEachMapProperty({city:'siem_reap',type:'rent'},check);
+    }
+    db.prepare("UPDATE canonical_listings SET explicit_location='Sangkat Siem Reap' WHERE id=1").run();
+    expect(repository.getPropertyById(1)?.location_key).toBe('siem_reap:siem_reap');
   });
 
   it('T20: rejects a reversed price interval even when the listing price is unknown', () => {
