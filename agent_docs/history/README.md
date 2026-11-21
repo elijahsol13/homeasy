@@ -13,6 +13,8 @@ This folder preserves full, **byte-identical** working memory from immediately b
 - `session_work_2026-11-21_before_stage2_handoff.md` — byte-identical 2026-11-21 Git cleanup and production baseline handoff, archived before the Stage 2 implementation handoff; SHA-256 `1f6cea207994b1767b3e6ef503d5131b5475d6b2ca6b8839f447e3cbddbacec3`.
 - `session_work_2026-11-21_before_stage3_handoff.md` — byte-identical 2026-11-21 Stage 2 ingestion/SQLite/alerts verification handoff, archived before Stage 3 catalog work; SHA-256 `4bf02d9338f78583b480fc13a169b34934e8e8b763b1e5dc517536a6f39bc8c6`.
 
+- `session_work_2026-11-21_before_stage3_og_handoff.md` — byte-identical earlier Stage 3 geography/cover-fallback checkpoint, archived before Facebook OG renewal; SHA-256 `2aa6a24ffff718f2263c355ae820a3a4336b3d3de87ffc64471be72526893ad8`.
+
 Current progress and work handoff: `../project_progress.md` and `../latest_session_work.md`. Accepted owner decisions: `../decisions.md`; detailed dated evaluation outputs in `../../reports/`.
 
 To locate an old event, search for an ID, module or date within these files; read only the matching heading and its local lines.

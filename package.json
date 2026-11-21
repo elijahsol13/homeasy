@@ -56,6 +56,7 @@
     "freshness:dry-run": "ts-node scripts/freshness-dry-run.ts",
     "freshness:canary": "ts-node scripts/canonical-freshness-canary.ts",
     "ingestion:backfill-fb-media": "ts-node scripts/backfill-facebook-media.ts",
+    "media:facebook-og:dry-run": "ts-node scripts/facebook-og-media-dry-run.ts",
     "media:hash-facebook-sample": "ts-node scripts/hash-facebook-media.ts",
     "test:listing-extraction": "ts-node scripts/listing-extraction-regression.ts",
     "test:demand-extraction": "ts-node scripts/demand-extraction-regression.ts",

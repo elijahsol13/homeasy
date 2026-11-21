@@ -22,6 +22,20 @@ export function stableMediaHash(rawUrls: string[]): string | null {
   return identities.length ? createHash('sha256').update(identities.join('\n')).digest('hex') : null;
 }
 
+export function knownFacebookMediaUrls(payload: unknown): string[] {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return [];
+  const record = payload as Record<string, unknown>;
+  const listing = record.listing;
+  const fromListing = listing && typeof listing === 'object' && !Array.isArray(listing)
+    ? (listing as Record<string, unknown>).photos : undefined;
+  const assets = Array.isArray(record.photoAssets) ? record.photoAssets.flatMap((asset: unknown) => {
+    if (!asset || typeof asset !== 'object' || Array.isArray(asset)) return [];
+    return [(asset as Record<string, unknown>).url];
+  }) : [];
+  return [...new Set([record.photos, fromListing].flatMap((value) => Array.isArray(value) ? value : [])
+    .concat(assets).filter((url): url is string => typeof url === 'string' && stableMediaIdentity(url) !== null))];
+}
+
 /**
  * A partial Facebook observation can refresh a known signed CDN URL without
  * proving that unobserved gallery photos were removed. Keep the prior payload
@@ -35,20 +49,8 @@ export function mergeKnownFacebookPhotoUrls(previous: unknown, observed: unknown
   const oldPayload = previous as Record<string, unknown>;
   const newPayload = observed as Record<string, unknown>;
 
-  const getUrls = (payload: Record<string, unknown>): string[] => {
-    const listing = payload.listing;
-    const fromListing = listing && typeof listing === 'object' && !Array.isArray(listing)
-      ? (listing as Record<string, unknown>).photos : undefined;
-    const assets = Array.isArray(payload.photoAssets) ? payload.photoAssets.flatMap((asset: unknown) => {
-      if (!asset || typeof asset !== 'object' || Array.isArray(asset)) return [];
-      return [(asset as Record<string, unknown>).url];
-    }) : [];
-    return [payload.photos, fromListing].flatMap((value) => Array.isArray(value) ? value : [])
-      .concat(assets).filter((url): url is string => typeof url === 'string' && stableMediaIdentity(url) !== null);
-  };
-
-  const oldUrls = getUrls(oldPayload);
-  const newUrls = getUrls(newPayload);
+  const oldUrls = knownFacebookMediaUrls(oldPayload);
+  const newUrls = knownFacebookMediaUrls(newPayload);
   if (!oldUrls.length || !newUrls.length) return null;
   const existing = new Set(oldUrls.map(stableMediaIdentity));
   if (newUrls.some((url) => !existing.has(stableMediaIdentity(url)))) return null;
