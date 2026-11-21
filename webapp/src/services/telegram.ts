@@ -1,5 +1,6 @@
 import { identifyTelegramUser } from './analytics';
 import { openTelegramContact } from './contact-actions';
+export { isTelegramWebApp } from './platform';
 
 /** The official https://telegram.org/js/telegram-web-app.js exposes this global. */
 interface TelegramWebApp {
@@ -34,10 +35,6 @@ declare global {
 
 function telegramWebApp(): TelegramWebApp | undefined {
   return typeof window === 'undefined' ? undefined : window.Telegram?.WebApp;
-}
-
-export function isTelegramWebApp(): boolean {
-  return Boolean(telegramWebApp()?.initData);
 }
 
 export function getTelegramStartParam(): string | undefined {
@@ -139,16 +136,15 @@ export function openExternalUrl(url: string | null | undefined, e?: React.Synthe
 
   // 3. Browser fallback
   try {
-    const win = window.open(targetUrl, '_blank', 'noopener,noreferrer');
-    if (win) {
-      if (e) e.preventDefault();
-      return;
-    }
+    // A null return with noopener does not mean navigation failed.
+    window.open(targetUrl, '_blank', 'noopener,noreferrer');
+    e?.preventDefault();
+    return;
   } catch {
-    // Popup was blocked
+    // An exception allows the native anchor action or the fallback below.
   }
 
-  // 4. Ultimate fallback if window.open was blocked and event not prevented
+  // 4. Fallback only when opening actually threw and no native anchor exists.
   if (!e) {
     window.location.href = targetUrl;
   }

@@ -9,7 +9,6 @@ const base: Parameters<typeof evaluateModerationCandidate>[0] = {
   raw_payload_json: JSON.stringify({ listing: { price: 350, city: 'siem_reap', type: 'rent' } }),
   current_count: 1, conflicting_url: 0, legacy_aliases: 0,
   original_published_at: new Date().toISOString(), first_source_seen_at: new Date().toISOString(),
-  matching_active_listings: 0,
 };
 
 describe('automated canonical moderation', () => {
@@ -164,9 +163,11 @@ describe('automated canonical moderation', () => {
     expect(result.approved).toBe(false);
   });
 
-  it('holds potential duplicate listings even with different source URLs', () => {
-    const result = evaluateModerationCandidate({ ...base, matching_active_listings: 1 });
-    expect(result.reasons).toContain('POSSIBLE_DUPLICATE_LISTING');
+  it('does not infer a duplicate from common card facts and keeps verified URL conflicts', () => {
+    const result = evaluateModerationCandidate(base);
+    expect(result).toEqual({ approved: true, reasons: [] });
+    expect(evaluateModerationCandidate({ ...base, conflicting_url: 1 }).reasons)
+      .toContain('SOURCE_URL_CONFLICT');
   });
 
   it('does not hold missing bedrooms, but still holds unverified publication age', () => {

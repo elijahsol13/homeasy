@@ -360,11 +360,11 @@ function directRetrievalSignals(a: ListingCandidate, b: ListingCandidate): strin
 }
 
 function getFactsForSourceItem(db: DatabaseSync, id: number): Record<string, unknown> {
-  const row = db.prepare('SELECT source_type,raw_payload_json FROM source_items WHERE id=?').get(id) as { source_type: string; raw_payload_json: string } | undefined;
+  const row = db.prepare('SELECT source_type,raw_text,raw_payload_json FROM source_items WHERE id=?').get(id) as { source_type: string; raw_text: string | null; raw_payload_json: string } | undefined;
   if (!row) return {};
   let payload: Record<string, unknown> = {};
   try { payload = object(JSON.parse(row.raw_payload_json)); } catch { /* ignore malformed raw data */ }
-  return sourceListingFacts(payload);
+  return sourceListingFacts(payload, row.raw_text);
 }
 
 function observedTimestamps(db: DatabaseSync, id: number): { firstSeenAt: string; lastSeenAt: string } {
@@ -1323,7 +1323,7 @@ export class CanonicalShadowService {
       // Final moderation status (including legacy alias conflicts) and source
       // occurrence links are now persisted. Keep the review event in the same
       // SAVEPOINT so failed canonical builds cannot leave orphan notifications.
-      reviewDefaultPending(this.db);
+      reviewDefaultPending(this.db, scope ? [...new Set(listingIdByCandidate.values())] : undefined);
       new CanonicalReviewAlertsRepository(this.db).recordNewPending();
       if (env.CANONICAL_ALERTS_ENABLED) {
         // Only a newly discovered source in a live DISCOVERY run may publish.

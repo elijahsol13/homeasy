@@ -174,17 +174,18 @@ default_modes:
 # list of mode names to be activated additionally for this project, e.g. ["query-projects"]
 # The full set of modes to be activated is base_modes (from global config) + default_modes + added_modes.
 # See https://oraios.github.io/serena/02-usage/050_configuration.html#modes
-added_modes:
-  - no-memories
+added_modes: []
 
 # initial prompt for the project. It will always be given to the LLM upon activating the project
 # (contrary to the memories, which are loaded on demand).
 initial_prompt: >-
-  Homeasy uses repository-native context as its only durable source of project
-  decisions and priorities. Read AGENTS.md and the concise agent_docs entry path
+  Homeasy keeps accepted decisions, verified status and priorities in its
+  authoritative agent_docs files. Read AGENTS.md and the concise entry path
   (current_context.md, project_progress.md, decisions.md, latest_session_work.md)
-  before substantial work. Use Serena for semantic code navigation; do not
-  create a second project memory. Preserve the dirty working tree and live data;
+  before substantial work. Use Serena for semantic code navigation and its native
+  project memory for discussion context, rejected alternatives, open questions and
+  references to authoritative docs. Do not duplicate accepted decisions or
+  production status in memory files. Preserve the dirty working tree and live data;
   follow the owner's approved work order and harness_protocol.md.
 
 # time budget (seconds) per tool call for the retrieval of additional symbol information

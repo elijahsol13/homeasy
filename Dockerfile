@@ -2,11 +2,13 @@ FROM node:22-bookworm-slim AS builder
 
 WORKDIR /app
 
-COPY package*.json tsconfig.json ./
+COPY package*.json tsconfig*.json ./
 RUN npm ci
 
 COPY src/ ./src/
+COPY scripts/brightdata*.ts ./scripts/
 RUN npm run build
+RUN npx tsc -p tsconfig.brightdata.json
 
 FROM builder AS production-deps
 RUN npm prune --omit=dev
@@ -54,5 +56,6 @@ ENV NODE_ENV=production
 COPY package*.json ./
 COPY --from=production-deps /app/node_modules ./node_modules
 COPY --from=builder /app/dist ./dist
+COPY --from=builder /app/dist-tools ./dist-tools
 RUN mkdir -p /app/data
 CMD ["npm", "run", "start:api"]

@@ -3,6 +3,14 @@ import { Khmer24LiveAdapter } from '../src/modules/parser/live-source-adapters';
 import { sanitizeListingFacts } from '../src/modules/parser/listing-extraction';
 
 describe('deterministic original-source room counts', () => {
+  it('treats bedroom and bathroom counts on different lines as separate facts', () => {
+    expect(sourceRoomCounts('1 Bedroom\n1 Bathroom')).toMatchObject({
+      bedrooms: 1, bathrooms: 1, conflictingBedrooms: false, conflictingBathrooms: false,
+    });
+    expect(sourceRoomCounts('Villa for rent\n2 bedrooms\n3 bedrooms\n1 bathroom')).toMatchObject({
+      bedrooms: null, bathrooms: 1, conflictingBedrooms: true, conflictingBathrooms: false,
+    });
+  });
   it.each([
     ['3 bedrooms', 3], ['2- Bedrooms', 2], ['Bedrooms: 4', 4],
     ['2-bedroom house', 2], ['Number of bedrooms: 4', 4],

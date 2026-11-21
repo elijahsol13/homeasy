@@ -15,9 +15,15 @@ const api = vi.hoisted(() => ({
 }));
 
 vi.mock('./services/api', () => api);
-const telegram = vi.hoisted(() => ({ getTelegramStartParam: vi.fn<() => string | null>(() => null) }));
+const analytics = vi.hoisted(() => ({ captureEvent: vi.fn(), capturePageView: vi.fn() }));
+vi.mock('./services/analytics', () => analytics);
+const telegram = vi.hoisted(() => ({
+  getTelegramStartParam: vi.fn<() => string | null>(() => null),
+  isTelegramWebApp: vi.fn(() => true),
+}));
 vi.mock('./services/telegram', () => ({
   getTelegramStartParam: telegram.getTelegramStartParam,
+  isTelegramWebApp: telegram.isTelegramWebApp,
   initTelegramWebApp: vi.fn(),
   triggerHaptic: vi.fn(),
 }));
@@ -43,10 +49,19 @@ vi.mock('./components/PropertyDetailModal', () => ({
   ) : null,
 }));
 vi.mock('./components/MapView', () => ({
-  MapView: ({ filters, onSelectLocation }: { filters: FilterState; onSelectLocation: (names: string[], key: string) => void }) => (
-    <button data-testid="map-view" data-filters={JSON.stringify(filters)} onClick={() => onSelectLocation(['Sla Kram', 'Wat Bo', 'Sangkat Sla Kram, Siem Reap'], 'siem_reap:sla_kram')}>
-      View as list
-    </button>
+  MapView: ({ filters, onSelectLocation, onSelectProperty }: {
+    filters: FilterState;
+    onSelectLocation: (names: string[], key: string) => void;
+    onSelectProperty: (property: PropertyDTO) => void;
+  }) => (
+    <>
+      <button data-testid="map-view" data-filters={JSON.stringify(filters)} onClick={() => onSelectLocation(['Sla Kram', 'Wat Bo', 'Sangkat Sla Kram, Siem Reap'], 'siem_reap:sla_kram')}>
+        View as list
+      </button>
+      <button type="button" onClick={() => onSelectProperty({ ...property(42), publicRef: 'lst_0123456789abcdef0123456789abcdef' })}>
+        Open map marker
+      </button>
+    </>
   ),
 }));
 vi.mock('./components/BottomNav', () => ({
@@ -89,6 +104,11 @@ describe('feed sorting and pagination', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     telegram.getTelegramStartParam.mockReturnValue(null);
+    telegram.isTelegramWebApp.mockReturnValue(true);
+    Object.defineProperty(window, 'Telegram', {
+      configurable: true,
+      value: { WebApp: { initData: 'test-telegram-session' } },
+    });
     requests = [];
     api.fetchProperties.mockImplementation((filters: FilterState, page = 1) => {
       const result = deferred<PropertiesResponse>();
@@ -114,6 +134,7 @@ describe('feed sorting and pagination', () => {
     await act(async () => root.unmount());
     host.remove();
     localStorage.clear();
+    Reflect.deleteProperty(window, 'Telegram');
     vi.restoreAllMocks();
   });
 
@@ -665,5 +686,48 @@ describe('feed sorting and pagination', () => {
     });
     expect(api.fetchPropertyById).toHaveBeenCalledExactlyOnceWith(1);
     expect(host.querySelector('[data-testid="detail-modal"]')?.textContent).toBe('Listing 1');
+  });
+
+  it('records catalog_loaded once even when sorting reloads the first page', async () => {
+    await renderWithSavedFilters(null);
+    await act(async () => {
+      requests[0].resolve({ total: 12, page: 1, limit: 20, totalPages: 1, items: [property(1)] });
+      await Promise.resolve();
+    });
+    expect(analytics.captureEvent).toHaveBeenCalledWith('catalog_loaded', { city: 'siem_reap', count: 12 });
+    await act(async () => { button('Most expensive').click(); });
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 5)); });
+    await act(async () => {
+      requests[1].resolve({ total: 9, page: 1, limit: 20, totalPages: 1, items: [property(2)] });
+      await Promise.resolve();
+    });
+    expect(analytics.captureEvent.mock.calls.filter(([name]) => name === 'catalog_loaded')).toHaveLength(1);
+  });
+
+  it('records a submitted public search without sending the search text', async () => {
+    Reflect.deleteProperty(window, 'Telegram');
+    await renderWithSavedFilters(JSON.stringify({ city: 'siem_reap', query: 'Wat Bo', sort: 'newest', locations: [], type: 'rent' }), 340);
+    expect(analytics.captureEvent.mock.calls.filter(([name]) => name === 'search_used')).toHaveLength(0);
+    await act(async () => {
+      host.querySelector('form[role="search"]')!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+    });
+    expect(analytics.captureEvent).toHaveBeenCalledWith('search_used', expect.objectContaining({ source: 'hero' }));
+    const [, properties] = analytics.captureEvent.mock.calls.find(([name]) => name === 'search_used')!;
+    expect(JSON.stringify(properties)).not.toContain('Wat Bo');
+  });
+
+  it('records map marker selection with its public reference', async () => {
+    Reflect.deleteProperty(window, 'Telegram');
+    api.fetchPropertyById.mockResolvedValue({ ...property(42), publicRef: 'lst_0123456789abcdef0123456789abcdef' });
+    await renderWithSavedFilters(null);
+    await act(async () => { button('Explore the map').click(); });
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 10)); });
+    await act(async () => { button('Open map marker').click(); });
+    expect(analytics.captureEvent).toHaveBeenCalledWith('map_marker_clicked', {
+      listing_ref: 'lst_0123456789abcdef0123456789abcdef',
+    });
+    expect(analytics.captureEvent).toHaveBeenCalledWith('listing_opened', {
+      listing_ref: 'lst_0123456789abcdef0123456789abcdef', source: 'map',
+    });
   });
 });

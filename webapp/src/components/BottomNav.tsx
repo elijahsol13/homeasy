@@ -4,6 +4,7 @@ import type { ActiveTab } from '../types';
 import { triggerHaptic } from '../services/telegram';
 
 interface BottomNavProps {
+  wide?: boolean;
   activeTab: ActiveTab;
   onTabChange: (tab: ActiveTab) => void;
   favoritesCount: number;
@@ -13,6 +14,7 @@ export const BottomNav: React.FC<BottomNavProps> = ({
   activeTab,
   onTabChange,
   favoritesCount,
+  wide = false,
 }) => {
   const handleTabClick = (tab: ActiveTab) => {
     triggerHaptic('selection');
@@ -20,7 +22,7 @@ export const BottomNav: React.FC<BottomNavProps> = ({
   };
 
   return (
-    <nav className="fixed bottom-0 inset-x-0 z-30 bg-white/95 dark:bg-zinc-900/95 backdrop-blur-md border-t border-zinc-200 dark:border-zinc-800 px-6 py-2 shadow-lg max-w-lg mx-auto">
+    <nav aria-label="Primary navigation" className={`fixed bottom-0 inset-x-0 z-30 bg-white/95 dark:bg-zinc-900/95 backdrop-blur-md border-t border-zinc-200 dark:border-zinc-800 px-6 py-2 shadow-lg mx-auto ${wide ? 'max-w-6xl' : 'max-w-lg'}`}>
       <div className="flex items-center justify-around">
         {/* Explore / Feed Tab */}
         <button

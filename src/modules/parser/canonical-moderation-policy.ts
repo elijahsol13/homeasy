@@ -3,7 +3,7 @@ import { assessSiemReapGeography } from './source-geography';
 import { sourceRoomCounts } from './source-room-counts';
 import { sourceAskingPrices, sourceMonthlyPrices } from './source-price';
 
-export const MODERATION_POLICY_VERSION = 'source-corroborated-crossposts-v12';
+export const MODERATION_POLICY_VERSION = 'source-corroborated-crossposts-v13';
 
 export type ModerationCandidate = {
   id: number; status: string; availability_status: string; title: string; description: string;
@@ -16,7 +16,6 @@ export type ModerationCandidate = {
   /** Set only by crosspost analysis when another identical occurrence proves rent context. */
   contextual_rent_price_confirmed?: boolean;
   original_published_at: string | null; first_source_seen_at: string | null;
-  matching_active_listings: number;
   primary_source_occurrence_id?: number | null;
 };
 
@@ -89,7 +88,6 @@ export function evaluateModerationCandidate(row: ModerationCandidate): Moderatio
   if (row.current_count !== 1) hold('AMBIGUOUS_SOURCE_BINDINGS');
   if (row.conflicting_url) hold('SOURCE_URL_CONFLICT');
   if (row.legacy_aliases) hold('LEGACY_ALIAS_REQUIRES_EXISTING_REVIEW');
-  if (row.matching_active_listings) hold('POSSIBLE_DUPLICATE_LISTING');
   if (!row.source_url || !/^https:\/\//i.test(row.source_url)) hold('UNVERIFIED_SOURCE_URL');
   if (!row.title.trim() || !(row.category || row.property_type)) hold('MISSING_LISTING_FACTS');
   if (row.city !== 'siem_reap') hold('OUTSIDE_TARGET_CITY');
@@ -199,13 +197,20 @@ export function evaluateModerationCandidate(row: ModerationCandidate): Moderatio
 /** Facebook groups commonly repost the same offer. Only waive the one-source
  * rule when every *current* original independently corroborates the canonical
  * facts and the posts demonstrably refer to the same offer. */
-export function evaluateCorroboratedCrossposts(
+function inspectCorroboratedCrossposts(
   row: ModerationCandidate, sources: readonly CurrentModerationSource[],
+  detailed: boolean,
 ): ModerationDecision {
-  const hold: ModerationDecision = { approved: false, reasons: ['AMBIGUOUS_SOURCE_BINDINGS'] };
-  if (row.current_count < 2 || row.current_count > 12 || sources.length !== row.current_count
-    || row.source_type !== 'FACEBOOK_GROUP' || row.primary_source_occurrence_id == null
-    || !sources.some(source => source.occurrence_id === row.primary_source_occurrence_id)) return hold;
+  const hold = (reason: string): ModerationDecision => ({
+    approved: false, reasons: [detailed ? reason : 'AMBIGUOUS_SOURCE_BINDINGS'],
+  });
+  if (row.current_count < 2 || row.current_count > 12) return hold('CROSSPOST_COUNT_OUT_OF_RANGE');
+  if (sources.length !== row.current_count) return hold('CROSSPOST_OCCURRENCE_COUNT_MISMATCH');
+  if (row.source_type !== 'FACEBOOK_GROUP') return hold('CROSSPOST_UNSUPPORTED_SOURCE');
+  if (row.primary_source_occurrence_id == null
+    || !sources.some(source => source.occurrence_id === row.primary_source_occurrence_id)) {
+    return hold('CROSSPOST_PRIMARY_OCCURRENCE_MISSING');
+  }
 
   const ids = new Set<number>();
   const urls = new Set<string>();
@@ -233,8 +238,8 @@ export function evaluateCorroboratedCrossposts(
   try {
     const payload = JSON.parse(first.raw_payload_json ?? '{}') as {userUrl?: unknown};
     if (typeof payload.userUrl === 'string') firstAuthor = payload.userUrl.trim();
-  } catch { return hold; }
-  if (firstRaw.length < 120 || firstTokens.length < 35) return hold;
+  } catch { return hold('CROSSPOST_UNPARSEABLE_SOURCE_PAYLOAD'); }
+  if (firstRaw.length < 120 || firstTokens.length < 35) return hold('CROSSPOST_ORIGINAL_TOO_SHORT');
 
   const expectedPrice = row.price === null ? null : row.price / 100;
   const contextualRentPriceConfirmed = expectedPrice !== null && sources.some(source => {
@@ -254,9 +259,11 @@ export function evaluateCorroboratedCrossposts(
   for (const source of sources) {
     const raw = source.raw_text?.trim() ?? '';
     const words = tokens(raw);
-    if (source.source_type !== 'FACEBOOK_GROUP' || !source.source_url?.startsWith('https://')
-      || ids.has(source.source_item_id) || urls.has(source.source_url)
-      || raw.length < 120 || words.length < 35) return hold;
+    if (source.source_type !== 'FACEBOOK_GROUP') return hold('CROSSPOST_UNSUPPORTED_SOURCE');
+    if (!source.source_url?.startsWith('https://')) return hold('CROSSPOST_INVALID_SOURCE_URL');
+    if (ids.has(source.source_item_id)) return hold('CROSSPOST_DUPLICATE_SOURCE_ITEM');
+    if (urls.has(source.source_url)) return hold('CROSSPOST_DUPLICATE_URL');
+    if (raw.length < 120 || words.length < 35) return hold('CROSSPOST_ORIGINAL_TOO_SHORT');
     ids.add(source.source_item_id);
     urls.add(source.source_url);
 
@@ -264,16 +271,21 @@ export function evaluateCorroboratedCrossposts(
     try {
       const payload = JSON.parse(source.raw_payload_json ?? '{}') as {userUrl?: unknown};
       if (typeof payload.userUrl === 'string') author = payload.userUrl.trim();
-    } catch { return hold; }
+    } catch { return hold('CROSSPOST_UNPARSEABLE_SOURCE_PAYLOAD'); }
     const exact = words.join(' ') === firstTokens.join(' ');
     // A short post can still be strongly corroborated when the same author
     // crossposts the exact full text; keep the word-count and per-source fact
     // checks, and require 160 chars for any different text or author.
-    if (raw.length < 160 && (!exact || !firstAuthor || author !== firstAuthor)) return hold;
+    if (raw.length < 160 && (!exact || !firstAuthor || author !== firstAuthor)) {
+      return hold('CROSSPOST_SHORT_TEXT_REQUIRES_SAME_AUTHOR');
+    }
     // Minor formatting or repeated-word changes are acceptable only from the
     // same identifiable author, and never when numerical property facts differ.
-    if (!exact && (!firstAuthor || author !== firstAuthor
-      || numericFacts(raw) !== firstNumbers || dice(firstTokens, words) < 0.97)) return hold;
+    if (!exact) {
+      if (!firstAuthor || author !== firstAuthor) return hold('CROSSPOST_AUTHOR_MISMATCH');
+      if (numericFacts(raw) !== firstNumbers) return hold('CROSSPOST_NUMERIC_FACTS_DIFFER');
+      if (dice(firstTokens, words) < 0.97) return hold('CROSSPOST_TEXT_SIMILARITY_TOO_LOW');
+    }
 
     const decision = evaluateModerationCandidate({ ...row,
       source_type: source.source_type, source_url: source.source_url,
@@ -284,6 +296,162 @@ export function evaluateCorroboratedCrossposts(
     for (const reason of decision.reasons) reasons.add(reason);
   }
   return { approved: reasons.size === 0, reasons: [...reasons] };
+}
+
+/** Production moderation keeps its established reason contract. */
+export function evaluateCorroboratedCrossposts(
+  row: ModerationCandidate, sources: readonly CurrentModerationSource[],
+): ModerationDecision {
+  return inspectCorroboratedCrossposts(row, sources, false);
+}
+
+/** Read-only explanation of the crosspost safety checks, for operator audits. */
+export function diagnoseCorroboratedCrossposts(
+  row: ModerationCandidate, sources: readonly CurrentModerationSource[],
+): ModerationDecision {
+  return inspectCorroboratedCrossposts(row, sources, true);
+}
+
+/** Check evidence from original source postings before releasing a Pending card.
+ * AI-edited canonical headlines are deliberately excluded: multiple unrelated
+ * flats can receive the same editorial title.
+ *
+ * Keep this conservative. Similar agency templates alone never prove a duplicate;
+ * either the source heading and complete text match, or an explicit shared
+ * original property code is corroborated by substantial verbatim text overlap.
+ * A highly similar repost by the same Facebook author is kept for human review
+ * when no distinct source property codes establish separate offers.
+ */
+export function findSourceGroundedDuplicate(
+  db: DatabaseSync, listingId: number,
+): { listingId: number; reason: 'MATCHING_ORIGINAL_SOURCE' | 'MATCHING_ORIGINAL_PROPERTY_CODE'
+    | 'NEAR_IDENTICAL_SAME_AUTHOR_SOURCE' } | null {
+  type Original = {
+    id: number; price: number | null; city: string | null;
+    bedrooms: number | null; bathrooms: number | null;
+    source_type: string | null; raw_text: string | null; raw_payload_json: string | null;
+  };
+  const current = db.prepare(`SELECT l.id,l.price,l.city,l.bedrooms,l.bathrooms,
+      s.source_type,s.raw_text,s.raw_payload_json
+    FROM canonical_listings l
+    JOIN canonical_listing_source_occurrences o ON o.id=l.primary_source_occurrence_id AND o.is_current=1
+    JOIN source_items s ON s.id=o.source_item_id
+    WHERE l.id=?`).get(listingId) as Original | undefined;
+  if (!current?.raw_text) return null;
+
+  const normalize = (value: string): string => value.normalize('NFKC').toLowerCase()
+    .replace(/[^\p{L}\p{N}]+/gu, ' ').trim().replace(/\s+/g, ' ');
+  const propertyCode = (title: string): string | null => {
+    const match = title.match(/(?:#\s*([a-z0-9]{3,14})\b|\b(?:property|listing|unit)\s*(?:id|code|no)\s*[:#-]?\s*([a-z0-9-]{3,14})\b)/i);
+    return match?.[1] ?? match?.[2] ?? null;
+  };
+  const originalInfo = (raw: string | null): { title: string; author: string; code: string | null } => {
+    try {
+      const payload = JSON.parse(raw ?? '{}') as {
+        userUrl?: unknown; listing?: { source_title?: unknown };
+      };
+      const sourceTitle = typeof payload.listing?.source_title === 'string' ? payload.listing.source_title : '';
+      return { title: normalize(sourceTitle), code: propertyCode(sourceTitle),
+      author: typeof payload.userUrl === 'string' ? payload.userUrl.trim() : '' };
+    } catch { return { title: '', author: '', code: null }; }
+  };
+  const dice = (left: string, right: string): number => {
+    const a = left.split(' '); const b = right.split(' ');
+    const counts = new Map<string, number>();
+    for (const token of a) counts.set(token, (counts.get(token) ?? 0) + 1);
+    let shared = 0;
+    for (const token of b) {
+      const count = counts.get(token) ?? 0;
+      if (count > 0) { shared++; counts.set(token, count - 1); }
+    }
+    return (2 * shared) / (a.length + b.length);
+  };
+  const text = normalize(current.raw_text);
+  if (text.length < 130) return null;
+  const info = originalInfo(current.raw_payload_json);
+  // Some Facebook reposts preserve a property reference in the original body
+  // while their generated headings, authors, or canonical city/price differ.
+  // A labelled, alphanumeric reference plus substantial source-text overlap is
+  // enough to hold the later record for review, without automatically merging.
+  const explicitCode = (raw: string): string | null => {
+    const matches = [...raw.matchAll(/\b(?:property|listing|unit)\s*(?:id|code|no\.?|number)\s*[:#=-]?\s*([a-z0-9-]{4,20})\b|\bcode\s*[:#=-]\s*([a-z0-9-]{4,20})\b/gi)]
+      .map(match => (match[1] ?? match[2] ?? '').replace(/-/g, '').toUpperCase())
+      .filter(code => /[A-Z]/.test(code) && /\d/.test(code));
+    return new Set(matches).size === 1 ? matches[0]! : null;
+  };
+  const code = explicitCode(current.raw_text);
+  if (code) {
+    const codeMatches = db.prepare(`SELECT l.id,l.price,l.city,l.bedrooms,l.bathrooms,
+        s.source_type,s.raw_text,s.raw_payload_json
+      FROM canonical_listings l
+      JOIN canonical_listing_moderation m ON m.listing_id=l.id
+      JOIN canonical_listing_source_occurrences o ON o.listing_id=l.id AND o.is_current=1
+      JOIN source_items s ON s.id=o.source_item_id
+      WHERE l.id<>? AND s.source_type=? AND l.status='active'
+        AND l.availability_status NOT IN ('rented','unavailable')
+        AND (m.review_status='approved'
+          OR (m.review_status='pending' AND l.id<?))
+      ORDER BY CASE m.review_status WHEN 'approved' THEN 0 ELSE 1 END,l.id`)
+      .all(listingId,current.source_type,listingId) as Original[];
+    const sourceRooms = sourceRoomCounts(current.raw_text);
+    for (const other of codeMatches) {
+      if (!other.raw_text || explicitCode(other.raw_text) !== code
+        || (current.price !== null && other.price !== null && current.price !== other.price)
+        || (current.city && other.city && current.city !== other.city)
+        || (current.bedrooms !== null && other.bedrooms !== null && current.bedrooms !== other.bedrooms)
+        || (current.bathrooms !== null && other.bathrooms !== null && current.bathrooms !== other.bathrooms)) continue;
+      const otherRooms = sourceRoomCounts(other.raw_text);
+      if ((sourceRooms.bedrooms !== null && otherRooms.bedrooms !== null
+          && sourceRooms.bedrooms !== otherRooms.bedrooms)
+        || (sourceRooms.bathrooms !== null && otherRooms.bathrooms !== null
+          && sourceRooms.bathrooms !== otherRooms.bathrooms)) continue;
+      const otherText = normalize(other.raw_text);
+      if (otherText.length >= 130 && dice(text, otherText) >= 0.70) {
+        return { listingId: other.id, reason: 'MATCHING_ORIGINAL_PROPERTY_CODE' };
+      }
+    }
+  }
+  if (!current.price || !current.city) return null;
+  const others = db.prepare(`SELECT l.id,l.price,l.city,l.bedrooms,l.bathrooms,
+      s.source_type,s.raw_text,s.raw_payload_json
+    FROM canonical_listings l
+    JOIN canonical_listing_moderation m ON m.listing_id=l.id
+    JOIN canonical_listing_source_occurrences o ON o.listing_id=l.id AND o.is_current=1
+    JOIN source_items s ON s.id=o.source_item_id
+    WHERE l.id<>? AND l.price=? AND l.city=? AND l.status='active'
+      AND l.availability_status NOT IN ('rented','unavailable')
+      AND (m.review_status='approved'
+        OR (m.review_status='pending' AND l.id<?))
+    ORDER BY CASE m.review_status WHEN 'approved' THEN 0 ELSE 1 END,l.id`)
+    .all(listingId,current.price,current.city,listingId) as Original[];
+  for (const other of others) {
+    if (other.source_type !== current.source_type
+      || (current.bedrooms !== null && other.bedrooms !== null && current.bedrooms !== other.bedrooms)
+      || (current.bathrooms !== null && other.bathrooms !== null && current.bathrooms !== other.bathrooms)) continue;
+    const otherText = normalize(other.raw_text ?? '');
+    if (otherText.length < 130) continue;
+    const otherInfo = originalInfo(other.raw_payload_json);
+    const sameTitle = Boolean(info.title && info.title === otherInfo.title);
+    const sameAuthor = Boolean(info.author && info.author === otherInfo.author);
+    if (text === otherText && (sameTitle || (!info.title && !otherInfo.title && sameAuthor))) {
+      return { listingId: other.id, reason: 'MATCHING_ORIGINAL_SOURCE' };
+    }
+    if (sameTitle && info.code && info.code === otherInfo.code
+      && dice(text, otherText) >= 0.80) {
+      return { listingId: other.id, reason: 'MATCHING_ORIGINAL_PROPERTY_CODE' };
+    }
+    // An author may publish the same Facebook property with a changed heading
+    // or a small text edit. Similarity here means "hold for review", not merge.
+    // Different explicit source codes indicate separate units even if the
+    // agency repeats its entire description template.
+    if (current.source_type === 'FACEBOOK_GROUP' && sameAuthor
+      && !(info.code && otherInfo.code && info.code !== otherInfo.code)
+      && text.split(' ').length >= 35 && otherText.split(' ').length >= 35
+      && dice(text, otherText) >= 0.84) {
+      return { listingId: other.id, reason: 'NEAR_IDENTICAL_SAME_AUTHOR_SOURCE' };
+    }
+  }
+  return null;
 }
 
 /** Runs inside the caller's canonical SAVEPOINT, after source occurrences exist.
@@ -308,10 +476,6 @@ export function reviewDefaultPending(db: DatabaseSync, onlyListingIds?: readonly
       ORDER BY COALESCE(julianday(h.posted_at),julianday(t.published_at)),h.id LIMIT 1) original_published_at,
     (SELECT h.first_seen_at FROM canonical_listing_source_occurrences h WHERE h.listing_id=l.id
       ORDER BY julianday(h.first_seen_at),h.id LIMIT 1) first_source_seen_at,
-    (SELECT COUNT(*) FROM canonical_listings other WHERE other.id<>l.id AND other.status='active'
-      AND lower(trim(other.title))=lower(trim(l.title)) AND other.price=l.price
-      AND COALESCE(other.city,'')=COALESCE(l.city,'')
-      AND COALESCE(other.bedrooms,-1)=COALESCE(l.bedrooms,-1)) matching_active_listings,
     (SELECT COUNT(*) FROM canonical_listing_source_occurrences x WHERE x.listing_id=l.id AND x.is_current=1) current_count,
     EXISTS(SELECT 1 FROM canonical_listing_source_occurrences x JOIN canonical_listing_source_occurrences y
       ON y.source_url=x.source_url AND y.listing_id<>x.listing_id AND y.is_current=1
@@ -345,9 +509,11 @@ export function reviewDefaultPending(db: DatabaseSync, onlyListingIds?: readonly
       ? evaluateCorroboratedCrossposts(row, sources)
       : evaluateModerationCandidate(row);
     if (!decision.approved) continue;
+    if (findSourceGroundedDuplicate(db, row.id)) continue;
     approved += Number(update.run(MODERATION_POLICY_VERSION, JSON.stringify({sourceType:row.source_type,sourceUrl:row.source_url,
       priceCents:row.price,sourceCity:'EXACT_CITY',verifiedSourceItemIds:sources.map(source => source.source_item_id),
-      checks:['monthly_price','rent_offer','source_geography','source_binding','source_rooms_consistency']}), row.id).changes);
+      checks:['monthly_price','rent_offer','source_geography','source_binding','source_rooms_consistency',
+        'source_grounded_duplicate']}), row.id).changes);
   }
   return { approved, held: rows.length - approved };
 }

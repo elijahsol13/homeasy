@@ -2,6 +2,8 @@
 
 **Пошаговая инструкция для владельца (на русском, с командами и откатом): [OPERATOR_GUIDE_RU.md](OPERATOR_GUIDE_RU.md).** Пример настроек VPS без секретов: [env.vps.template](env.vps.template).
 
+**Новый ручной Khmer24 Mac → VPS (пока только код и инструкции, без релиза): [KHMER24_MAC_RUN_RU.md](KHMER24_MAC_RUN_RU.md).**
+
 Target: Ubuntu/Debian Linux VPS, **2 vCPU / 4 GiB RAM / ~40 GiB NVMe**. Cloudflare Pages still hosts the frontend; the VPS hosts API, Telegram bot, Khmer24 worker, SQLite, local backup worker and Cloudflare Tunnel. Bright Data tools are **manual/on-demand** and may be invoked on the VPS later under a separately approved provider/cost scope. Facebook/Camoufox with its **macOS fingerprint, account and residential IP remains only on the Mac**.
 
 Bright Data utility scripts are **not bundled into the slim production Docker images**. An approved on-demand VPS run will need a separate Node environment with the repository's development dependencies (`npm ci`) or another explicitly configured runner, plus provider credentials supplied outside Git. No automated Bright Data schedule is part of this migration.

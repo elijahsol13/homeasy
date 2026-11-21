@@ -1,8 +1,8 @@
 import React, { useState } from 'react';
-import { Heart, MapPin, Send, Phone, Copy, MessageCircle, Waves } from 'lucide-react';
+import { Heart, MapPin, Send, Phone, MessageCircle, Waves } from 'lucide-react';
 import type { PropertyDTO } from '../types';
-import { triggerHaptic } from '../services/telegram';
-import { copyPhoneNumber, onPhoneActionClick, openTelegramContact, phoneActionHref } from '../services/contact-actions';
+import { openExternalUrl, triggerHaptic } from '../services/telegram';
+import { onPhoneActionClick, openTelegramContact, phoneActionHref, whatsappActionHref } from '../services/contact-actions';
 import { captureEvent } from '../services/analytics';
 import { formatLocationLabel, formatPropertyTypeLabel, formatUsd } from '../formatters';
 import { PhotoWithFallback } from './PhotoWithFallback';
@@ -44,6 +44,8 @@ export const PropertyCard: React.FC<PropertyCardProps> = ({
   const photos = property.photos && property.photos.length > 0 ? property.photos : [];
   const source = sourceLabel(property.originalUrl);
   const freshness = timeAgo(property.postedAt);
+  const callHref = phoneActionHref(property.contact.phoneLink);
+  const whatsappHref = whatsappActionHref(property.contact.whatsappLink, property.contact.phoneLink);
 
   const handleScroll = (e: React.UIEvent<HTMLDivElement>) => {
     const el = e.currentTarget;
@@ -64,7 +66,7 @@ export const PropertyCard: React.FC<PropertyCardProps> = ({
     if (property.contact.telegramLink) {
       triggerHaptic('light');
       try {
-        captureEvent('contact_lead_clicked', { propertyId: property.id, listingRef: property.publicRef ?? null, channel: 'telegram' });
+        captureEvent('contact_lead_clicked', { propertyId: property.id, listing_ref: property.publicRef ?? null, source: 'feed', channel: 'telegram' });
       } catch {
         // ignore
       }
@@ -79,10 +81,10 @@ export const PropertyCard: React.FC<PropertyCardProps> = ({
         triggerHaptic('light');
         onSelect(property);
       }}
-      className="bg-white dark:bg-zinc-800/90 rounded-2xl overflow-hidden border border-zinc-200 dark:border-zinc-700/60 shadow-xs hover:shadow-md transition-all active:scale-[0.99] cursor-pointer flex flex-col"
+      className="property-card bg-white dark:bg-zinc-800/90 rounded-2xl overflow-hidden border border-zinc-200 dark:border-zinc-700/60 shadow-xs hover:shadow-md transition-all active:scale-[0.99] cursor-pointer flex flex-col"
     >
       {/* Photo Carousel */}
-      <div className="relative aspect-[16/9] w-full bg-zinc-100 dark:bg-zinc-900 overflow-hidden">
+      <div className="property-card__photo relative aspect-[16/9] w-full bg-zinc-100 dark:bg-zinc-900 overflow-hidden">
         {photos.length > 0 ? (
           <div
             ref={carouselRef}
@@ -109,8 +111,9 @@ export const PropertyCard: React.FC<PropertyCardProps> = ({
         <button
           type="button"
           onClick={handleFavoriteClick}
-          className="absolute top-3 right-3 w-9 h-9 rounded-full bg-white/80 dark:bg-zinc-900/80 backdrop-blur-md flex items-center justify-center shadow-md transition-transform active:scale-80 z-10"
-          aria-label="Save to favorites"
+          className="property-card__favorite absolute top-3 right-3 w-9 h-9 rounded-full bg-white/80 dark:bg-zinc-900/80 backdrop-blur-md flex items-center justify-center shadow-md transition-transform active:scale-80 z-10"
+          aria-label={property.isFavorite ? 'Remove from favorites' : 'Save to favorites'}
+          aria-pressed={Boolean(property.isFavorite)}
         >
           <Heart
             className={`w-5 h-5 transition-colors ${
@@ -122,7 +125,7 @@ export const PropertyCard: React.FC<PropertyCardProps> = ({
         </button>
 
         {/* Property Type Badge */}
-        <div className="absolute top-3 left-3 bg-black/60 backdrop-blur-md text-white px-2.5 py-1 rounded-lg text-xs font-semibold tracking-wide pointer-events-none">
+        <div className="property-card__badge absolute top-3 left-3 bg-black/60 backdrop-blur-md text-white px-2.5 py-1 rounded-lg text-xs font-semibold tracking-wide pointer-events-none">
           {formatPropertyTypeLabel(property.propertyType)}
         </div>
 
@@ -156,6 +159,8 @@ export const PropertyCard: React.FC<PropertyCardProps> = ({
                     });
                   }
                 }}
+                aria-label={`Show photo ${idx + 1}`}
+                aria-pressed={photoIndex === idx}
                 className={`w-1.5 h-1.5 rounded-full transition-all ${
                   photoIndex === idx ? 'bg-white w-3' : 'bg-white/50'
                 }`}
@@ -166,16 +171,16 @@ export const PropertyCard: React.FC<PropertyCardProps> = ({
       </div>
 
       {/* Card Content */}
-      <div className="p-3 flex flex-col flex-1">
+      <div className="property-card__content p-3 flex flex-col flex-1">
         {/* Price & Location Header */}
         <div className="flex items-baseline justify-between gap-2 mb-1.5">
           <div className="flex items-baseline gap-1">
             {property.priceUsd > 0 ? (
               <>
-                <span className="text-xl font-bold text-zinc-900 dark:text-zinc-50">
+                <span className="property-card__price text-xl font-bold text-zinc-900 dark:text-zinc-50">
                   {formatUsd(property.priceUsd)}
                 </span>
-                <span className="text-xs text-zinc-500 dark:text-zinc-400">
+                <span className="property-card__term text-xs text-zinc-500 dark:text-zinc-400">
                   {property.type === 'rent' ? '/month' : ''}
                 </span>
               </>
@@ -186,20 +191,31 @@ export const PropertyCard: React.FC<PropertyCardProps> = ({
             )}
           </div>
 
-          <div className="flex items-center gap-1 text-xs text-zinc-500 dark:text-zinc-400 truncate max-w-[50%]">
+          <div className="property-card__location flex items-center gap-1 text-xs text-zinc-500 dark:text-zinc-400 truncate max-w-[50%]">
             <MapPin className="w-3.5 h-3.5 shrink-0 text-sky-500" />
             <span className="truncate">{formatLocationLabel(property.location || property.city)}</span>
           </div>
         </div>
 
         {/* Title */}
-        <h3 className="text-sm font-medium text-zinc-800 dark:text-zinc-200 line-clamp-2 leading-snug mb-2">
-          {property.title}
+        <h3 className="property-card__title text-sm font-medium text-zinc-800 dark:text-zinc-200 leading-snug mb-2">
+          <button
+            type="button"
+            className="w-full text-left line-clamp-2 rounded-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sky-500"
+            aria-label={`View listing: ${property.title}`}
+            onClick={(event) => {
+              event.stopPropagation();
+              triggerHaptic('light');
+              onSelect(property);
+            }}
+          >
+            {property.title}
+          </button>
         </h3>
 
         {/* Source & freshness meta */}
         {(source || freshness) && (
-          <div className="text-[10px] text-zinc-400 dark:text-zinc-500 mb-2 flex items-center gap-1">
+          <div className="property-card__meta text-[10px] text-zinc-400 dark:text-zinc-500 mb-2 flex items-center gap-1">
             {source && <span>{source}</span>}
             {source && freshness && <span>·</span>}
             {freshness && <span>posted {freshness}</span>}
@@ -207,7 +223,7 @@ export const PropertyCard: React.FC<PropertyCardProps> = ({
         )}
 
         {/* Specs & Amenities Pills */}
-        <div className="flex flex-wrap items-center gap-1.5 mb-2.5 text-[11px] font-medium text-zinc-600 dark:text-zinc-300">
+        <div className="property-card__amenities flex flex-wrap items-center gap-1.5 mb-2.5 text-[11px] font-medium text-zinc-600 dark:text-zinc-300">
           {property.bedrooms !== null && (
             <span className="bg-zinc-100 dark:bg-zinc-700/60 px-2 py-0.5 rounded-md">
               🛏 {property.bedrooms === 0 ? 'Studio' : `${property.bedrooms} BR`}
@@ -226,13 +242,13 @@ export const PropertyCard: React.FC<PropertyCardProps> = ({
         </div>
 
         {/* Quick Contact Buttons */}
-        {(property.contact.telegramLink || property.contact.phone || property.contact.whatsappLink || property.originalUrl) && (
-          <div className="mt-auto pt-2 border-t border-zinc-100 dark:border-zinc-700/50 flex items-center gap-2">
+        {(property.contact.telegramLink || callHref || whatsappHref || property.originalUrl) && (
+          <div className="property-card__contacts mt-auto pt-2 border-t border-zinc-100 dark:border-zinc-700/50 flex items-center gap-2">
             {property.contact.telegramLink ? (
               <button
                 type="button"
                 onClick={handleTelegramClick}
-                className="flex-1 bg-sky-500 hover:bg-sky-600 text-white text-xs font-semibold py-2 px-3 rounded-xl flex items-center justify-center gap-1.5 transition-all shadow-xs active:scale-98"
+                className="property-card__telegram flex-1 bg-sky-500 hover:bg-sky-600 text-white text-xs font-semibold py-2 px-3 rounded-xl flex items-center justify-center gap-1.5 transition-all shadow-xs active:scale-98"
               >
                 <Send className="w-3.5 h-3.5" />
                 <span>Message Agent</span>
@@ -242,62 +258,60 @@ export const PropertyCard: React.FC<PropertyCardProps> = ({
                 href={property.originalUrl}
                 target="_blank"
                 rel="noopener noreferrer"
-                onClick={(e) => e.stopPropagation()}
-                className="flex-1 bg-zinc-100 dark:bg-zinc-800 hover:bg-zinc-200 dark:hover:bg-zinc-700 text-zinc-700 dark:text-zinc-200 text-xs font-medium py-2 px-3 rounded-xl flex items-center justify-center gap-1.5 transition-all"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  try {
+                    captureEvent('outbound_source_clicked', { propertyId: property.id, listing_ref: property.publicRef ?? null, source: 'feed' });
+                  } catch {
+                    // ignore
+                  }
+                }}
+                className="property-card__original flex-1 bg-zinc-100 dark:bg-zinc-800 hover:bg-zinc-200 dark:hover:bg-zinc-700 text-zinc-700 dark:text-zinc-200 text-xs font-medium py-2 px-3 rounded-xl flex items-center justify-center gap-1.5 transition-all"
               >
                 <span>View Original Post ↗</span>
               </a>
             ) : null}
 
-            {property.contact.whatsappLink && (
+            {whatsappHref && (
               <a
-                href={property.contact.whatsappLink}
+                href={whatsappHref}
                 target="_blank"
                 rel="noopener noreferrer"
                 onClick={(e) => {
                   e.stopPropagation();
-                  triggerHaptic('light');
                   try {
-                    captureEvent('contact_lead_clicked', { propertyId: property.id, listingRef: property.publicRef ?? null, channel: 'whatsapp' });
+                    captureEvent('contact_lead_clicked', { propertyId: property.id, listing_ref: property.publicRef ?? null, source: 'feed', channel: 'whatsapp' });
                   } catch {
                     // ignore
                   }
+                  openExternalUrl(whatsappHref, e);
                 }}
-                className="p-2 bg-zinc-100 dark:bg-zinc-700 hover:bg-zinc-200 dark:hover:bg-zinc-600 text-zinc-700 dark:text-zinc-200 rounded-xl transition-all active:scale-95 flex items-center justify-center"
-                aria-label="WhatsApp Agent"
+                className="property-card__whatsapp p-2 bg-zinc-100 dark:bg-zinc-700 hover:bg-zinc-200 dark:hover:bg-zinc-600 text-zinc-700 dark:text-zinc-200 rounded-xl transition-all active:scale-95 flex items-center justify-center"
+                aria-label="Try WhatsApp Agent"
+                title="Try WhatsApp (if this number has an account)"
               >
                 <MessageCircle className="w-4 h-4 text-emerald-500" />
               </a>
             )}
 
-            {property.contact.phoneLink && phoneActionHref(property.contact.phoneLink) && (
+            {callHref && (
               <a
-                href={phoneActionHref(property.contact.phoneLink)!}
+                href={callHref}
                 onClick={(e) => {
                   onPhoneActionClick(e);
                   triggerHaptic('light');
                   try {
-                    captureEvent('contact_lead_clicked', { propertyId: property.id, listingRef: property.publicRef ?? null, channel: 'phone' });
+                    captureEvent('contact_lead_clicked', { propertyId: property.id, listing_ref: property.publicRef ?? null, source: 'feed', channel: 'phone' });
                   } catch {
                     // ignore
                   }
                 }}
-                className="p-2 bg-zinc-100 dark:bg-zinc-700 hover:bg-zinc-200 text-zinc-700 dark:text-zinc-200 rounded-xl transition-all active:scale-95"
+                className="property-card__phone p-2 bg-zinc-100 dark:bg-zinc-700 hover:bg-zinc-200 text-zinc-700 dark:text-zinc-200 rounded-xl transition-all active:scale-95"
                 aria-label="Call Agent"
+                title="Call with your phone app"
               >
                 <Phone className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
               </a>
-            )}
-            {property.contact.phone && (
-              <button
-                type="button"
-                onClick={(e) => void copyPhoneNumber(property.contact.phone, e)}
-                className="p-2 bg-zinc-100 dark:bg-zinc-700 hover:bg-zinc-200 dark:hover:bg-zinc-600 text-zinc-700 dark:text-zinc-200 rounded-xl transition-all active:scale-95"
-                aria-label="Copy phone number"
-                title="Copy phone number"
-              >
-                <Copy className="w-4 h-4" />
-              </button>
             )}
           </div>
         )}

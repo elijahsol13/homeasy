@@ -61,8 +61,8 @@ function parseArray<T>(value: unknown): T[] {
 function asString(value: unknown): string | null { return typeof value === 'string' && value.trim() ? value.trim() : null; }
 function asNumber(value: unknown): number | null { return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : null; }
 
-function canonicalFacts(_item: SourceItemRow, payload: Record<string, unknown>): Record<string, unknown> {
-  return sourceListingFacts(payload);
+function canonicalFacts(item: SourceItemRow, payload: Record<string, unknown>): Record<string, unknown> {
+  return sourceListingFacts(payload, item.raw_text);
 }
 
 function collectUrls(value: unknown, urls = new Set<string>(), path = ''): string[] {

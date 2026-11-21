@@ -1,0 +1,14 @@
+# Use alongside docker-compose.yml for approved, image-pinned VPS releases.
+# Images must already exist locally or be pulled from a trusted registry.
+# --no-build is required at startup so a branch checkout cannot silently rebuild.
+services:
+  api:
+    image: ${HOMEASY_API_IMAGE:?Set HOMEASY_API_IMAGE to an immutable image reference}
+  bot:
+    image: ${HOMEASY_API_IMAGE:?Set HOMEASY_API_IMAGE to an immutable image reference}
+  backup:
+    image: ${HOMEASY_API_IMAGE:?Set HOMEASY_API_IMAGE to an immutable image reference}
+  brightdata-worker:
+    image: ${HOMEASY_API_IMAGE:?Set HOMEASY_API_IMAGE to an immutable image reference}
+  scraper:
+    image: ${HOMEASY_SCRAPER_IMAGE:?Set HOMEASY_SCRAPER_IMAGE to an immutable image reference}

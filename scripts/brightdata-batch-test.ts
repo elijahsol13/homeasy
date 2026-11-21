@@ -22,21 +22,26 @@
  *   npm run brightdata:test:groups             # dry-run with group routing
  *   npm run brightdata:test:groups -- --pilot  # dry-run for two public groups
  *   npm run brightdata:test:groups -- --pilot --submit # explicitly paid probe
+ *   # Default group-collection window: 30 days back through today (Cambodia calendar).
+ *   # To choose another period, set BOTH dates explicitly:
  *   BRIGHTDATA_START_DATE=YYYY-MM-DD BRIGHTDATA_END_DATE=YYYY-MM-DD \
- *     npm run brightdata:test:groups -- --shadow-single-group
+ *     npm run brightdata:test:groups -- --full
+ *   # --shadow-single-group requires an explicitly selected ONE-day window.
  *   # Full run also requires --full --submit. No AI or DB ingestion is automatic.
  */
 import 'dotenv/config';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import crypto from 'node:crypto';
+import { BrightDataJobStore } from '../src/services/brightdata-job-control';
 import { observeGroup, planGroups } from '../src/modules/parser/facebook-group-monitor';
 import { loadMonitorState, saveMonitorState, importSavedObservations, monitorRegistry, MONITOR_DIR } from './brightdata-group-monitor';
 
 const DATASET_ID = 'gd_lz11l67o2cb3r0lkj3';
 const API_BASE = 'https://api.brightdata.com/datasets/v3';
-const OUTPUT_DIR = path.resolve(process.cwd(), 'tmp', 'brightdata-test');
-const RUN_ID = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+const OUTPUT_DIR = path.resolve(process.env.BRIGHTDATA_OUTPUT_DIR ?? path.join(process.cwd(), 'tmp', 'brightdata-test'));
+const RUN_ID = process.env.BRIGHTDATA_RUN_ID ?? new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+if (!/^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}(?:_[0-9a-f]{6})?$/.test(RUN_ID)) throw new Error('Invalid BRIGHTDATA_RUN_ID');
 const BATCH_SIZE = 1;
 const DELAY_MS = 1000;
 const SNAPSHOT_POLL_INTERVAL_MS = 3000;
@@ -83,6 +88,10 @@ export async function findPendingSnapshots(dir = OUTPUT_DIR, nowMs = Date.now())
     if (!Number.isFinite(submittedAt) || submittedAt > nowMs || nowMs - submittedAt > PENDING_SNAPSHOT_WINDOW_MS) continue;
     const file = path.join(dir, name);
     const saved = JSON.parse(await fs.readFile(file, 'utf8')) as SavedSnapshot;
+    if (saved.state === 'request_prepared' || saved.state === 'transport_error' ||
+        (saved.status == null && saved.request)) {
+      throw new Error(`Ambiguous potentially billable Bright Data request in ${file}; manual review before another POST`);
+    }
     if (saved.status !== 202 || Array.isArray(saved.records) || saved.state === 'snapshot_failed') continue;
     const providerResponse = saved.response as { snapshot_id?: string } | null;
     const snapshotId = saved.snapshotId ?? providerResponse?.snapshot_id;
@@ -425,9 +434,9 @@ function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-function getDateWindow(): { startDate: string; endDate: string } {
-  const envStart = process.env.BRIGHTDATA_START_DATE;
-  const envEnd = process.env.BRIGHTDATA_END_DATE;
+export function getDateWindow(env: NodeJS.ProcessEnv = process.env, now: Date = new Date()): { startDate: string; endDate: string } {
+  const envStart = env.BRIGHTDATA_START_DATE;
+  const envEnd = env.BRIGHTDATA_END_DATE;
 
   if (envStart || envEnd) {
     if (!envStart || !envEnd || !isIsoCalendarDate(envStart) || !isIsoCalendarDate(envEnd) || envStart > envEnd) {
@@ -438,15 +447,58 @@ function getDateWindow(): { startDate: string; endDate: string } {
 
   // Facebook groups are Siem Reap sources. UTC dates around local midnight
   // can be a day behind; use the actual Cambodian calendar day.
-  const today = new Intl.DateTimeFormat('sv-SE', { timeZone: 'Asia/Phnom_Penh', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
-  const yesterday = new Date(`${today}T00:00:00.000Z`);
-  yesterday.setUTCDate(yesterday.getUTCDate() - 1);
-  return { startDate: yesterday.toISOString().slice(0, 10), endDate: today };
+  const today = new Intl.DateTimeFormat('sv-SE', { timeZone: 'Asia/Phnom_Penh', year: 'numeric', month: '2-digit', day: '2-digit' }).format(now);
+  // Include the date exactly 30 days ago so a post from the last 30 * 24h
+  // is never excluded just because the provider accepts calendar dates only.
+  const start = new Date(`${today}T00:00:00.000Z`);
+  start.setUTCDate(start.getUTCDate() - 30);
+  return { startDate: start.toISOString().slice(0, 10), endDate: today };
 }
 
-export function getGroupsToTest(pilot = false): GroupConfig[] {
+export function getGroupsToTest(pilot = false, selectedIds?: string[]): GroupConfig[] {
   const eligible = GROUPS.filter((group) => groupRoute(group) === 'BRIGHTDATA');
+  if (selectedIds) {
+    if (pilot) throw new Error('Explicit group selection requires --full, not --pilot');
+    if (!selectedIds.length || new Set(selectedIds).size !== selectedIds.length) {
+      throw new Error('--group-ids must contain distinct, nonempty group IDs');
+    }
+    return selectedIds.map((id) => {
+      const group = eligible.find((item) => item.url.split('/').pop() === id);
+      if (!group) throw new Error(`Unknown or non-public Bright Data group ID: ${id}`);
+      return group;
+    });
+  }
   return pilot ? eligible.slice(0, 2) : eligible;
+}
+
+// Ranked by actual relevant housing posts in the October 18 source review.
+// The rest retain the established registry order.
+const HOUSING_YIELD_ORDER = [
+  '385053483002145', '201561753758474', 'cheaprentsiemreap',
+  'siemreaprealestate', '1979336498978784',
+];
+
+export function prioritizeHousingYield(groups: GroupConfig[]): GroupConfig[] {
+  return [...groups].sort((a, b) => {
+    const rank = (group: GroupConfig) => {
+      const index = HOUSING_YIELD_ORDER.indexOf(group.url.split('/').pop() ?? '');
+      return index === -1 ? HOUSING_YIELD_ORDER.length : index;
+    };
+    return rank(a) - rank(b);
+  });
+}
+
+/** Allocate only unspent authorized POST caps; previously accepted caps remain reserved. */
+export function distributeRemainingRecordCaps(
+  orderedGroupUrls: string[], reusedGroupUrls: Set<string>, totalBudget: number, reservedCap: number,
+): Map<string, number> {
+  if (!Number.isSafeInteger(totalBudget) || !Number.isSafeInteger(reservedCap) ||
+      reservedCap < 0 || reservedCap > totalBudget) throw new Error('Invalid reserved Bright Data budget');
+  const remaining = orderedGroupUrls.filter((url) => !reusedGroupUrls.has(url));
+  const slots = totalBudget - reservedCap;
+  const base = remaining.length ? Math.floor(slots / remaining.length) : 0;
+  const extra = remaining.length ? slots % remaining.length : 0;
+  return new Map(remaining.map((url, index) => [url, base + (index < extra ? 1 : 0)]));
 }
 
 export function getBudgetConfig(env: NodeJS.ProcessEnv): { maxRecords: number; perGroupLimit: number } {
@@ -527,6 +579,37 @@ function partitionRecords(records: unknown[]): { actualRecords: unknown[]; error
     }
   }
   return { actualRecords, errorRecords };
+}
+
+/** Read previously billed data without making an HTTP request. Reject ambiguous saves. */
+export async function inspectSavedBrightDataResponse(
+  file: string, group: GroupConfig, startDate: string, endDate: string,
+): Promise<{ records: unknown[]; httpStatus: number; requestLimit: number }> {
+  const saved = JSON.parse(await fs.readFile(file, 'utf8')) as SavedSnapshot;
+  const input = saved.request?.input;
+  const requestLimit = saved.request?.limit_per_input;
+  if (input?.length !== 1 || input[0].url !== group.url ||
+      input[0].start_date !== startDate || input[0].end_date !== endDate ||
+      input[0].user_to_not_include !== '' ||
+      !Number.isSafeInteger(requestLimit) || requestLimit! < 1 || requestLimit! > MAX_RUN_RECORDS) {
+    throw new Error(`Saved paid request does not match group/dates/limit: ${file}`);
+  }
+  if (saved.status !== 200 && saved.status !== 201 && saved.status !== 202) {
+    throw new Error(`Saved provider response is not confirmed successful: ${file}`);
+  }
+  const records = Array.isArray(saved.records) ? saved.records :
+    saved.status !== 202 && Array.isArray(saved.response) ? saved.response : null;
+  if (!records) {
+    throw new Error(`Saved provider request is unresolved; recover or review before any new POST: ${file}`);
+  }
+  if (records.length > requestLimit!) {
+    throw new Error(`Provider exceeded saved request limit; stop before new paid calls: ${file}`);
+  }
+  const { errorRecords } = partitionRecords(records);
+  if (errorRecords.length) {
+    throw new Error(`Saved provider response has ${errorRecords.length} error record(s): ${file}`);
+  }
+  return { records, httpStatus: saved.status, requestLimit: requestLimit! };
 }
 
 async function pollSnapshot(snapshotId: string): Promise<{ status: 'ready' | 'failed' | 'timeout'; errorMessage?: string }> {
@@ -644,7 +727,9 @@ async function callBrightData(group: GroupConfig, startDate: string, endDate: st
   const url = `${API_BASE}/scrape?dataset_id=${DATASET_ID}&include_errors=true&format=json&limit_per_input=${recordLimit}`;
 
   const rawFile = path.join(OUTPUT_DIR, `${RUN_ID}_${groupFileKey(group)}_raw.json`);
-  await fs.writeFile(rawFile, JSON.stringify({ request: body, status: null, response: null, state: 'request_prepared' }, null, 2));
+  // Reserve the filename atomically. An interrupted paid POST must never be
+  // silently reissued by overwriting its request evidence.
+  await fs.writeFile(rawFile, JSON.stringify({ request: body, status: null, response: null, state: 'request_prepared' }, null, 2), { flag: 'wx' });
 
   let res: Response;
   try {
@@ -726,7 +811,7 @@ export function makeReplayPost(record: unknown, group: GroupConfig): Record<stri
     ? row.original_post as Record<string, unknown>
     : {};
   const id = String(row.post_id ?? '').trim();
-  const content = String(row.content ?? originalPost.content ?? '').trim();
+  const content = String(row.content || originalPost.content || '').trim();
   if (!id || !content) return null;
   const attachments = Array.isArray(row.attachments) && row.attachments.length
     ? row.attachments
@@ -831,6 +916,18 @@ async function main() {
   const pilot = process.argv.includes('--pilot') || process.env.BRIGHTDATA_PILOT === 'true';
   const full = process.argv.includes('--full');
   const submit = process.argv.includes('--submit');
+  const resumeExisting = process.argv.includes('--resume-existing');
+  if (resumeExisting && (!full || !submit || pilot || adaptive || bounded || singleGroupMode || !process.env.BRIGHTDATA_CONTROL_JOB_ID)) {
+    throw new Error('--resume-existing requires a controlled --full --submit job');
+  }
+  const groupSelectionArgs = process.argv.filter((argument) => argument.startsWith('--group-ids='));
+  if (groupSelectionArgs.length > 1) throw new Error('Specify --group-ids only once');
+  if (groupSelectionArgs.length && (!full || pilot || bounded || adaptive || singleGroupMode)) {
+    throw new Error('--group-ids requires standalone --full mode');
+  }
+  const selectedGroupIds = groupSelectionArgs.length
+    ? groupSelectionArgs[0].slice('--group-ids='.length).split(',')
+    : undefined;
   if (adaptive && (singleGroupMode || bounded || pilot || full || unknownOnly || publicOnly)) {
     throw new Error('--adaptive is standalone; use --adaptive [--submit]');
   }
@@ -892,10 +989,11 @@ async function main() {
   const adaptiveSchedule = adaptive && monitorState
     ? planGroups(monitorState, monitorRegistry(), new Date().toISOString(), adaptivePerGroupMax) : [];
   const adaptiveByUrl = new Map(adaptiveSchedule.map((item) => [item.url, item]));
-  const groups = adaptive ? adaptiveSchedule.filter((item) => item.due).map((item) => GROUPS.find((group) => group.url === item.url)!)
+  const groupsUnsorted = adaptive ? adaptiveSchedule.filter((item) => item.due).map((item) => GROUPS.find((group) => group.url === item.url)!)
     : singleGroupPlan ? [singleGroupPlan.group] : bounded
     ? (unknownOnly ? remainingUnknownGroups : publicOnly ? remainingPublicGroups : GROUPS.filter((g) => groupAccess(g) !== 'private'))
-    : getGroupsToTest(pilot);
+    : getGroupsToTest(pilot, selectedGroupIds);
+  const groups = resumeExisting ? prioritizeHousingYield(groupsUnsorted) : groupsUnsorted;
   const { startDate, endDate } = singleGroupPlan ?? getDateWindow();
   // Unknown groups get a longer lookback to distinguish quiet public groups
   // from groups that Bright Data explicitly reports as private.
@@ -906,7 +1004,7 @@ async function main() {
   const accessUnknown = GROUPS.filter((group) => groupRoute(group) === 'REVIEW');
   const plan = {
     datasetId: DATASET_ID,
-    mode: adaptive ? 'adaptive' : singleGroupPlan ? 'shadow-single-group' : unknownOnly ? 'bounded-unknown-probes' : publicOnly ? 'bounded-public-resume' : bounded ? 'bounded-discovery' : pilot ? 'pilot' : 'full',
+    mode: adaptive ? 'adaptive' : singleGroupPlan ? 'shadow-single-group' : unknownOnly ? 'bounded-unknown-probes' : publicOnly ? 'bounded-public-resume' : bounded ? 'bounded-discovery' : pilot ? 'pilot' : selectedGroupIds ? 'selected-public-groups' : 'full',
     submitted: submit,
     dateWindow: { startDate, endDate },
     budget: { ...budget, ...(adaptive ? { adaptivePerGroupMax } : {}) },
@@ -930,6 +1028,11 @@ async function main() {
     throw new Error('Paid multi-group run requires explicit --pilot --submit, --full --submit, --bounded-discovery --submit or --adaptive --submit');
   }
 
+  // A previous accepted snapshot can still be billable. No new POST until
+  // the saved response is resolved by an operator (or --resume-pending).
+  const earlierPending = await findPendingSnapshots();
+  if (earlierPending.length) throw new Error(`${earlierPending.length} unresolved Bright Data snapshot(s); run --resume-pending before another paid POST`);
+
   const apiKey = process.env.BRIGHTDATA_API_KEY;
   if (!apiKey) {
     console.error('❌ BRIGHTDATA_API_KEY is not set in .env');
@@ -937,10 +1040,11 @@ async function main() {
   }
 
   await fs.mkdir(OUTPUT_DIR, { recursive: true });
-  await fs.writeFile(path.join(OUTPUT_DIR, `${RUN_ID}_plan.json`), JSON.stringify(plan, null, 2));
+  // Preserve the initial top-three plan when resuming the same paid run as all
+  // 16 public groups. The new plan is an explicit audit artifact.
   console.log(`📁 Raw responses will be saved to ${OUTPUT_DIR}`);
   console.log(`📅 Date window: ${startDate} → ${endDate}`);
-  console.log(`🧪 Mode: ${adaptive ? `ADAPTIVE (${groups.length} due public groups)` : singleGroupPlan ? 'SHADOW SINGLE GROUP (one request)' : unknownOnly ? `BOUNDED UNKNOWN ACCESS PROBES (${groups.length} × 5, starting at index ${unknownStartIndex})` : publicOnly ? `BOUNDED PUBLIC RESUME (${groups.length} × 20, starting at index ${publicStartIndex})` : bounded ? 'BOUNDED DISCOVERY (eligible public and unresolved groups)' : pilot ? 'PILOT (2 groups)' : 'FULL (' + groups.length + ' public groups)'}`);
+  console.log(`🧪 Mode: ${adaptive ? `ADAPTIVE (${groups.length} due public groups)` : singleGroupPlan ? 'SHADOW SINGLE GROUP (one request)' : unknownOnly ? `BOUNDED UNKNOWN ACCESS PROBES (${groups.length} × 5, starting at index ${unknownStartIndex})` : publicOnly ? `BOUNDED PUBLIC RESUME (${groups.length} × 20, starting at index ${publicStartIndex})` : bounded ? 'BOUNDED DISCOVERY (eligible public and unresolved groups)' : pilot ? 'PILOT (2 groups)' : selectedGroupIds ? `SELECTED (${groups.length} public groups)` : 'FULL (' + groups.length + ' public groups)'}`);
   console.log(`🔒 Excluded: ${excludedPrivate.length} confirmed private (Camoufox deferred); ${accessUnknown.length} unresolved (${bounded ? 'up to 5 probe posts in full/unknown mode' : 'manual review'})`);
   console.log(`💳 Record budget: ${budget.maxRecords} total, <= ${adaptive ? adaptivePerGroupMax : budget.perGroupLimit} per group (provider cap pending dataset-specific verification)`);
   console.log(`🔑 Bright Data API key: configured`);
@@ -951,7 +1055,35 @@ async function main() {
   const boundedReplay: Record<string, unknown>[] = [];
   const boundedDemandCandidates: Record<string, unknown>[] = [];
   let recordsReceived = 0;
+  let reservedRecordCap = 0;
   let stopReason: string | undefined;
+  const reused = new Map<string, Awaited<ReturnType<typeof inspectSavedBrightDataResponse>>>();
+  let remainingCaps = new Map<string, number>();
+  if (resumeExisting) {
+    const knownPaths = new Set(groups.map((group) => `${RUN_ID}_${groupFileKey(group)}_raw.json`));
+    const existingFiles = (await fs.readdir(OUTPUT_DIR)).filter((file) => file.startsWith(`${RUN_ID}_`) && file.endsWith('_raw.json'));
+    for (const filename of existingFiles) {
+      if (!knownPaths.has(filename)) throw new Error(`Unexpected raw file in controlled run; inspect first: ${filename}`);
+    }
+    for (const group of groups) {
+      const filename = `${RUN_ID}_${groupFileKey(group)}_raw.json`;
+      if (!existingFiles.includes(filename)) continue;
+      const saved = await inspectSavedBrightDataResponse(path.join(OUTPUT_DIR, filename), group, startDate, endDate);
+      reused.set(group.url, saved);
+      reservedRecordCap += saved.requestLimit;
+    }
+    if (reservedRecordCap > budget.maxRecords) {
+      throw new Error(`Saved paid request caps ${reservedRecordCap} exceed authorized budget ${budget.maxRecords}`);
+    }
+    remainingCaps = distributeRemainingRecordCaps(groups.map((group) => group.url), new Set(reused.keys()), budget.maxRecords, reservedRecordCap);
+    for (const entry of plan.groups) {
+      entry.cap = reused.get(entry.url)?.requestLimit ?? remainingCaps.get(entry.url) ?? 0;
+    }
+    plan.maxExpectedRecords = plan.groups.reduce((sum, entry) => sum + entry.cap, 0);
+    console.log(`♻️  Reusing ${reused.size} confirmed paid responses, ${reservedRecordCap} reserved record slots; no repeated POSTs`);
+  }
+  // Persist the revised plan only after validating all existing paid responses.
+  await fs.writeFile(path.join(OUTPUT_DIR, `${RUN_ID}_${resumeExisting ? 'resume_plan' : 'plan'}.json`), JSON.stringify(plan, null, 2));
 
   // Only one paid adaptive writer may run at a time. Fail closed on contention.
   await fs.mkdir(MONITOR_DIR, { recursive: true });
@@ -969,16 +1101,39 @@ async function main() {
   }
 
   for (let i = 0; i < groups.length; i += BATCH_SIZE) {
-    const remaining = budget.maxRecords - recordsReceived;
-    if (remaining <= 0) { stopReason = 'Record budget exhausted'; break; }
+    if (process.env.BRIGHTDATA_CONTROL_JOB_ID) {
+      // Fail closed if the shared control DB disappears or becomes unreadable.
+      if (!process.env.BRIGHTDATA_CONTROL_DB) throw new Error('Missing BRIGHTDATA_CONTROL_DB');
+      const control = new BrightDataJobStore(process.env.BRIGHTDATA_CONTROL_DB);
+      let cancelled: boolean;
+      try { cancelled = control.isCancellationRequested(process.env.BRIGHTDATA_CONTROL_JOB_ID); }
+      finally { control.close(); }
+      if (cancelled) { stopReason = 'Cancelled by admin before next provider POST'; break; }
+    }
     const batch = groups.slice(i, i + BATCH_SIZE);
     const group = batch[0];
+    const saved = reused.get(group.url);
+    const remaining = budget.maxRecords - (process.env.BRIGHTDATA_STRICT_BUDGET === 'true' ? reservedRecordCap : recordsReceived);
+    if (remaining <= 0 && !saved) { stopReason = 'Record budget exhausted'; break; }
     const progress = `[${i + 1}/${groups.length}]`;
     console.log(`${progress} ➡️  ${group.name}`);
 
     const isUnknown = groupAccess(group) === 'unknown';
-    const requestLimit = Math.min(adaptive ? adaptiveByUrl.get(group.url)!.limit : bounded ? (isUnknown ? BOUNDED_UNKNOWN_CAP : BOUNDED_PUBLIC_CAP) : budget.perGroupLimit, remaining);
-    const result = await testGroup(group, isUnknown && bounded ? unknownStartDate : startDate, endDate, requestLimit, bounded && isUnknown);
+    const requestLimit = saved?.requestLimit ?? Math.min(
+      resumeExisting ? (remainingCaps.get(group.url) ?? 0)
+        : adaptive ? adaptiveByUrl.get(group.url)!.limit
+        : bounded ? (isUnknown ? BOUNDED_UNKNOWN_CAP : BOUNDED_PUBLIC_CAP) : budget.perGroupLimit,
+      remaining,
+    );
+    if (!saved && requestLimit <= 0) { stopReason = 'No remaining provider request slots'; break; }
+    if (!saved) reservedRecordCap += requestLimit;
+    const result = saved ? {
+      name: group.name, url: group.url, role: group.role, priority: group.priority,
+      status: (saved.records.length ? 'success' : 'no_records') as GroupResult['status'],
+      recordsReturned: saved.records.length, recordsReceived: saved.records.length,
+      httpStatus: saved.httpStatus, sample: saved.records[0],
+    } : await testGroup(group, isUnknown && bounded ? unknownStartDate : startDate, endDate, requestLimit, bounded && isUnknown);
+    if (saved) console.log(`   ♻️  Saved ${saved.records.length} posts from a previous paid response; HTTP POST skipped`);
     allResults.push(result);
     recordsReceived += result.recordsReceived;
     if (adaptive) {
@@ -1042,7 +1197,7 @@ async function main() {
     console.log(`   ${icon} ${result.status} — ${result.recordsReturned} records (HTTP ${result.httpStatus})`);
     if (result.error) console.log(`      ⚠️  ${result.error}`);
     if (result.status !== 'success' && result.status !== 'no_records' &&
-        (!bounded || result.status === 'snapshot_timeout' || result.status === 'account_inactive' || result.httpStatus === 401 || result.httpStatus === 403 || result.httpStatus === 0)) {
+        (process.env.BRIGHTDATA_STRICT_BUDGET === 'true' || !bounded || result.status === 'snapshot_timeout' || result.status === 'account_inactive' || result.httpStatus === 401 || result.httpStatus === 403 || result.httpStatus === 0)) {
       stopReason = `Group ${group.url} ended with ${result.status}; stopping before submitting another paid request`;
       break;
     }
@@ -1063,7 +1218,7 @@ async function main() {
     testedAt: new Date().toISOString(),
     datasetId: DATASET_ID,
     dateWindow: { startDate, endDate },
-    mode: adaptive ? 'adaptive' : singleGroupPlan ? 'shadow-single-group' : unknownOnly ? 'bounded-unknown-probes' : publicOnly ? 'bounded-public-resume' : bounded ? 'bounded-discovery' : pilot ? 'pilot' : 'full',
+    mode: adaptive ? 'adaptive' : singleGroupPlan ? 'shadow-single-group' : unknownOnly ? 'bounded-unknown-probes' : publicOnly ? 'bounded-public-resume' : bounded ? 'bounded-discovery' : pilot ? 'pilot' : selectedGroupIds ? 'selected-public-groups' : 'full',
     totalGroups: groups.length,
     groupsAttempted: allResults.length,
     recordsReceived,
@@ -1118,6 +1273,8 @@ async function main() {
   console.log(`  ❓ Unknown:                        ${summary.unknown}`);
   console.log(`\nSummary written to: ${summaryFile}`);
 }
+
+export { main as runBrightDataBatch };
 
 if (require.main === module) {
   main().catch((err) => {

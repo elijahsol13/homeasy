@@ -58,10 +58,99 @@ describe('Phase 4 shadow ingestion and canonicalization', () => {
     const approval = db.prepare(`SELECT review_status,decision_origin,policy_version,previous_review_status
       FROM canonical_listing_moderation WHERE listing_id=?`).get(listing);
     expect(approval).toEqual({ review_status: 'approved', decision_origin: 'INGESTION_VALIDATED_V1',
-      policy_version: 'source-corroborated-crossposts-v12', previous_review_status: 'pending' });
+      policy_version: 'source-corroborated-crossposts-v13', previous_review_status: 'pending' });
     service.run({ dryRun: false });
     expect(db.prepare(`SELECT review_status,decision_origin,policy_version,previous_review_status
       FROM canonical_listing_moderation WHERE listing_id=?`).get(listing)).toEqual(approval);
+  });
+
+  it('keeps unrelated pending moderation untouched during scoped source reconciliation', () => {
+    const repo = new SourceIngestionRepository(db);
+    const source = repo.upsertSource({ sourceType: 'KHMER24', externalSourceId: 'scoped-moderation-test', name: 'K24' });
+    const makeItem = (id: string, title: string, price: number, bedrooms: number) => repo.upsertSourceItemDetailed(source, {
+      sourceType: 'KHMER24', externalId: `adid:${id}`,
+      sourceUrl: `https://www.khmer24.com/en/${id}`,
+      rawText: `${title} in Siem Reap. ${bedrooms} bedrooms. Rent $${price}/month.`,
+      contentHash: `scoped-${id}`, classification: 'HOUSING_SUPPLY',
+      rawPayload: {
+        listing: { price, currency: 'USD', city: 'siem_reap', type: 'rent' },
+        listingExtraction: { title_en: title, price, currency: 'USD', city: 'siem_reap',
+          category: 'house', property_type: 'House', bedrooms, offer_type: 'rent' },
+      },
+    }).id;
+    const firstItem = makeItem('scoped-unrelated-apartment', 'Apartment for rent', 350, 2);
+    const service = new CanonicalShadowService(db);
+    service.run({ dryRun: false });
+    const firstListing = (db.prepare('SELECT listing_id FROM canonical_listing_source_occurrences WHERE source_item_id=? AND is_current=1')
+      .get(firstItem) as { listing_id: number }).listing_id;
+    expect(db.prepare('SELECT review_status FROM canonical_listing_moderation WHERE listing_id=?').get(firstListing))
+      .toEqual({ review_status: 'approved' });
+
+    db.prepare(`UPDATE canonical_listing_moderation SET review_status='pending',
+      decision_origin='DEFAULT_PENDING',review_reason=NULL WHERE listing_id=?`).run(firstListing);
+    const unrelatedBefore = db.prepare('SELECT * FROM canonical_listing_moderation WHERE listing_id=?').get(firstListing);
+    const freshItem = makeItem('scoped-fresh-villa', 'Villa for rent', 900, 3);
+
+    const result = service.reconcileSourceItemsScoped([freshItem]);
+    expect(result.mutationReport.unexpectedGlobalWrites).toBe(0);
+    expect(db.prepare('SELECT * FROM canonical_listing_moderation WHERE listing_id=?').get(firstListing))
+      .toEqual(unrelatedBefore);
+    expect(db.prepare('SELECT listing_id FROM canonical_listing_source_occurrences WHERE source_item_id=? AND is_current=1')
+      .get(freshItem)).toBeTruthy();
+  });
+
+  it.each([
+    ['Apartment for rent in Siem Reap. 2 bedrooms. Rent $350/month.', 'siem_reap', 'approved'],
+    ['Villa for rent.\nProperty location: Siem Reap\n2 bedrooms. Rent $350/month.', 'siem_reap', 'approved'],
+    ['Villa for rent.\nProperty location: Siem Reap\nRent $350/month.', 'siem_reap', 'pending'],
+    ['1-BEDROOM APARTMENT FOR RENT IN SVAY DANGKUM (TAPHUL), SIEM REAP!\nRent $350/month.', 'siem_reap', 'pending'],
+    ['Apartment for rent.\nLocation: Svay Dangkum (Taphul), Siem Reap\nRent $350/month.', 'siem_reap', 'pending'],
+    ['ផ្ទះជួល\n⛳ទីតាំង ស្វាយដង្គំ ក្រុងសៀមរាប\nRent $350/month.', 'siem_reap', 'pending'],
+    ['ផ្ទះជួល\nទីតាំង: សៀមរាប\nតម្លៃ 350$ ក្នុងមួយខែ', 'siem_reap', 'pending'],
+    ['Apartment for rent near Pub Street. Rent $350/month.', null, 'pending'],
+    ['Agency office located in Siem Reap. Apartment for rent near Pub Street. Rent $350/month.', null, 'pending'],
+    ['Agency office:\nSiem Reap\nApartment for rent near Pub Street. Rent $350/month.', null, 'pending'],
+    ['Contact address:\nSiem Reap\nApartment for rent near Pub Street. Rent $350/month.', null, 'pending'],
+    ['Agency office:\nLocation: Svay Dangkum (Taphul), Siem Reap\nApartment for rent near Pub Street. Rent $350/month.', null, 'pending'],
+    ['Contact address:\nLocation: Svay Dangkum (Taphul), Siem Reap\nApartment for rent near Pub Street. Rent $350/month.', null, 'pending'],
+    ['Apartment for rent.\nLocation: Svay Dangkum (Taphul), Siem Reap\nProperty location: Phnom Penh\nRent $350/month.', null, 'pending'],
+    ['Property location: Phnom Penh\nContact: Siem Reap\nApartment for rent $350/month.', null, 'pending'],
+  ] as const)('restores only source-asserted property city: %s', (rawText, expectedCity, expectedStatus) => {
+    const repo = new SourceIngestionRepository(db);
+    const source = repo.upsertSource({ sourceType: 'FACEBOOK_GROUP', externalSourceId: 'raw-city-case', name: 'FB' });
+    const item = repo.upsertSourceItemDetailed(source, {
+      sourceType: 'FACEBOOK_GROUP', externalId: 'raw-city-case',
+      sourceUrl: 'https://facebook.com/groups/test/posts/raw-city-case',
+      rawText, contentHash: 'raw-city-case', classification: 'HOUSING_SUPPLY',
+      rawPayload: { listingExtraction: {
+        title_en: 'Rental apartment', description_en: 'Rental property', price: 350, currency: 'USD',
+        category: 'apartment', property_type: 'Apartment', bedrooms: 2, offer_type: 'rent', city: null,
+      } },
+    }).id;
+    new CanonicalShadowService(db).run({ dryRun: false });
+    const actual = db.prepare(`SELECT l.city,m.review_status FROM canonical_listings l
+      JOIN canonical_listing_moderation m ON m.listing_id=l.id
+      JOIN canonical_listing_source_occurrences o ON o.listing_id=l.id
+      WHERE o.source_item_id=? AND o.is_current=1`).get(item);
+    expect(actual).toEqual({ city: expectedCity, review_status: expectedStatus });
+  });
+
+  it('keeps an explicitly extracted other city even when original text mentions Siem Reap', () => {
+    const repo = new SourceIngestionRepository(db);
+    const source = repo.upsertSource({ sourceType: 'FACEBOOK_GROUP', externalSourceId: 'different-city', name: 'FB' });
+    repo.upsertSourceItemDetailed(source, {
+      sourceType: 'FACEBOOK_GROUP', externalId: 'different-city',
+      sourceUrl: 'https://facebook.com/groups/test/posts/different-city',
+      rawText: 'Apartment for rent in Siem Reap. Rent $350/month.',
+      contentHash: 'different-city', classification: 'HOUSING_SUPPLY',
+      rawPayload: { listingExtraction: {
+        title_en: 'Rental apartment', description_en: 'Rental property', price: 350, currency: 'USD',
+        category: 'apartment', property_type: 'Apartment', bedrooms: 2, offer_type: 'rent', city: 'phnom_penh',
+      } },
+    });
+    new CanonicalShadowService(db).run({ dryRun: false });
+    expect(db.prepare('SELECT city FROM canonical_listings').get()).toEqual({ city: 'phnom_penh' });
+    expect(db.prepare('SELECT review_status FROM canonical_listing_moderation').get()).toEqual({ review_status: 'pending' });
   });
 
   it('imports stable Khmer24 ad IDs through ingestBatch and is idempotent', async () => {

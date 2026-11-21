@@ -43,12 +43,46 @@ function amount(value: string | undefined): number | null {
  * not recognize. Replace them one-for-one so source offsets stay stable for
  * utility-context checks. */
 function normalizeSourcePriceText(rawText: string): string {
-  return rawText.replace(/[\u200B-\u200D\u2060\uFEFF]/g, ' ');
+  return rawText.replace(/[\u200B-\u200D\u2060\uFEFF]/g, ' ')
+    // Preserve offsets while exposing prices wrapped in Markdown bold: **$350**.
+    .replace(/\*{1,2}(?=\s*(?:USD|KHR|\$|៛)\s*\d)/gi, stars => ' '.repeat(stars.length));
+}
+
+/** Price labels in original rental posts do not always include "/month".
+ * Accept only a label scoped to an explicit rental offer, or the Khmer
+ * "rental price" label. Keep each occurrence for conflicting-tier review. */
+function labelledRentalPrices(rawText: string): Array<{ index: number; length: number; value: number; denomination: 'USD' | 'KHR' }> {
+  const text = normalizeSourcePriceText(rawText);
+  const found: Array<{ index: number; length: number; value: number; denomination: 'USD' | 'KHR' }> = [];
+  const pattern = new RegExp(`(?:ថ្លៃ\\s*ឈ្នួល|\\bprice)\\s*[:：=\\-]?\\s*(USD|KHR|\\$|៛)?\\s*${AMOUNT}\\s*(USD|KHR|\\$|៛)?`, 'gi');
+  const scopes = [...text.matchAll(/\bfor\s+(?:rent|sale)\b/gi)];
+  for (const match of text.matchAll(pattern)) {
+    const index = match.index ?? 0;
+    const explicitKhmerRent = /^ថ្លៃ/i.test(match[0]);
+    const preceding = text.slice(Math.max(0, index - 70), index);
+    if (!explicitKhmerRent) {
+      const scope = scopes.filter(item => (item.index ?? 0) < index).at(-1);
+      if (!scope || !/\bfor\s+rent\b/i.test(scope[0])) continue;
+      // A generic Price label only inherits a nearby for-rent heading; do not
+      // treat a later unrelated listing in the same scraped text as rent.
+      if (index - ((scope.index ?? 0) + scope[0].length) > 300) continue;
+      // A sale/deposit/utility price can occur after a rental heading.
+      if (/(?:\basking|\bsale|\bdeposit|\bbooking|\belectricity|\bwater|\butility|ថ្លៃកក់|ថ្លៃភ្លើង|ថ្លៃទឹក)\s*[:：=-]?\s*$/i.test(preceding)) continue;
+    }
+    if (isUtilityPriceOccurrence(rawText, index, match[0].length)) continue;
+    const denomination = currency(match[1] || match[3]);
+    const value = amount(match[2]);
+    if (!denomination || value === null) continue;
+    found.push({ index, length: match[0].length, value, denomination });
+  }
+  return found;
 }
 
 export function parseSourceListingPrice(rawText: string | null): ParsedSourcePrice | null {
   if (!rawText) return null;
   const searchableText = normalizeSourcePriceText(rawText);
+  const labelled = labelledRentalPrices(rawText)[0];
+  if (labelled) return { price: labelled.value, currency: labelled.denomination };
   const patterns: Array<{
     regex: RegExp;
     amountGroup: number;
@@ -120,6 +154,9 @@ export function sourceMonthlyPrices(rawText: string): number[] {
     { regex: new RegExp(`(?:one\\s+month|1\\s+month|មួយ\\s*ខែ)\\s*${AMOUNT}\\s*(?:USD|KHR|\\$|៛)`, 'gi') },
   ];
   const found = new Set<number>();
+  for (const item of labelledRentalPrices(rawText)) {
+    if (item.denomination === 'USD' && item.value >= 30 && item.value <= 100_000) found.add(item.value);
+  }
   for (const pattern of patterns) for (const match of searchableText.matchAll(pattern.regex)) {
     const index = match.index ?? 0;
     if (isUtilityPriceOccurrence(rawText, index, match[0].length)) continue;

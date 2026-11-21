@@ -57,6 +57,32 @@ services:
         max-size: "10m"
         max-file: "3"
 
+  # ─── Telegram-controlled Bright Data collection + AI ingestion ─────────────
+  brightdata-worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: api-runner
+    container_name: homeasy-brightdata-worker
+    restart: unless-stopped
+    stop_grace_period: 120s
+    command: npm run start:brightdata-worker
+    environment:
+      - NODE_ENV=production
+      - HOMEASY_DEPLOYMENT_ROLE=vps
+      - DATABASE_PATH=/app/data/homeasy.db
+      - BRIGHTDATA_CONTROL_DB=/app/data/brightdata/control.sqlite
+      - BRIGHTDATA_OUTPUT_DIR=/app/data/brightdata/raw
+    env_file:
+      - .env
+    volumes:
+      - ./data:/app/data
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
   # ─── VPS Khmer24-only scraper; Facebook always runs on the Mac ──────────────
   scraper:
     build:

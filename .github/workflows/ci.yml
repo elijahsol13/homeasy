@@ -1,0 +1,111 @@
+name: CI
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+
+permissions:
+  contents: read
+
+jobs:
+  checks:
+    name: Typecheck, lint, tests, and release builds
+    runs-on: ubuntu-latest
+    env:
+      BOT_TOKEN: '123456789:CI_dummy_token'
+      TELEGRAM_MINIAPP_URL: 'https://t.me/homeasy_ci_bot/test'
+      DATABASE_PATH: ':memory:'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            webapp/package-lock.json
+
+      - name: Install backend dependencies
+        run: npm ci
+      - name: Backend TypeScript typecheck
+        run: npm run typecheck
+      - name: Backend lint
+        run: npm run lint
+      - name: Backend Jest tests
+        run: npm test -- --runInBand --silent
+      - name: Build backend
+        run: npm run build
+      - name: Build Bright Data worker tools
+        run: npx tsc -p tsconfig.brightdata.json
+
+      - name: Install webapp dependencies
+        run: npm ci
+        working-directory: webapp
+      - name: Webapp lint
+        run: npm run lint
+        working-directory: webapp
+      - name: Webapp Vitest tests
+        run: npm test
+        working-directory: webapp
+
+      - name: Package backend build
+        run: |
+          mkdir -p artifacts/backend artifacts/web artifacts/tma
+          cp -a dist/. artifacts/backend/
+          if [ -d dist-tools ]; then cp -a dist-tools artifacts/backend/; fi
+
+      - name: Build and package public webapp
+        run: |
+          npm --prefix webapp run build:web
+          node scripts/write-release-manifest.cjs web
+          cp -a webapp/dist/. artifacts/web/
+
+      - name: Build and package Telegram Mini App
+        run: |
+          npm --prefix webapp run build:tma
+          node scripts/write-release-manifest.cjs tma
+          cp -a webapp/dist/. artifacts/tma/
+
+      - name: Record and verify artifact SHA-256 checksums
+        run: |
+          printf '%s\n' "$GITHUB_SHA" > artifacts/SOURCE_COMMIT
+          (cd artifacts && find SOURCE_COMMIT backend web tma -type f -print0 | LC_ALL=C sort -z | xargs -0 sha256sum > SHA256SUMS)
+          (cd artifacts && sha256sum --check SHA256SUMS)
+
+      - name: Upload release build artifacts and SHA-256 manifest
+        uses: actions/upload-artifact@v4
+        with:
+          name: homeasy-${{ github.sha }}-builds
+          path: artifacts/
+          if-no-files-found: error
+          retention-days: 14
+          include-hidden-files: true
+
+  docker:
+    name: Docker api-runner build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build API runtime image
+        run: docker build --target api-runner --label "org.opencontainers.image.revision=${{ github.sha }}" --tag "homeasy-api-runner:${{ github.sha }}" .
+
+      - name: Record Docker image ID and source revision
+        run: |
+          image_id="$(docker image inspect --format '{{.Id}}' homeasy-api-runner:${{ github.sha }})"
+          printf 'source_commit=%s\nimage_id=%s\n' "$GITHUB_SHA" "$image_id" > docker-image-provenance.txt
+          cat docker-image-provenance.txt
+
+      - name: Upload Docker image provenance
+        uses: actions/upload-artifact@v4
+        with:
+          name: homeasy-${{ github.sha }}-docker-provenance
+          path: docker-image-provenance.txt
+          if-no-files-found: error
+          retention-days: 14

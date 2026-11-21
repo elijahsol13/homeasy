@@ -4,6 +4,7 @@ import { CanonicalListingRepository } from '../src/database/repositories/canonic
 describe('CanonicalListingRepository', () => {
   let db: DatabaseSync;
   let repository: CanonicalListingRepository;
+  const fixtureDate = (daysAgo: number) => new Date(Date.now() - daysAgo * 86_400_000).toISOString();
 
   beforeEach(() => {
     db = new DatabaseSync(':memory:');
@@ -33,8 +34,8 @@ describe('CanonicalListingRepository', () => {
     ];
     for (const row of fixtures) {
       const occurrenceId = row.id + 100;
-      insertListing.run(row.id,`lst_${String(row.id).padStart(32,'0')}`,row.status,row.availability,25000,'USD',`Test apartment ${row.id}`,'A clean apartment','apartment',1,'siem_reap','Sala Kamreuk','Sala Kamreuk','2026-10-01','2026-10-07',occurrenceId,JSON.stringify({offer_type:'rent',phone_numbers:['+855 12 345 678'],discovered_amenities:['Wi-Fi']}),'2026-10-01','2026-10-07');
-      insertOccurrence.run(occurrenceId,row.id,row.id,String(row.id),`https://example.test/${row.id}`,'2026-10-01','2026-10-07',1,'available',row.current);
+      insertListing.run(row.id,`lst_${String(row.id).padStart(32,'0')}`,row.status,row.availability,25000,'USD',`Test apartment ${row.id}`,'A clean apartment','apartment',1,'siem_reap','Sala Kamreuk','Sala Kamreuk',fixtureDate(8),fixtureDate(1),occurrenceId,JSON.stringify({offer_type:'rent',phone_numbers:['+855 12 345 678'],discovered_amenities:['Wi-Fi']}),fixtureDate(8),fixtureDate(1));
+      insertOccurrence.run(occurrenceId,row.id,row.id,String(row.id),`https://example.test/${row.id}`,fixtureDate(8),fixtureDate(1),1,'available',row.current);
       insertSource.run(row.id,row.classification,'KHMER24','Apartment for rent',JSON.stringify({photos:['https://img.test/a.jpg'],listingFacts:{discovered_amenities:['Wi-Fi']}}),`https://example.test/${row.id}`);
       db.prepare("INSERT INTO canonical_listing_moderation(listing_id,review_status) VALUES(?,'approved')").run(row.id);
     }
@@ -237,14 +238,14 @@ describe('CanonicalListingRepository', () => {
   function seedOverflowCandidates(): void {
     const insertListing = db.prepare(`INSERT INTO canonical_listings
       (id,public_ref,status,availability_status,price,currency,title,description,category,city,sangkat,primary_source_occurrence_id,listing_facts_json,last_seen_at)
-      VALUES(?,'lst_'||lower(hex(randomblob(16))),'active','available',30000,'USD','Map candidate','For rent','apartment','siem_reap','Sala Kamreuk',?,'{"offer_type":"rent"}','2026-10-08')`);
+      VALUES(?,'lst_'||lower(hex(randomblob(16))),'active','available',30000,'USD','Map candidate','For rent','apartment','siem_reap','Sala Kamreuk',?,'{"offer_type":"rent"}',?)`);
     const insertSource = db.prepare(`INSERT INTO source_items(id,classification,source_type,raw_text,raw_payload_json)
       VALUES(?,'HOUSING_SUPPLY','KHMER24','For rent','{}')`);
     const insertOccurrence = db.prepare(`INSERT INTO canonical_listing_source_occurrences(id,source_item_id,listing_id,is_current)
       VALUES(?,?,?,1)`);
     const approve = db.prepare("INSERT INTO canonical_listing_moderation(listing_id,review_status) VALUES(?,'approved')");
     for (let id = 10; id < 521; id += 1) {
-      insertListing.run(id, id + 1000);
+      insertListing.run(id, id + 1000, fixtureDate(0));
       insertSource.run(id);
       insertOccurrence.run(id + 1000, id, id);
       approve.run(id);
@@ -430,7 +431,7 @@ describe('CanonicalListingRepository', () => {
     db.prepare('INSERT INTO source_registry(id,city) VALUES(1,\'siem_reap\')').run();
     db.prepare('UPDATE canonical_listings SET price=20000 WHERE id=1').run();
 
-    const add = (id: number, price: number | null, offerType = 'rent', postedAt = '2026-10-06') => {
+    const add = (id: number, price: number | null, offerType = 'rent', postedAt = fixtureDate(5)) => {
       db.prepare(`INSERT INTO canonical_listings
         (id,public_ref,status,availability_status,price,currency,title,description,category,bedrooms,city,explicit_location,primary_source_occurrence_id,listing_facts_json,created_at,updated_at)
         VALUES(?,'lst_'||lower(hex(randomblob(16))),'active','available',?,'USD',?,'','apartment',1,NULL,NULL,?,?,'2026-10-01','2026-10-07')`)
@@ -445,7 +446,7 @@ describe('CanonicalListingRepository', () => {
       db.prepare("INSERT INTO canonical_listing_moderation(listing_id,review_status) VALUES(?,'approved')").run(id);
     };
 
-    add(10,9000,'rent_or_sale','2026-10-08');
+    add(10,9000,'rent_or_sale',fixtureDate(3));
     add(11,null);
     add(12,10000);
     add(13,0);

@@ -11,7 +11,7 @@ import {
   initTelegramWebApp,
   triggerHaptic,
 } from './telegram';
-import { copyPhoneNumber, onPhoneActionClick, openTelegramContact, phoneActionHref } from './contact-actions';
+import { onPhoneActionClick, openTelegramContact, phoneActionHref, whatsappActionHref } from './contact-actions';
 
 interface FakeTelegramWebApp {
   initData: string;
@@ -284,11 +284,15 @@ describe('phone contact actions', () => {
     expect(tg.close).not.toHaveBeenCalled();
   });
 
-  it('copies the displayed phone number for clients without a dialer', async () => {
-    const writeText = vi.fn().mockResolvedValue(undefined);
-    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } });
-    await expect(copyPhoneNumber('+855 12 345 678')).resolves.toBe(true);
-    expect(writeText).toHaveBeenCalledWith('+855 12 345 678');
+  it('uses an explicit WhatsApp identity first, and otherwise offers a valid phone-number link', () => {
+    expect(whatsappActionHref('https://wa.me/85598765432', 'tel:+85512345678'))
+      .toBe('https://wa.me/85598765432');
+    expect(whatsappActionHref(undefined, 'tel:+85512345678'))
+      .toBe('https://wa.me/85512345678');
+    expect(whatsappActionHref('https://malicious.example', 'tel:+85512345678'))
+      .toBe('https://wa.me/85512345678');
+    expect(whatsappActionHref(undefined, 'tel:012345678')).toBeNull();
+    expect(whatsappActionHref(undefined, undefined)).toBeNull();
   });
 });
 

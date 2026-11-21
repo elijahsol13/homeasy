@@ -29,8 +29,12 @@ export function openTelegramContact(
     }
   }
 
-  const opened = window.open(tmeUrl, '_blank', 'noopener,noreferrer');
-  if (!opened) window.location.assign(tmeUrl);
+  try {
+    // With noopener, browsers may return null even when the new tab opens.
+    window.open(tmeUrl, '_blank', 'noopener,noreferrer');
+  } catch {
+    window.location.assign(tmeUrl);
+  }
 }
 
 /** Accept only a telephone URI produced by the API's E.164 normalizer. */
@@ -40,34 +44,20 @@ export function phoneActionHref(phoneLink: string | null | undefined): string | 
   return /^tel:\+\d{7,15}$/.test(target) ? target : null;
 }
 
+/** Link to WhatsApp when an explicit contact exists, or offer to try a callable number. */
+export function whatsappActionHref(
+  whatsappLink: string | null | undefined,
+  phoneLink: string | null | undefined,
+): string | null {
+  const explicit = whatsappLink?.trim();
+  if (explicit && /^https:\/\/wa\.me\/\d{7,15}$/.test(explicit)) return explicit;
+
+  // A phone can receive calls without having WhatsApp; the UI labels this as a try.
+  const dial = phoneActionHref(phoneLink);
+  return dial ? `https://wa.me/${dial.slice('tel:+'.length)}` : null;
+}
+
 /** Preserve a phone anchor's native default action while keeping card handlers isolated. */
 export function onPhoneActionClick(event: React.SyntheticEvent): void {
   event.stopPropagation();
-}
-
-/** Copy the displayed phone number; this is the fallback when desktop has no dialer. */
-export async function copyPhoneNumber(
-  phone: string | null | undefined,
-  event?: React.SyntheticEvent,
-): Promise<boolean> {
-  event?.preventDefault();
-  event?.stopPropagation();
-  const value = phone?.trim();
-  if (!value) return false;
-
-  try {
-    await navigator.clipboard.writeText(value);
-    return true;
-  } catch {
-    const input = document.createElement('textarea');
-    input.value = value;
-    input.setAttribute('readonly', '');
-    input.style.position = 'fixed';
-    input.style.opacity = '0';
-    document.body.appendChild(input);
-    input.select();
-    const copied = document.execCommand('copy');
-    input.remove();
-    return copied;
-  }
 }

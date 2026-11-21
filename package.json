@@ -9,6 +9,7 @@
     "dev": "nodemon",
     "start": "node --expose-gc dist/index.js",
     "start:bot": "node dist/bot.js",
+    "start:brightdata-worker": "node dist/brightdata-worker.js",
     "start:scraper": "node --expose-gc dist/scraper.js",
     "start:scraper:vps": "node --expose-gc dist/scraper-vps.js",
     "start:api": "node dist/api.js",
@@ -17,6 +18,8 @@
     "lint": "eslint src --ext .ts --max-warnings 0",
     "format": "prettier --write \"src/**/*.ts\"",
     "scrape:khmer24": "ts-node src/modules/parser/khmer24.scraper.ts",
+    "scrape:khmer24:remote": "ts-node src/modules/parser/khmer24.scraper.ts --remote",
+    "k24:flush-outbox": "ts-node scripts/flush-khmer24-outbox.ts",
     "k24:login": "ts-node src/modules/parser/k24-login.ts",
     "fb:login": "ts-node src/modules/parser/fb-login.ts",
     "fb:touch": "ts-node src/modules/parser/fb-touch.ts",
@@ -72,6 +75,7 @@
     "zod": "^3.23.8"
   },
   "devDependencies": {
+    "@playwright/mcp": "0.0.83",
     "@types/jest": "^30.0.0",
     "@types/node": "^22.0.0",
     "@typescript-eslint/eslint-plugin": "^7.3.1",

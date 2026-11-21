@@ -46,7 +46,7 @@ import { createContainer } from '../src/container';
 import { stableMediaHash } from '../src/modules/parser/media-identity';
 import { facebookRepostCodeKey } from '../src/modules/parser/facebook-repost-key';
 
-const OUTPUT_DIR = path.resolve(process.cwd(), 'tmp', 'brightdata-test');
+const OUTPUT_DIR = path.resolve(process.env.BRIGHTDATA_OUTPUT_DIR ?? path.join(process.cwd(), 'tmp', 'brightdata-test'));
 // Sized for Groq free tier on qwen/qwen3.8-27b: ITPM 7,000 / TPM 8K / TPD 200K (console.groq.com/docs/rate-limits).
 // ~20 posts x <=800 chars (head 500 + tail 300) is ~3.5-5.5K input tokens incl. the prompt, so one request per ~30s stays under ITPM.
 const CLASSIFICATION_BATCH_SIZE = Number(process.env.CLASSIFY_BATCH_SIZE ?? 20);
@@ -56,7 +56,7 @@ const RUN_ID = process.env.BRIGHTDATA_RUN_ID ?? new Date().toISOString().replace
 if (!/^[a-zA-Z0-9_-]{1,64}$/.test(RUN_ID)) throw new Error('Invalid BRIGHTDATA_RUN_ID');
 // Allow bounded/adaptive runs (<10 group files) to be classified from saved raw snapshots.
 const SOURCE_RUN_ID = process.env.BRIGHTDATA_SOURCE_RUN_ID;
-if (SOURCE_RUN_ID && !/^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}$/.test(SOURCE_RUN_ID)) {
+if (SOURCE_RUN_ID && !/^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}(?:_[0-9a-f]{6})?$/.test(SOURCE_RUN_ID)) {
   throw new Error('BRIGHTDATA_SOURCE_RUN_ID must be a raw snapshot run timestamp');
 }
 const BRIGHTDATA_API_BASE = 'https://api.brightdata.com/datasets/v3';
@@ -246,10 +246,13 @@ async function loadLatestFullRunRecords(): Promise<FacebookPost[]> {
       const r = rec as Record<string, unknown>;
       const postId = String(r.post_id ?? '');
       if (!postId) continue;
-      const content = String(r.content ?? '');
+      const originalPost = r.original_post && typeof r.original_post === 'object'
+        ? r.original_post as Record<string, unknown> : {};
+      const content = String(r.content || originalPost.content || '').trim();
       if (!content.trim()) continue;
       const input = (r.input as { url?: string }) ?? {};
-      const attachments = Array.isArray(r.attachments) ? r.attachments : [];
+      const attachments = Array.isArray(r.attachments) && r.attachments.length
+        ? r.attachments : Array.isArray(originalPost.attachments) ? originalPost.attachments : [];
       const photos = [...new Set(attachments.flatMap((attachment) => {
         if (!attachment || typeof attachment !== 'object') return [];
         const a = attachment as Record<string, unknown>;
@@ -420,7 +423,7 @@ const CLASSIFICATION_TAIL_CHARS = Number(process.env.CLASSIFY_TAIL_CHARS ?? 300)
 
 // Long community posts often bury the housing request at the end, so keep head + tail instead of a plain prefix.
 function classificationText(content: string): string {
-  const cleaned = prepareLlmInput(content, 100_000);
+  const cleaned = prepareLlmInput(content).slice(0, 100_000);
   if (cleaned.length <= CLASSIFICATION_HEAD_CHARS + CLASSIFICATION_TAIL_CHARS) return cleaned;
   return `${cleaned.slice(0, CLASSIFICATION_HEAD_CHARS)}\n…\n${cleaned.slice(-CLASSIFICATION_TAIL_CHARS)}`;
 }
@@ -513,7 +516,7 @@ async function extractDemandBatch(posts: FacebookPost[]): Promise<Map<string, De
   const callId = crypto.randomUUID();
   const metricOffset = aiMetricLog.length;
   const prompt = JSON.stringify(
-    posts.map((p) => ({ id: p.id, text: prepareLlmInput(p.content, 2_000), posted_at: p.datePosted.slice(0, 10) })),
+    posts.map((p) => ({ id: p.id, text: prepareLlmInput(p.content).slice(0, 2_000), posted_at: p.datePosted.slice(0, 10) })),
   );
   const sourceText = new Map(posts.map((p) => [p.id, p.content]));
 
@@ -586,7 +589,7 @@ async function extractSupplyBatch(posts: FacebookPost[]): Promise<Map<string, Li
   const resultMap = new Map<string, ListingExtraction>();
   const callId = crypto.randomUUID();
   const metricOffset = aiMetricLog.length;
-  const prompt = JSON.stringify(posts.map((p) => ({ id: p.id, text: prepareLlmInput(p.content, SUPPLY_TEXT_CHARS) })));
+  const prompt = JSON.stringify(posts.map((p) => ({ id: p.id, text: prepareLlmInput(p.content).slice(0, SUPPLY_TEXT_CHARS) })));
   const sourceText = new Map(posts.map((p) => [p.id, p.content]));
 
   try {

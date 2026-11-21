@@ -12,6 +12,7 @@ import { webhookRoutes } from './routes/webhook.routes';
 import { trackingRoutes } from './routes/tracking.routes';
 import { interestsRoutes } from './routes/interests.routes';
 import { facebookIngestRoutes } from './routes/facebook-ingest.routes';
+import { khmer24IngestRoutes } from './routes/khmer24-ingest.routes';
 import { createBot } from '../bot/bot';
 
 export interface BuildServerOptions {
@@ -76,6 +77,7 @@ export async function buildApiServer(options: BuildServerOptions): Promise<Fasti
   await app.register(trackingRoutes, { container });
   await app.register(interestsRoutes, { container });
   await app.register(facebookIngestRoutes, { container });
+  await app.register(khmer24IngestRoutes, { container });
 
   // Webhook route is always registered so it exists for health/diagnostics, but
   // Telegram is only told to use it when BOT_DELIVERY_MODE=webhook.

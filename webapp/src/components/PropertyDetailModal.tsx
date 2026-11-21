@@ -13,13 +13,13 @@ import {
   Map,
   MessageCircle,
   Phone,
-  Copy,
+  Share2,
   ChevronLeft,
   ChevronRight,
 } from 'lucide-react';
 import type { PropertyDTO } from '../types';
 import { triggerHaptic, openExternalUrl } from '../services/telegram';
-import { copyPhoneNumber, onPhoneActionClick, openTelegramContact, phoneActionHref } from '../services/contact-actions';
+import { onPhoneActionClick, openTelegramContact, phoneActionHref, whatsappActionHref } from '../services/contact-actions';
 import { captureEvent } from '../services/analytics';
 import { formatPropertyTypeLabel } from '../formatters';
 import { PhotoWithFallback } from './PhotoWithFallback';
@@ -32,6 +32,7 @@ interface PropertyDetailModalProps {
   onTelegramContactDispatched?: (property: PropertyDTO) => void;
   isAdmin?: boolean;
   onReview?: (property: PropertyDTO, action: 'approve' | 'reject') => Promise<void>;
+  onShare?: (property: PropertyDTO) => void;
 }
 
 type Landmark = PropertyDTO['specs']['landmarks'][number];
@@ -121,13 +122,21 @@ export const PropertyDetailModal: React.FC<PropertyDetailModalProps> = ({
   onTelegramContactDispatched,
   isAdmin = false,
   onReview,
+  onShare,
 }) => {
   const [activePhoto, setActivePhoto] = useState(0);
   const [reviewBusy, setReviewBusy] = useState<'approve' | 'reject' | null>(null);
   const [lightboxOpen, setLightboxOpen] = useState(false);
   const carouselRef = React.useRef<HTMLDivElement>(null);
   const lightboxRef = React.useRef<HTMLDivElement>(null);
+  const dialogRef = React.useRef<HTMLDivElement>(null);
+  const closeButtonRef = React.useRef<HTMLButtonElement>(null);
+  const lightboxContainerRef = React.useRef<HTMLDivElement>(null);
+  const closePhotosButtonRef = React.useRef<HTMLButtonElement>(null);
+  const isOpen = property !== null;
   const propertyId = property?.id;
+  const callHref = phoneActionHref(property?.contact.phoneLink);
+  const whatsappHref = whatsappActionHref(property?.contact.whatsappLink, property?.contact.phoneLink);
 
   React.useEffect(() => {
     setActivePhoto(0);
@@ -142,6 +151,84 @@ export const PropertyDetailModal: React.FC<PropertyDetailModalProps> = ({
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [lightboxOpen]);
+
+  // Keep keyboard focus within the current modal layer and return it to the opener.
+  React.useEffect(() => {
+    if (!isOpen) return;
+    const previouslyFocused = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    closeButtonRef.current?.focus();
+    return () => {
+      if (previouslyFocused?.isConnected) previouslyFocused.focus();
+    };
+  }, [isOpen]);
+
+  React.useEffect(() => {
+    if (!isOpen || !lightboxOpen) return;
+    const previouslyFocused = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const dialogClose = closeButtonRef.current;
+    closePhotosButtonRef.current?.focus();
+    return () => {
+      if (previouslyFocused?.isConnected) previouslyFocused.focus();
+      else dialogClose?.focus();
+    };
+  }, [isOpen, lightboxOpen]);
+
+  React.useEffect(() => {
+    if (!isOpen) return;
+    const layer = () => lightboxOpen ? lightboxContainerRef.current : dialogRef.current;
+    const primaryFocus = () => lightboxOpen ? closePhotosButtonRef.current : closeButtonRef.current;
+    const focusable = (element: HTMLElement) => {
+      const hasLayout = element.getClientRects().length > 0;
+      return [...element.querySelectorAll<HTMLElement>(
+        'a[href],button:not([disabled]),input:not([disabled]),select:not([disabled]),textarea:not([disabled]),[tabindex]:not([tabindex="-1"])',
+      )].filter((node) => {
+        const style = getComputedStyle(node);
+        return node.tabIndex >= 0 && style.display !== 'none' && style.visibility !== 'hidden'
+          && (!hasLayout || node.getClientRects().length > 0);
+      });
+    };
+    const onFocusIn = (event: FocusEvent) => {
+      const current = layer();
+      if (current && event.target instanceof Node && !current.contains(event.target)) {
+        (primaryFocus() ?? current).focus();
+      }
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        event.stopPropagation();
+        if (lightboxOpen) setLightboxOpen(false);
+        else onClose();
+        return;
+      }
+      if (event.key !== 'Tab') return;
+      const current = layer();
+      if (!current) return;
+      const items = focusable(current);
+      const first = items[0];
+      const last = items[items.length - 1];
+      const active = document.activeElement;
+      if (!first || !last) {
+        event.preventDefault();
+        current.focus();
+      } else if (!current.contains(active) || active === current) {
+        event.preventDefault();
+        (event.shiftKey ? last : first).focus();
+      } else if (event.shiftKey && active === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && active === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+    document.addEventListener('focusin', onFocusIn);
+    document.addEventListener('keydown', onKeyDown, true);
+    return () => {
+      document.removeEventListener('focusin', onFocusIn);
+      document.removeEventListener('keydown', onKeyDown, true);
+    };
+  }, [isOpen, lightboxOpen, onClose]);
 
   const scrollCarouselTo = (ref: React.RefObject<HTMLDivElement | null>, index: number) => {
     const el = ref.current;
@@ -164,6 +251,15 @@ export const PropertyDetailModal: React.FC<PropertyDetailModalProps> = ({
 
   if (!property) return null;
 
+  const handleOriginalClick = (e: React.MouseEvent<HTMLAnchorElement>) => {
+    try {
+      captureEvent('outbound_source_clicked', { propertyId: property.id, listing_ref: property.publicRef ?? null, source: 'detail' });
+    } catch {
+      // ignore
+    }
+    openExternalUrl(property.originalUrl!, e);
+  };
+
   const photos = property.photos && property.photos.length > 0 ? property.photos : [];
   const { nearby: nearbyLandmarks, advertised: advertisedLandmarks } = visibleLandmarks(property.specs, property.city);
 
@@ -179,10 +275,17 @@ export const PropertyDetailModal: React.FC<PropertyDetailModalProps> = ({
 
   return (
     <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex flex-col justify-end sm:justify-center sm:p-4 animate-in fade-in duration-200">
-      <div className="bg-white dark:bg-zinc-900 w-full max-w-2xl max-h-[92vh] sm:rounded-3xl rounded-t-3xl overflow-hidden flex flex-col shadow-2xl relative">
+      <div ref={dialogRef} tabIndex={-1} role="dialog" aria-modal="true" aria-label={property.title} className="bg-white dark:bg-zinc-900 w-full max-w-2xl max-h-[92vh] sm:mx-auto sm:rounded-3xl rounded-t-3xl overflow-hidden flex flex-col shadow-2xl relative">
         {/* Fixed Close & Favorite buttons — stay visible while content scrolls */}
         <div className="absolute top-4 inset-x-4 flex items-center justify-between z-20 pointer-events-none">
+          <div className="flex gap-2 pointer-events-auto">
+          {onShare && property.publicRef && (
+            <button type="button" onClick={() => onShare(property)} className="w-10 h-10 rounded-full bg-black/50 backdrop-blur-md text-white flex items-center justify-center hover:bg-black/70" aria-label="Share listing">
+              <Share2 className="w-5 h-5" />
+            </button>
+          )}
           <button
+            ref={closeButtonRef}
             type="button"
             onClick={() => {
               triggerHaptic('light');
@@ -201,7 +304,8 @@ export const PropertyDetailModal: React.FC<PropertyDetailModalProps> = ({
               onToggleFavorite(property.publicRef ?? property.id);
             }}
             className="w-10 h-10 rounded-full bg-black/50 backdrop-blur-md text-white flex items-center justify-center hover:bg-black/70 active:scale-95 transition-all pointer-events-auto"
-            aria-label="Favorite"
+            aria-label={property.isFavorite ? 'Remove from favorites' : 'Save to favorites'}
+            aria-pressed={Boolean(property.isFavorite)}
           >
             <Heart
               className={`w-5 h-5 ${
@@ -209,6 +313,7 @@ export const PropertyDetailModal: React.FC<PropertyDetailModalProps> = ({
               }`}
             />
           </button>
+          </div>
         </div>
 
         {/* Scrollable Content — photo carousel scrolls away with the body */}
@@ -612,7 +717,7 @@ export const PropertyDetailModal: React.FC<PropertyDetailModalProps> = ({
                 href={property.originalUrl}
                 target="_blank"
                 rel="noopener noreferrer"
-                onClick={(e) => openExternalUrl(property.originalUrl!, e)}
+                onClick={handleOriginalClick}
                 className="text-sky-500 hover:underline font-medium flex items-center gap-1 cursor-pointer"
               >
                 <span>View Original Listing</span>
@@ -626,6 +731,8 @@ export const PropertyDetailModal: React.FC<PropertyDetailModalProps> = ({
         {/* Fullscreen photo lightbox */}
         {lightboxOpen && photos.length > 0 && (
           <div
+            ref={lightboxContainerRef}
+            role="dialog" aria-modal="true" aria-label="Listing photos" tabIndex={-1}
             className="absolute inset-0 z-30 bg-black/95 flex flex-col"
             onClick={() => setLightboxOpen(false)}
           >
@@ -634,6 +741,7 @@ export const PropertyDetailModal: React.FC<PropertyDetailModalProps> = ({
                 {activePhoto + 1} / {photos.length}
               </span>
               <button
+                ref={closePhotosButtonRef}
                 type="button"
                 onClick={() => setLightboxOpen(false)}
                 className="w-10 h-10 rounded-full bg-white/10 text-white flex items-center justify-center hover:bg-white/20 transition-all"
@@ -690,19 +798,6 @@ export const PropertyDetailModal: React.FC<PropertyDetailModalProps> = ({
 
         {/* Sticky Contact Bottom Bar */}
         <div className="shrink-0 bg-white dark:bg-zinc-900 border-t border-zinc-200 dark:border-zinc-800">
-          {property.contact.phone && (
-            <div className="px-4 pt-3 flex items-center justify-between gap-3 text-sm">
-              <span className="text-zinc-700 dark:text-zinc-200 select-all">{property.contact.phone}</span>
-              <button
-                type="button"
-                onClick={(e) => void copyPhoneNumber(property.contact.phone, e)}
-                className="inline-flex items-center gap-1.5 text-sky-600 dark:text-sky-400 font-medium"
-                aria-label="Copy phone number"
-              >
-                <Copy className="w-4 h-4" /> Copy
-              </button>
-            </div>
-          )}
           <div className="p-4 flex items-center gap-3">
           {property.contact.telegramLink ? (
             <button
@@ -710,7 +805,7 @@ export const PropertyDetailModal: React.FC<PropertyDetailModalProps> = ({
               onClick={(e) => {
                 triggerHaptic('light');
                 try {
-                  captureEvent('contact_lead_clicked', { propertyId: property.id, channel: 'telegram' });
+                  captureEvent('contact_lead_clicked', { propertyId: property.id, listing_ref: property.publicRef ?? null, source: 'detail', channel: 'telegram' });
                 } catch {
                   // ignore
                 }
@@ -727,48 +822,50 @@ export const PropertyDetailModal: React.FC<PropertyDetailModalProps> = ({
               href={property.originalUrl}
               target="_blank"
               rel="noopener noreferrer"
-              onClick={(e) => openExternalUrl(property.originalUrl!, e)}
+              onClick={handleOriginalClick}
               className="flex-1 bg-zinc-100 dark:bg-zinc-800 hover:bg-zinc-200 dark:hover:bg-zinc-700 text-zinc-800 dark:text-zinc-200 font-bold py-3 px-4 rounded-xl flex items-center justify-center gap-2 active:scale-98 transition-all text-sm cursor-pointer"
             >
               <span>View Original Listing ↗</span>
             </a>
           ) : null}
 
-          {property.contact.whatsappLink && (
+          {whatsappHref && (
             <a
-              href={property.contact.whatsappLink}
+              href={whatsappHref}
               target="_blank"
               rel="noopener noreferrer"
               onClick={(e) => {
                 triggerHaptic('light');
                 try {
-                  captureEvent('contact_lead_clicked', { propertyId: property.id, channel: 'whatsapp' });
+                  captureEvent('contact_lead_clicked', { propertyId: property.id, listing_ref: property.publicRef ?? null, source: 'detail', channel: 'whatsapp' });
                 } catch {
                   // ignore
                 }
-                openExternalUrl(property.contact.whatsappLink!, e);
+                openExternalUrl(whatsappHref, e);
               }}
               className="p-3 bg-emerald-50 dark:bg-emerald-950/50 hover:bg-emerald-100 text-emerald-600 dark:text-emerald-400 rounded-xl shadow-xs active:scale-95 transition-all flex items-center justify-center cursor-pointer"
-              aria-label="WhatsApp"
+              aria-label="Try WhatsApp"
+              title="Try WhatsApp (if this number has an account)"
             >
               <MessageCircle className="w-5 h-5" />
             </a>
           )}
 
-          {property.contact.phoneLink && phoneActionHref(property.contact.phoneLink) && (
+          {callHref && (
             <a
-              href={phoneActionHref(property.contact.phoneLink)!}
+              href={callHref}
               onClick={(e) => {
                 onPhoneActionClick(e);
                 triggerHaptic('light');
                 try {
-                  captureEvent('contact_lead_clicked', { propertyId: property.id, channel: 'phone' });
+                  captureEvent('contact_lead_clicked', { propertyId: property.id, listing_ref: property.publicRef ?? null, source: 'detail', channel: 'phone' });
                 } catch {
                   // ignore
                 }
               }}
               className="p-3 bg-emerald-500 hover:bg-emerald-600 text-white rounded-xl shadow-md active:scale-95 transition-all flex items-center justify-center"
               aria-label="Call"
+              title="Call with your phone app"
             >
               <Phone className="w-5 h-5" />
             </a>

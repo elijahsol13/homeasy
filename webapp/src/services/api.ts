@@ -11,7 +11,7 @@ function getAuthHeaders(): HeadersInit {
     'Content-Type': 'application/json',
   };
 
-  const initData = getTelegramInitData();
+  const initData = import.meta.env.MODE === 'web' ? '' : getTelegramInitData();
   if (initData) {
     // WebKit / Safari strictly enforces ByteString (0x00-0xFF) for all HTTP headers.
     // If the Telegram user's name has Cyrillic, Khmer, or emojis, raw initData throws:
@@ -20,8 +20,9 @@ function getAuthHeaders(): HeadersInit {
     const safeInitData = encodeURIComponent(initData);
     headers['Authorization'] = `tma ${safeInitData}`;
     headers['X-Telegram-Init-Data'] = safeInitData;
-  } else if (import.meta.env.DEV) {
-    // In local dev without Telegram client, provide test user header
+  } else if (import.meta.env.DEV && import.meta.env.MODE !== 'web'
+      && import.meta.env.VITE_DEV_TELEGRAM_ID === '999888777') {
+    // Explicit test-only opt-in. Browser guests must never impersonate a user.
     headers['X-Dev-Telegram-Id'] = '999888777';
   }
 
@@ -112,12 +113,12 @@ export async function fetchMe(): Promise<MeResponse> {
 }
 
 export async function fetchPropertyById(id: number | string): Promise<PropertyDTO> {
-  const res = await fetch(`${API_BASE}/properties/${id}`, {
+  const res = await fetch(`${API_BASE}/properties/${encodeURIComponent(String(id))}`, {
     headers: getAuthHeaders(),
   });
 
   if (!res.ok) {
-    throw new Error(`Property #${id} not found`);
+    throw Object.assign(new Error(`Property #${id} unavailable (HTTP ${res.status})`), { status: res.status });
   }
 
   return res.json();

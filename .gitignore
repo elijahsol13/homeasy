@@ -3,6 +3,8 @@ node_modules/
 
 # Build output
 dist/
+/dist-tools/
+/artifacts/
 
 # Environment secrets & keys
 .env
@@ -42,6 +44,8 @@ repomix-output.xml
 BACKLOG.md
 *plan*.md
 *PLAN*.md
+!agent_docs/public_web_app_plan_2026-11-10.md
+!agent_docs/modernization_plan.md
 TMA_*.md
 walkthrough*.md
 task*.md

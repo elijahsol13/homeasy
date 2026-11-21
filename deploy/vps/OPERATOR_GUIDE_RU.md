@@ -2,7 +2,7 @@
 
 Цель: перенести **API, Telegram-бота, сбор Khmer24, SQLite и резервные копии** на VPS в Сингапуре (2 vCPU / 4 ГБ RAM / ~40 ГБ NVMe). Сайт и Mini App уже размещаются на Cloudflare Pages. **Facebook/Camoufox остаётся на Mac с домашним IP, своей сессией и отпечатком устройства.** Bright Data запускается по требованию отдельно, если потребуется.
 
-Эта инструкция предназначена для **ручного выполнения владельцем**. Скрипты и конфигурация подготовлены, но фактическая миграция и VPS пока не проверялись. Ветка опубликована на GitHub: `codex/vps-migration-ready`; в ней должен присутствовать проверенный commit с кодом миграции `83c921a0a5178ba5ad7b33572c9dee61911f0b57`. Перед продолжением проверьте его наличие в истории ветки. В командах замените `USER`, `VPS_IP` своими значениями. Не публикуйте `.env`, ключи Cloudflare, базы или Facebook-сессии в Git, чате либо логах.
+Эта инструкция предназначена для **ручного выполнения владельцем**. Скрипты и конфигурация подготовлены локально, но фактическая миграция и VPS пока не проверялись. В командах замените `USER`, `VPS_IP` своими значениями. **Перед шагом 1 проверьте существование ветки `codex/vps-migration-ready` на GitHub и её точный SHA по проверенному отчёту о выпуске; пока публикация не подтверждена, команды клонирования и переноса выполнять нельзя.** Не публикуйте `.env`, ключи Cloudflare, базы или Facebook-сессии в Git, чате либо логах.
 
 ## 0. Как работает откат
 
@@ -38,8 +38,7 @@ sudo docker compose version
 ```bash
 git clone --branch codex/vps-migration-ready --single-branch https://github.com/elijahsol13/homeasy.git ~/homeasy
 cd ~/homeasy
-git show -s --format='%H %s' HEAD
-git merge-base --is-ancestor 83c921a0a5178ba5ad7b33572c9dee61911f0b57 HEAD
+git show -s --format='%h %s' HEAD
 git config --local core.hooksPath .githooks
 mkdir -p data/incoming
 cp deploy/vps/env.vps.template .env
@@ -47,11 +46,7 @@ chmod 600 .env
 nano .env
 ```
 
-`codex/vps-migration-ready` — опубликованная ветка с подготовленным кодом. Команда `git merge-base --is-ancestor 83c921a0a5178ba5ad7b33572c9dee61911f0b57 HEAD` должна завершиться с кодом 0. Это подтверждает, что в клоне есть проверенный код миграции; если команда завершилась с ошибкой, остановитесь и сверьте ветку. **Не клонируйте `main` вслепую.** Не копируйте Mac `.env` целиком; перенесите значения по ключам из шаблона и замените все `CHANGE_ME`.
-
-В шаблоне перечислены все ключи из текущей конфигурации Mac, которые нужны VPS-сервисам: Telegram и администраторы; три настроенных AI-провайдера (`GROQ_API_KEY`, `GEMINI_API_KEY`, `CLOUDFLARE_API_KEY` с ID аккаунта); backend PostHog; публичные URL Mini App/tracking; `ADMIN_REVIEW_ALERTS_ENABLED` и `LOG_LEVEL`. Если на Mac задан `CLOUDFLARE_ACC_ID`, перенесите его значение под именем `CLOUDFLARE_ACCOUNT_ID`. `VITE_POSTHOG_API_KEY` и `VITE_POSTHOG_HOST` скопируйте в настройки сборки Cloudflare Pages для Mini App, не в серверный `.env`. `FB_PROXY` не используется текущим runtime — не переносите его. `BRIGHTDATA_API_KEY` заполните только если будете отдельно запускать одобренные ручные Bright Data-скрипты на VPS; поскольку Compose передаёт общий `.env` контейнерам api, bot и scraper, ключ окажется доступен каждому из них.
-
-Создайте `FB_INGEST_TOKEN` длиной минимум 32 символа; удобно сгенерировать 64 шестнадцатеричных символа командой `openssl rand -hex 32`. Позже запишите **тот же** токен в Mac `.env`. `FB_INGEST_URL` на VPS не нужен. Compose сам задаёт `NODE_ENV`, `DATABASE_PATH`, `HOMEASY_DEPLOYMENT_ROLE`, API bind/port, canonical read path, canary IDs и canonical alerts, перекрывая одноимённые значения из `.env`.
+`codex/vps-migration-ready` — ветка с подготовленным кодом; имя и проверенный commit SHA должны совпадать с указанными в отчёте о подготовке. **Не клонируйте `main` вслепую.** В `.env` перенесите только реально нужные настройки текущей Mac-установки (Telegram, AI, режим бота, Telegram Mini App, администраторы). Удалите либо замените все `CHANGE_ME`; шаблон не содержит действующих ключей. На VPS настройте `FB_INGEST_TOKEN` длиной минимум 32 символа; удобно сгенерировать 64 шестнадцатеричных символа командой `openssl rand -hex 32` и записать **тот же** токен позднее в `.env` на Mac. `FB_INGEST_URL` на VPS **не нужен**. `HOMEASY_DEPLOYMENT_ROLE=vps` и `DATABASE_PATH=/app/data/homeasy.db` устанавливаются в Compose.
 
 Файл Cloudflare Tunnel `deploy/cloudflared/config.yml` уже входит в код и содержит существующие хосты `api.rustycat.cc` и `go.rustycat.cc`. С Mac отдельно и защищённо передайте на VPS **существующий** файл учётных данных туннеля `deploy/cloudflared/7d65861e-355d-45ce-8adf-498432aa148f.json` в тот же каталог. Команда с Mac (после замены адреса):
 
@@ -59,19 +54,7 @@ nano .env
 scp deploy/cloudflared/7d65861e-355d-45ce-8adf-498432aa148f.json USER@VPS_IP:homeasy/deploy/cloudflared/
 ```
 
-На VPS проверьте пользователя контейнера и дайте ему доступ к credentials, не открывая файл другим пользователям хоста:
-
-```bash
-docker image inspect cloudflare/cloudflared:latest --format '{{.Config.User}}'
-# Для официального образа ожидается 65532:65532.
-sudo chgrp 65532 deploy/cloudflared
-sudo chmod 750 deploy/cloudflared
-sudo chgrp 65532 deploy/cloudflared/7d65861e-355d-45ce-8adf-498432aa148f.json
-sudo chmod 640 deploy/cloudflared/7d65861e-355d-45ce-8adf-498432aa148f.json
-stat -c '%A %U:%G %a %n' deploy/cloudflared deploy/cloudflared/7d65861e-355d-45ce-8adf-498432aa148f.json
-```
-
-В официальном Docker image `cloudflared` работает с UID/GID `65532:65532` ([Dockerfile Cloudflare](https://github.com/cloudflare/cloudflared/blob/master/Dockerfile)). Поэтому `chmod 600` на credential JSON не подходит: контейнер не владеет файлом и не может его прочитать. Если `docker image inspect` показывает другой UID/GID, замените `65532` на фактическую группу контейнера. Не создавайте новый Cloudflare Tunnel и не меняйте DNS: используется **тот же named tunnel**. **Пока не запускайте сервис `tunnel` на VPS**, чтобы старый Mac-коннектор продолжал обслуживать трафик.
+На VPS: `chmod 600 deploy/cloudflared/*.json`. Не создавайте новый Cloudflare Tunnel и не меняйте DNS: используется **тот же named tunnel**. **Пока не запускайте сервис `tunnel` на VPS**, чтобы старый Mac-коннектор продолжал обслуживать трафик.
 
 Соберите образы заранее (этап сборки скрапера с Camoufox может оказаться самым тяжёлым для 4 ГБ RAM):
 
@@ -162,17 +145,6 @@ docker compose logs --tail=80 api backup
 
 ## 5. Переключить Cloudflare Tunnel и Telegram-бота
 
-Сначала убедитесь, что локальный API на VPS отвечает. Если API log сообщает `FB_INGEST_URL: Invalid url`, удалите эту строку **из VPS `.env`** (не оставляйте пустое значение): переменная нужна только на Mac. Пересоздайте только API и проверьте локальный health:
-
-```bash
-docker compose up -d --no-deps --force-recreate api
-curl -fsS http://127.0.0.1:3000/health
-```
-
-Если `cloudflared` ранее сообщал `permission denied` для JSON credentials, сначала исправьте права на каталог и файл по командам шага 1. Не исправляйте это через `chmod 644` или `chmod 666`.
-
-**Не переходите дальше, пока локальная проверка API не проходит.**
-
 Только после проверки VPS API — на Mac:
 
 ```bash
@@ -184,18 +156,8 @@ docker stop homeasy-tunnel
 ```bash
 docker compose up -d --no-deps tunnel
 docker compose logs --tail=80 tunnel
-if curl -fsS https://api.rustycat.cc/health >/dev/null && \
-   curl -fsS https://api.rustycat.cc/api/v1/filters/metadata >/dev/null; then
-  echo 'Публичный API отвечает; можно переходить к запуску бота.'
-else
-  echo 'СТОП: публичный API не прошёл обе проверки. Не запускайте bot или scraper.'
-  exit 1
-fi
-```
-
-**Запускайте бота только если обе проверки выше прошли.** Если случайно запустили его во время диагностики: `docker compose stop bot`. Затем отдельной командой:
-
-```bash
+curl -fsS https://api.rustycat.cc/health
+curl -fsS https://api.rustycat.cc/api/v1/filters/metadata
 docker compose up -d --no-deps bot
 docker compose logs --tail=80 bot
 ```
@@ -207,45 +169,11 @@ docker compose logs --tail=80 bot
 Khmer24 **не проверялся** с IP дата-центра Сингапура. Даже HTTP 200 с сайта ещё не гарантирует, что Camoufox извлекает объявления. Сначала выполните **один ограниченный проход по одной категории, максимум одно объявление**, через уже существующий CLI Khmer24. Он использует временную SQLite и `--dump-raw`, поэтому не импортирует найденное в рабочую базу и не вызывает AI-обогащение. Команда запускает отдельный одноразовый контейнер, а не постоянный сервис:
 
 ```bash
-curl -sS --max-time 15 -D /tmp/k24.headers -o /dev/null -w 'http=%{http_code} remote_ip=%{remote_ip}\n' 'https://www.khmer24.com/en/c-house-for-rent?province=siem-reap&sortby=newads&date=last-7-days'
-grep -i '^cf-ray:' /tmp/k24.headers || true
+curl -I --max-time 10 https://www.khmer24.com/
 docker compose run --rm --no-deps scraper node dist/modules/parser/khmer24.scraper.js --target=0 --limit-listings=1 --no-enrich --dump-raw=/tmp/k24-smoke.json --db-path=/tmp/k24-smoke.db
 ```
 
-HTTP-статус и `cf-ray` выше относятся к обычному `curl`; это дополнительный сетевой ориентир, а не замена браузерному smoke и не доказательство, что Camoufox получает тот же ответ.
-
-**Смотрите фактический итог в stdout:** нужно `Total Scraped` больше нуля при `Errors: 0`. Нулевое число объявлений или успешный код выхода сами по себе ничего не доказывают. При Cloudflare `Access denied`, пустой выдаче или иных ошибках не запускайте постоянный скрапер. Сам smoke не меняет рабочую SQLite: используется `/tmp/k24-smoke.db`, а `--dump-raw` пропускает canonical ingestion. Первый запуск Camoufox создаёт закреплённый `data/k24_device.json` в VPS `./data` bind mount; сохраните этот VPS-файл и не заменяйте Mac-версией.
-
-Если для доступа нужна Khmer24-сессия, войдите в аккаунт в Camoufox **на Mac**, а затем передайте только файл сессии. В корне проекта на Mac выполните:
-
-```bash
-npm run k24:login
-```
-
-В открывшемся окне завершите вход, убедитесь, что Khmer24 действительно показывает авторизованный аккаунт, и нажмите Enter в терминале. Скрипт сохраняет cookies и localStorage в `data/k24_session.json`, но сам не проверяет, что вход удался. Затем ограничьте доступ к файлу и передайте его по SSH/SCP на VPS:
-
-```bash
-chmod 600 data/k24_session.json
-scp -p data/k24_session.json USER@VPS_IP:homeasy/data/k24_session.from_mac.json
-```
-
-На VPS установите загруженную сессию, предварительно сохранив прежнюю, если она была:
-
-```bash
-cd ~/homeasy
-test -s data/k24_session.from_mac.json || { echo 'СТОП: новая сессия не передана'; exit 1; }
-if test -s data/k24_session.json; then
-  SESSION_BACKUP="data/k24_session.before_transfer_$(date -u +%Y%m%dT%H%M%SZ).json"
-  cp -p data/k24_session.json "$SESSION_BACKUP"
-  chmod 600 "$SESSION_BACKUP"
-  echo "Старая сессия сохранена: $SESSION_BACKUP"
-fi
-mv data/k24_session.from_mac.json data/k24_session.json
-chmod 600 data/k24_session.json
-test -s data/k24_session.json || { echo 'СТОП: сессия не передана'; exit 1; }
-```
-
-Файл содержит активные учетные cookies: не добавляйте его в Git, не вставляйте в чат или логи и оставьте режим `600`. Сохранённую сессию VPS не удаляйте: если проверка не поможет, восстановите её командой `cp -p data/k24_session.before_transfer_YYYYMMDDTHHMMSSZ.json data/k24_session.json`, заменив имя на точное, напечатанное выше. **Не копируйте `k24_device.json` с Mac:** на VPS должен остаться уже созданный VPS device identity. Cookie-сессия может быть привязана к IP или устройству, поэтому её перенос не гарантирует снятия Cloudflare-блокировки. Повторите только ограниченный smoke выше; если снова приходит Cloudflare `Access denied`, остановитесь — постоянный скрапер не запускайте. Если smoke прошёл с `Total Scraped` больше нуля и `Errors: 0`, включите штатный цикл:
+**Смотрите фактический итог в stdout:** нужно `Total Scraped` больше нуля при `Errors: 0`. Нулевое число объявлений или успешный код выхода сами по себе ничего не доказывают. При Cloudflare 403, отсутствии объявлений или иных ошибках не запускайте постоянный скрапер. `npm run k24:login` предполагает интерактивное графическое окно Camoufox: на обычном VPS без графической сессии этот сценарий автоматически не заработает; понадобится отдельный ручной способ входа на Linux. Если ограниченный проход действительно успешен, включите штатный цикл:
 
 ```bash
 docker compose up -d --no-deps scraper

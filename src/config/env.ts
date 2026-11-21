@@ -55,6 +55,9 @@ const EnvSchema = z.object({
   FB_INGEST_TOKEN: z.string().min(32).optional(),
   /** Explicit opt-in: local Facebook results are sent to the VPS instead of local SQLite. */
   FB_INGEST_URL: z.string().url().optional(),
+  /** Manual Mac Khmer24 batches are enriched and imported on the VPS. */
+  K24_INGEST_TOKEN: z.string().min(32).optional(),
+  K24_INGEST_URL: z.string().url().optional(),
   HOMEASY_DEPLOYMENT_ROLE: z.enum(['vps']).optional(),
   GROQ_API_KEY: z.string().optional(),
   CLOUDFLARE_API_KEY: z.string().optional(),

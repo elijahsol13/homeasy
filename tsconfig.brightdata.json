@@ -1,0 +1,12 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "rootDir": ".",
+    "outDir": "dist-tools"
+  },
+  "include": [
+    "scripts/brightdata-batch-test.ts",
+    "scripts/brightdata-classify.ts"
+  ],
+  "exclude": ["node_modules", "dist", "dist-tools"]
+}

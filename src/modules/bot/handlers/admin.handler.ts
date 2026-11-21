@@ -1,4 +1,4 @@
-import { Composer } from 'grammy';
+import { Composer, InlineKeyboard } from 'grammy';
 import type { MyContext } from '../session';
 import type { AppContainer } from '../../../container';
 import { createDatabaseBackup } from '../../../database/backup';
@@ -6,6 +6,7 @@ import { runEnrichment } from '../../../database/enrich-properties';
 import { env } from '../../../config/env';
 import { adminMenuKeyboard, adminBackKeyboard } from '../keyboards/admin.keyboard';
 import { getScraperSettings, saveScraperSettings } from '../../../services/settings';
+import { BrightDataJobStore, buildBrightDataPlan, type BrightDataScope } from '../../../services/brightdata-job-control';
 
 export function createAdminHandler(container: AppContainer): Composer<MyContext> {
   const handler = new Composer<MyContext>();
@@ -19,6 +20,154 @@ export function createAdminHandler(container: AppContainer): Composer<MyContext>
     const user = container.usersRepo.findByTelegramId(from.id);
     return user?.role === 'admin';
   }
+
+  // ─── Bright Data collection (VPS worker, manual paid confirmation) ──────────
+  function brightDataMenu(): InlineKeyboard {
+    return new InlineKeyboard()
+      .text('🔥 14 дней · 3 лучшие группы', 'bd:scope:top3').row()
+      .text('🌐 30 дней · все публичные группы', 'bd:scope:all').row()
+      .text('📊 Статус', 'bd:status').row()
+      .text('◀️ Админка', 'cb:admin:menu');
+  }
+
+  function brightDataOptions(scope: BrightDataScope): InlineKeyboard {
+    return new InlineKeyboard().text('100', `bd:p:${scope}:100`)
+      .text('500', `bd:p:${scope}:500`).text('1000', `bd:p:${scope}:1000`).row()
+      .text('◀️ Сценарии', 'bd:open');
+  }
+
+  function safeHtml(text: string): string {
+    return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  }
+
+  function brightDataStatus(): { text: string; keyboard: InlineKeyboard } {
+    const store = new BrightDataJobStore();
+    try {
+      const job = store.latest();
+      if (!job) return { text: '📥 Bright Data: заданий пока не было.', keyboard: brightDataMenu() };
+      const states: Record<string, string> = {
+        queued: '⏳ В очереди', collecting: '📥 Сбор постов', classifying: '🤖 AI, нормализация и загрузка',
+        completed: '✅ Завершено', cancelled: '⏹ Остановлено', failed: '❌ Ошибка', needs_review: '⚠️ Нужна ручная проверка',
+      };
+      const received = job.result?.recordsReceived;
+      const text = `📥 <b>Bright Data — ${states[job.status]}</b>\n\n` +
+        `Запрошено: до ${job.budget} записей · ${job.groupCount} групп\n` +
+        `Окно: ${job.startDate} — ${job.endDate} (Камбоджа)\n` +
+        `Задача: <code>${job.runId}</code>\n` +
+        (received !== undefined ? `Получено: ${received}\n` : '') +
+        (job.result?.totalUniqueSupply !== undefined ? `Уникальных supply: ${job.result.totalUniqueSupply}; demand: ${job.result.totalUniqueDemand}\n` : '') +
+        (job.cancelRequested && job.status === 'collecting' ? '⏹ Остановка запрошена: уже отправленный запрос завершится.\n' : '') +
+        (job.error ? `\n⚠️ ${safeHtml(job.error.slice(0, 350))}` : '') +
+        '\nРезультат обработки может требовать модерации перед появлением в каталоге.';
+      const keyboard = new InlineKeyboard().text('🔄 Обновить', 'bd:status').row();
+      if (['queued', 'collecting'].includes(job.status) && !job.cancelRequested) {
+        keyboard.text('⏹ Остановить следующие запросы', 'bd:cancel').row();
+      }
+      keyboard.text('◀️ Bright Data', 'bd:open');
+      return { text, keyboard };
+    } finally { store.close(); }
+  }
+
+  async function brightDataReply(ctx: MyContext, text: string, keyboard: InlineKeyboard): Promise<void> {
+    if (ctx.callbackQuery?.message) {
+      await ctx.answerCallbackQuery();
+      try { await ctx.editMessageText(text, { parse_mode: 'HTML', reply_markup: keyboard }); return; }
+      catch { /* Telegram rejects unmodified text; send a fresh message. */ }
+    }
+    await ctx.reply(text, { parse_mode: 'HTML', reply_markup: keyboard });
+  }
+
+  handler.command('brightdata', async (ctx) => {
+    if (!isAdmin(ctx)) { await ctx.reply('⛔ Только для администраторов.'); return; }
+    const parts = ctx.message?.text?.trim().split(/\s+/).slice(1) ?? [];
+    if (parts[0] === 'status') {
+      const { text, keyboard } = brightDataStatus();
+      await brightDataReply(ctx, text, keyboard);
+      return;
+    }
+    const scope: BrightDataScope = parts[0] === 'all' ? 'all' : 'top3';
+    const count = Number(parts[0] === 'all' ? parts[1] : parts[0]);
+    if ([100, 500, 1000].includes(count)) {
+      const plan = buildBrightDataPlan(scope, count);
+      await brightDataReply(ctx, `📋 <b>Предпросмотр Bright Data</b>\n\n` +
+        `${scope === 'top3' ? '3 наиболее результативные группы' : '16 известных публичных групп'}\n` +
+        `📅 ${plan.startDate} — ${plan.endDate}\n` +
+        `Лимит: до ${plan.budget} записей, до ${plan.maxRequests} платных запросов (по ${plan.perGroupLimit} на группу).\n\n` +
+        '⚠️ Bright Data и AI могут списать средства. Точная стоимость и доступный баланс не проверены. ' +
+        'Количество новых объявлений может быть меньше; приватные группы исключены.',
+        new InlineKeyboard().text('✅ Подтвердить платный запуск', `bd:go:${scope}:${count}:${plan.endDate}`)
+          .row().text('◀️ Отмена', 'bd:open'));
+      return;
+    }
+    await brightDataReply(ctx, '📥 <b>Bright Data / Facebook</b>\n\nВыбери сценарий и лимит. ' +
+      'Команда: <code>/brightdata 1000</code> (3 группы, 14 дней), ' +
+      '<code>/brightdata all 500</code> (все публичные, 30 дней), ' +
+      '<code>/brightdata status</code>.\n\nЗапуск вручную; расписания нет.', brightDataMenu());
+  });
+
+  handler.callbackQuery('bd:open', async (ctx) => {
+    if (!isAdmin(ctx)) { await ctx.answerCallbackQuery({ text: '⛔ Только администратор', show_alert: true }); return; }
+    await brightDataReply(ctx, '📥 <b>Bright Data</b>\nВыбери период и группы. Потом укажи лимит постов.', brightDataMenu());
+  });
+
+  handler.callbackQuery(/^bd:scope:(top3|all)$/, async (ctx) => {
+    if (!isAdmin(ctx)) { await ctx.answerCallbackQuery({ text: '⛔ Только администратор', show_alert: true }); return; }
+    const scope = ctx.match[1] as BrightDataScope;
+    await brightDataReply(ctx, scope === 'top3' ? '🔥 14 дней, 3 самые результативные группы. Сколько постов запросить?' :
+      '🌐 30 дней, 16 публичных групп. Сколько постов запросить?', brightDataOptions(scope));
+  });
+
+  handler.callbackQuery(/^bd:p:(top3|all):(100|500|1000)$/, async (ctx) => {
+    if (!isAdmin(ctx)) { await ctx.answerCallbackQuery({ text: '⛔ Только администратор', show_alert: true }); return; }
+    const scope = ctx.match[1] as BrightDataScope;
+    const plan = buildBrightDataPlan(scope, Number(ctx.match[2]));
+    await brightDataReply(ctx,
+      `📋 <b>Bright Data — подтвердить платный запуск?</b>\n\n` +
+      `📅 ${plan.startDate} — ${plan.endDate} (Камбоджа)\n` +
+      `Групп: ${plan.groupCount}; запросов: до ${plan.maxRequests}\n` +
+      `Постов: до ${plan.budget} (предел на группу ${plan.perGroupLimit}).\n\n` +
+      '⚠️ Bright Data + AI расходуют лимиты/деньги. Точная цена и баланс неизвестны. ' +
+      'Уникальных объявлений может быть меньше; 6 приватных и 1 неопределённая группа исключены.',
+      new InlineKeyboard().text('✅ Запустить за деньги', `bd:go:${scope}:${plan.budget}:${plan.endDate}`)
+        .row().text('◀️ Назад', `bd:scope:${scope}`));
+  });
+
+  handler.callbackQuery(/^bd:go:(top3|all):(100|500|1000):(\d{4}-\d{2}-\d{2})$/, async (ctx) => {
+    if (!isAdmin(ctx)) { await ctx.answerCallbackQuery({ text: '⛔ Только администратор', show_alert: true }); return; }
+    const scope = ctx.match[1] as BrightDataScope;
+    const plan = buildBrightDataPlan(scope, Number(ctx.match[2]));
+    if (plan.endDate !== ctx.match[3]) {
+      await brightDataReply(ctx, 'День изменился. Открой свежий предпросмотр перед платным запуском.', brightDataMenu());
+      return;
+    }
+    const messageId = ctx.callbackQuery.message?.message_id;
+    if (!messageId || !ctx.chat || !ctx.from) { await ctx.answerCallbackQuery({ text: 'Не удалось определить запрос', show_alert: true }); return; }
+    const store = new BrightDataJobStore();
+    try {
+      const job = store.enqueue(plan, ctx.from.id, ctx.chat.id, `${ctx.chat.id}:${messageId}`);
+      await brightDataReply(ctx, `✅ Задача поставлена в очередь VPS.\n` +
+        `Период: ${job.startDate} — ${job.endDate}. Лимит: ${job.budget}.\n` +
+        'После сбора автоматически выполнятся AI, нормализация, дедупликация и canonical ingest.',
+        new InlineKeyboard().text('📊 Статус', 'bd:status').row().text('◀️ Меню', 'bd:open'));
+    } catch (error) {
+      await brightDataReply(ctx, `⚠️ ${safeHtml(error instanceof Error ? error.message : String(error))}`, brightDataMenu());
+    } finally { store.close(); }
+  });
+
+  handler.callbackQuery('bd:status', async (ctx) => {
+    if (!isAdmin(ctx)) { await ctx.answerCallbackQuery({ text: '⛔ Только администратор', show_alert: true }); return; }
+    const { text, keyboard } = brightDataStatus();
+    await brightDataReply(ctx, text, keyboard);
+  });
+
+  handler.callbackQuery('bd:cancel', async (ctx) => {
+    if (!isAdmin(ctx)) { await ctx.answerCallbackQuery({ text: '⛔ Только администратор', show_alert: true }); return; }
+    const store = new BrightDataJobStore();
+    try { const job = store.latest(); if (job) store.requestCancel(job.id); }
+    finally { store.close(); }
+    const { text, keyboard } = brightDataStatus();
+    await brightDataReply(ctx, text, keyboard);
+  });
 
   // ─── Admin Dashboard ─────────────────────────────────────────────────────────
 

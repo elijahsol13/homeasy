@@ -8,7 +8,7 @@ import {
 } from '../src/modules/parser/khmer24.scraper';
 import type { Browser } from 'playwright';
 import type { CamoufoxBrowser } from '../src/modules/parser/camoufox-server';
-import { isStaleKhmer24Original, khmer24OriginalPostedAt, khmer24PublishedAt, khmer24SourceLocation, parseKhmer24DetailHtml } from '../src/modules/parser/khmer24-http';
+import { isKhmer24OriginalWithinDays, isStaleKhmer24Original, khmer24OriginalPostedAt, khmer24PublishedAt, khmer24SourceLocation, parseKhmer24DetailHtml } from '../src/modules/parser/khmer24-http';
 
 function detailPostFixture(id: string, overrides: Record<string, unknown> = {}): string {
   const nodes: unknown[] = [];
@@ -99,6 +99,33 @@ describe('Khmer24 API Scraper', () => {
     test('does not infer staleness for missing or invalid dates', () => {
       expect(isStaleKhmer24Original(undefined, now)).toBe(false);
       expect(isStaleKhmer24Original('3 days ago', now)).toBe(false);
+    });
+  });
+
+  describe('14-day Khmer24 original-publication collection', () => {
+    const now = Date.parse('2026-11-10T16:00:00+07:00');
+
+    test('requests the expanded original feed for a two-week collection', () => {
+      const url = new URL(buildFeedPageUrl(KHMER24_TARGETS[0], 14, 250));
+      expect(url.searchParams.get('date')).toBe('last-14-days');
+      expect(url.searchParams.get('limit')).toBe('250');
+      expect(url.searchParams.get('province')).toBe('siem-reap');
+      expect(new URL(buildFeedPageUrl(KHMER24_TARGETS[0])).searchParams.get('date')).toBe('last-7-days');
+    });
+
+    test('includes exact rolling-window boundary and excludes old renewals, future and missing dates', () => {
+      expect(isKhmer24OriginalWithinDays('2026-10-27 16:00:00', 14, now)).toBe(true);
+      expect(isKhmer24OriginalWithinDays('2026-10-27 15:59:59', 14, now)).toBe(false);
+      expect(isKhmer24OriginalWithinDays('2026-11-10 16:00:00', 14, now)).toBe(true);
+      expect(isKhmer24OriginalWithinDays('2026-11-10 16:00:01', 14, now)).toBe(false);
+      const bumped = detailPostFixture('14071624', {
+        posted_date: '2026-10-01 10:00:00', renew_date: '2026-11-09 12:00:00',
+      });
+      expect(isKhmer24OriginalWithinDays(khmer24OriginalPostedAt(bumped,
+        'https://www.khmer24.com/en/post-adid-14071624'), 14, now)).toBe(false);
+      expect(isKhmer24OriginalWithinDays(undefined, 14, now)).toBe(false);
+      expect(isKhmer24OriginalWithinDays('3 days ago', 14, now)).toBe(false);
+      expect(isKhmer24OriginalWithinDays('2026-11-09', 0, now)).toBe(false);
     });
   });
   describe('toHighResImageUrl', () => {

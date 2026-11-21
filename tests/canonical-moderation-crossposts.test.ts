@@ -1,6 +1,6 @@
 import { DatabaseSync } from 'node:sqlite';
 import {
-  evaluateCorroboratedCrossposts, reviewDefaultPending,
+  diagnoseCorroboratedCrossposts, evaluateCorroboratedCrossposts, reviewDefaultPending,
   type CurrentModerationSource, type ModerationCandidate,
 } from '../src/modules/parser/canonical-moderation-policy';
 
@@ -21,7 +21,7 @@ const base: ModerationCandidate = {
   raw_text: raw, raw_payload_json: payload('https://www.facebook.com/profile.php?id=123'),
   current_count: 2, conflicting_url: 0, legacy_aliases: 0,
   original_published_at: date, first_source_seen_at: date,
-  matching_active_listings: 0, primary_source_occurrence_id: 10,
+  primary_source_occurrence_id: 10,
 };
 const sources: CurrentModerationSource[] = [
   { occurrence_id: 10, source_item_id: 100, source_type: 'FACEBOOK_GROUP',
@@ -35,6 +35,26 @@ const askingRaw = raw.replace('Rent $350/month.', 'Asking Price: $450.');
 const askingPayload = payload('https://www.facebook.com/profile.php?id=123', 450);
 
 describe('corroborated Facebook crossposts', () => {
+  it('diagnoses why a crosspost is held without changing existing moderation decisions', () => {
+    const cases: Array<[CurrentModerationSource[], string]> = [
+      [[sources[0]!, { ...sources[1]!, raw_payload_json: payload('https://www.facebook.com/profile.php?id=999'),
+        raw_text: raw + ' kitchen kitchen' }], 'CROSSPOST_AUTHOR_MISMATCH'],
+      [[sources[0]!, { ...sources[1]!, raw_text: raw.replace('$350/month', '$450/month') }], 'CROSSPOST_NUMERIC_FACTS_DIFFER'],
+      [[sources[0]!, { ...sources[1]!, raw_text: raw.replace('quiet garden, parking for motorcycles, recently renovated',
+        'seaside resort, tropical orchard, mountain garden, separate ownership, short-term holiday bookings') }],
+      'CROSSPOST_TEXT_SIMILARITY_TOO_LOW'],
+      [[sources[0]!, { ...sources[1]!, source_url: sources[0]!.source_url }], 'CROSSPOST_DUPLICATE_URL'],
+    ];
+    for (const [variant, reason] of cases) {
+      expect(diagnoseCorroboratedCrossposts(base, variant).reasons).toContain(reason);
+      expect(evaluateCorroboratedCrossposts(base, variant)).toEqual({
+        approved: false, reasons: ['AMBIGUOUS_SOURCE_BINDINGS'],
+      });
+    }
+    expect(diagnoseCorroboratedCrossposts({ ...base, current_count: 13 }, sources).reasons)
+      .toContain('CROSSPOST_COUNT_OUT_OF_RANGE');
+    expect(diagnoseCorroboratedCrossposts(base, sources)).toEqual({ approved: true, reasons: [] });
+  });
   it('accepts two independent identical originals of the same rental', () => {
     expect(evaluateCorroboratedCrossposts(base, sources)).toEqual({ approved: true, reasons: [] });
   });
@@ -163,7 +183,7 @@ describe('corroborated Facebook crossposts', () => {
           source.occurrence_id,source.source_item_id,1,1,source.source_url,date,date,source.group_name ?? null);
       }
       db.prepare(`INSERT INTO canonical_listings VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`).run(
-        2,base.status,base.availability_status,'Separate legacy rental',base.description,base.price,
+        2,base.status,base.availability_status,base.title,base.description,base.price,
         base.bedrooms,base.bathrooms,base.city,base.category,base.property_type,20);
       db.exec(`INSERT INTO canonical_listing_moderation
         (listing_id,review_status,review_reason,decision_origin)
@@ -171,7 +191,8 @@ describe('corroborated Facebook crossposts', () => {
           'INGESTION_VALIDATED_V1')`);
       const legacyUrl = 'https://www.facebook.com/groups/789/posts/3/';
       db.prepare('INSERT INTO source_items VALUES (?,?,?,?,?,?,?)').run(200,'FACEBOOK_GROUP',legacyUrl,
-        legacyUrl,raw,payload('https://www.facebook.com/profile.php?id=123'),date);
+        legacyUrl,raw.replace('quiet garden', 'second address on a different street'),
+        payload('https://www.facebook.com/profile.php?id=456'),date);
       db.prepare('INSERT INTO canonical_listing_source_occurrences VALUES (?,?,?,?,?,?,?,?)').run(
         20,200,2,1,legacyUrl,date,date,null);
 
@@ -181,7 +202,7 @@ describe('corroborated Facebook crossposts', () => {
       expect(decision.review_status).toBe('approved');
       expect(JSON.parse(decision.decision_evidence_json).verifiedSourceItemIds).toEqual([100, 101]);
       expect(db.prepare('SELECT review_status,policy_version,review_reason FROM canonical_listing_moderation WHERE listing_id=2')
-        .get()).toEqual({review_status:'approved',policy_version:'source-corroborated-crossposts-v12',review_reason:null});
+        .get()).toEqual({review_status:'approved',policy_version:'source-corroborated-crossposts-v13',review_reason:null});
 
       db.prepare(`INSERT INTO canonical_listings VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`).run(
         3,base.status,base.availability_status,'Alias-conflict rental',base.description,base.price,

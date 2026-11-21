@@ -4,6 +4,7 @@ import type { FilterState } from '../types';
 import { triggerHaptic } from '../services/telegram';
 
 interface HeaderProps {
+  wide?: boolean;
   filters: FilterState;
   onFilterChange: (filters: FilterState) => void;
   onOpenFilterDrawer: () => void;
@@ -15,6 +16,7 @@ export const Header: React.FC<HeaderProps> = ({
   onFilterChange,
   onOpenFilterDrawer,
   activeFilterCount,
+  wide = false,
 }) => {
   const handleSearchInput = (e: React.ChangeEvent<HTMLInputElement>) => {
     onFilterChange({
@@ -25,6 +27,7 @@ export const Header: React.FC<HeaderProps> = ({
 
   return (
     <header className="sticky top-0 z-30 bg-white/95 dark:bg-zinc-900/95 backdrop-blur-md border-b border-zinc-200 dark:border-zinc-800 px-4 pt-3 pb-2 shadow-xs transition-colors">
+      <div className={wide ? 'max-w-6xl mx-auto' : ''}>
       {/* City Switcher Tabs */}
       <div className="flex items-center justify-between gap-2 mb-2.5">
         <div className="flex items-center bg-zinc-100 dark:bg-zinc-800 p-1 rounded-xl">
@@ -74,6 +77,7 @@ export const Header: React.FC<HeaderProps> = ({
             </span>
           )}
         </button>
+      </div>
       </div>
     </header>
   );

@@ -5,7 +5,11 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "dev:web": "vite --mode web",
+    "dev:tma": "vite --mode telegram",
     "build": "tsc -b && vite build",
+    "build:web": "tsc -b && vite build --mode web",
+    "build:tma": "tsc -b && vite build --mode telegram",
     "lint": "oxlint",
     "preview": "vite preview",
     "test": "vitest run"

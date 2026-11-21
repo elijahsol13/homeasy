@@ -14,18 +14,19 @@ const MAX_BATCH_BYTES = 1024 * 1024;
 const emptySummary = (): BatchSummary => ({ newSourceItems: 0, updatedSourceItems: 0, unchangedSourceItems: 0, errors: [] });
 const OUTBOX_DIR = path.resolve('data/fb_outbox');
 
-function requireSecureTransport(url: string, token: string): void {
+function requireSecureTransport(url: string, token: string, source = 'Facebook'): void {
   const parsed = new URL(url);
   if (parsed.protocol !== 'https:' && !(parsed.protocol === 'http:' && ['localhost', '127.0.0.1'].includes(parsed.hostname))) {
-    throw new Error('Facebook ingest URL must use HTTPS');
+    throw new Error(`${source} ingest URL must use HTTPS`);
   }
-  if (token.length < 32) throw new Error('FB_INGEST_TOKEN must contain at least 32 characters');
+  if (token.length < 32) throw new Error(`${source} ingest token must contain at least 32 characters`);
 }
 
 export async function flushFacebookOutbox(
   outboxDir: string, url: string, token: string, transport: typeof fetch = fetch,
+  timeoutMs = 30_000, source = 'Facebook',
 ): Promise<BatchSummary> {
-  requireSecureTransport(url, token);
+  requireSecureTransport(url, token, source);
   if (!fs.existsSync(outboxDir)) return emptySummary();
   const combined = emptySummary();
   const files = fs.readdirSync(outboxDir).filter((file) => file.endsWith('.json')).sort();
@@ -34,15 +35,15 @@ export async function flushFacebookOutbox(
     const batch = JSON.parse(fs.readFileSync(filePath, 'utf8')) as Batch;
     const response = await transport(url, {
       method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-      body: JSON.stringify(batch), signal: AbortSignal.timeout(30_000),
+      body: JSON.stringify(batch), signal: AbortSignal.timeout(timeoutMs),
     });
-    if (!response.ok) throw new Error(`Facebook batch ingest HTTP ${response.status}; ${files.length} batch(es) queued`);
+    if (!response.ok) throw new Error(`${source} batch ingest HTTP ${response.status}; ${files.length} batch(es) queued`);
     const result = await response.json() as BatchSummary;
     if (!Array.isArray(result.errors) || result.errors.length > 0 ||
         ![result.newSourceItems, result.updatedSourceItems, result.unchangedSourceItems]
           .every((n) => Number.isSafeInteger(n) && n >= 0) ||
         result.newSourceItems + result.updatedSourceItems + result.unchangedSourceItems !== batch.listings.length) {
-      throw new Error('Facebook importer returned an invalid or incomplete response; batch retained');
+      throw new Error(`${source} importer returned an invalid or incomplete response; batch retained`);
     }
     // Remove only after a complete, acknowledged canonical DB ingestion.
     fs.unlinkSync(filePath);
@@ -56,11 +57,12 @@ export async function flushFacebookOutbox(
 export async function queueFacebookBatch(
   target: Group, listings: RawListing[], outboxDir: string, url: string, token: string,
   transport: typeof fetch = fetch, onDurable?: () => void,
+  timeoutMs = 30_000, source = 'Facebook', maxBatchItems = 10,
 ): Promise<BatchSummary> {
-  requireSecureTransport(url, token);
+  requireSecureTransport(url, token, source);
   if (!listings.length) {
     onDurable?.();
-    return flushFacebookOutbox(outboxDir, url, token, transport);
+    return flushFacebookOutbox(outboxDir, url, token, transport, timeoutMs, source);
   }
   fs.mkdirSync(outboxDir, { recursive: true, mode: 0o700 });
   // Validate ALL items before creating any queue files. Keep each request below
@@ -69,9 +71,9 @@ export async function queueFacebookBatch(
   let chunk: RawListing[] = [];
   for (const listing of listings) {
     if (Buffer.byteLength(JSON.stringify({ target, listings: [listing] })) > MAX_BATCH_BYTES) {
-      throw new Error('Facebook listing exceeds remote ingest 1 MiB request limit');
+      throw new Error(`${source} listing exceeds remote ingest 1 MiB request limit`);
     }
-    if (chunk.length >= 10 || (chunk.length > 0 &&
+    if (chunk.length >= maxBatchItems || (chunk.length > 0 &&
         Buffer.byteLength(JSON.stringify({ target, listings: [...chunk, listing] })) > MAX_BATCH_BYTES)) {
       chunks.push(chunk);
       chunk = [];
@@ -90,7 +92,7 @@ export async function queueFacebookBatch(
   // The producer may safely advance its seen-state once every new batch is
   // durable, even if the HTTP attempt fails and the outbox must retry later.
   onDurable?.();
-  return flushFacebookOutbox(outboxDir, url, token, transport);
+  return flushFacebookOutbox(outboxDir, url, token, transport, timeoutMs, source);
 }
 
 /** Local mode stays compatible; VPS mode never writes Facebook rows to the Mac's SQLite. */

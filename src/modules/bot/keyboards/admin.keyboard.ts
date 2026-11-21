@@ -10,6 +10,7 @@ export function adminMenuKeyboard(): InlineKeyboard {
     .row();
   kb.text('✨ Run Enrichment', 'cb:admin:enrich')
     .row();
+  kb.text('📥 Bright Data / Facebook', 'bd:open').row();
   kb.text(' Ingest JSON Guide', 'cb:admin:ingest_help')
     .row();
   kb.text('◀️ Main Menu', 'cb:menu:main');

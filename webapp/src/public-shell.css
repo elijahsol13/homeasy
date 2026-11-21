@@ -1,0 +1,130 @@
+/* Public website shell. None of these styles affect Telegram Mini App. */
+.homeasy-public {
+  --public-forest: #203f35;
+  --public-forest-dark: #173329;
+  --public-terracotta: #ba6b50;
+  --public-ink: #263c34;
+  --public-muted: #65756b;
+  --public-cream: #f7f6f0;
+  --public-line: #e2e4da;
+  min-height: 100vh;
+  background: var(--public-cream);
+  color: var(--public-ink);
+  font-family: 'Avenir Next', Avenir, 'Segoe UI', system-ui, sans-serif;
+}
+.homeasy-public button { cursor: pointer; }
+.homeasy-public :is(button, a, input, select):focus-visible {
+  outline: 3px solid var(--public-terracotta);
+  outline-offset: 3px;
+}
+.public-skip-link { position: fixed; z-index: 80; top: -7rem; left: 1rem; padding: .7rem 1rem; background: #fff; border-radius: .6rem; }
+.public-skip-link:focus { top: 1rem; }
+.public-eyebrow-bar { background: var(--public-forest-dark); color: #e6ece4; letter-spacing: .15em; font-size: 10px; font-weight: 700; }
+.public-header-container { max-width: 1320px; padding: 0 clamp(18px, 4.8vw, 70px); margin: 0 auto; }
+.public-eyebrow-bar .public-header-container { min-height: 33px; display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.public-eyebrow-bar-note { letter-spacing: .025em; font-size: 11px; font-weight: 500; }
+.public-header { position: sticky; top: 0; z-index: 30; background: rgba(250, 249, 244, .96); backdrop-filter: blur(16px); border-bottom: 1px solid var(--public-line); }
+.public-header-row { display: flex; min-height: 88px; justify-content: space-between; gap: 28px; align-items: center; }
+.public-brand { display: inline-flex; flex-shrink: 0; align-items: center; gap: 10px; color: var(--public-forest); text-decoration: none; }
+.public-brand-mark { width: 42px; height: 42px; border-radius: 15px 15px 15px 5px; display: grid; place-items: center; color: #f9f6eb; background: var(--public-forest); transform: rotate(-4deg); }
+.public-brand-mark svg { transform: rotate(4deg); }
+.public-brand-name { font-size: clamp(25px, 2.15vw, 32px); font-weight: 800; letter-spacing: -.075em; line-height: 1; }
+.public-brand-name > span:first-child { font-weight: 500; }
+.public-brand-period { color: var(--public-terracotta); }
+.public-desktop-links { display: flex; align-items: center; gap: clamp(13px, 2vw, 29px); }
+.public-desktop-links a { white-space: nowrap; text-decoration: none; border-bottom: 2px solid transparent; padding: 9px 0 7px; font-size: 13px; font-weight: 650; transition: color .2s ease; color: #5f7067; }
+.public-desktop-links a:hover, .public-desktop-links a.is-active { color: var(--public-forest-dark); border-bottom-color: var(--public-terracotta); }
+.public-nav-count { margin-left: 2px; color: var(--public-terracotta); }
+.public-header-actions { display: flex; align-items: center; gap: 9px; }
+.public-filter-action { padding: 11px 12px; display: inline-flex; align-items: center; justify-content: center; gap: 7px; font-size: 12px; font-weight: 700; color: var(--public-ink); border: 1px solid var(--public-line); border-radius: 10px; background: #fff; }
+.public-filter-action:hover { border-color: var(--public-forest); }
+.public-filter-count { width: 18px; height: 18px; display: grid; place-items: center; color: #fff; border-radius: 50%; background: var(--public-terracotta); font-size: 10px; }
+.public-header-cta { background: var(--public-forest); color: #fff; text-decoration: none; display: inline-flex; align-items: center; gap: 8px; padding: 12px 17px; border-radius: 10px; font-size: 12px; font-weight: 700; transition: background .2s; }
+.public-header-cta:hover { background: var(--public-forest-dark); }
+.public-mobile-links { display: none; }
+.public-main { max-width: 1320px; padding: 0 clamp(18px, 4.8vw, 70px); }
+.public-listing-section { scroll-margin-top: 126px; padding: 70px 0 88px; }
+.public-catalog-heading { display: flex; align-items: end; justify-content: space-between; gap: 22px; margin-bottom: 26px; }
+.public-section-eyebrow { display: block; margin-bottom: 15px; color: var(--public-terracotta); letter-spacing: .19em; text-transform: uppercase; font-size: 11px; font-weight: 800; }
+.public-section-title { font-family: Iowan Old Style, Georgia, 'Times New Roman', serif; color: var(--public-forest-dark); font-weight: 500; font-size: clamp(35px, 4vw, 54px); letter-spacing: -.045em; line-height: 1.1; }
+.public-section-description { margin-top: 14px; font-size: 15px; max-width: 550px; line-height: 1.75; color: var(--public-muted); }
+.public-catalog-filter { border: 1px solid var(--public-line); padding: 12px 17px; background: #fff; color: var(--public-forest); display: inline-flex; align-items: center; gap: 9px; border-radius: 999px; font-size: 13px; font-weight: 750; white-space: nowrap; }
+.public-catalog-filter:hover { border-color: var(--public-forest); }
+.public-listing-section .public-sort-toolbar { border-top: 1px solid var(--public-line); padding-top: 18px; display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
+.public-listing-section .public-sort-toolbar > span { padding: 0; color: var(--public-muted); font-size: 11px; letter-spacing: .11em; }
+.public-listing-section .public-sort-options { display: flex; flex-wrap: wrap; gap: 7px; }
+.public-listing-section .public-sort-options button { padding: 10px 15px; border-radius: 100px; border: 1px solid var(--public-line); color: #5a6e61; background: #fff; font-size: 12px; font-weight: 700; }
+.public-listing-section .public-sort-options button[aria-pressed='true'] { border-color: var(--public-forest); background: var(--public-forest); color: #fff; }
+.public-listing-section article { border-radius: 18px; border-color: var(--public-line); box-shadow: 0 8px 24px rgba(36, 65, 52, .045); }
+.public-listing-section article:hover { box-shadow: 0 18px 38px rgba(36, 65, 52, .13); transform: translateY(-3px); }
+.public-listing-section article > div:first-child { aspect-ratio: 1.4; }
+.public-listing-section article > div:last-child { padding: 17px; }
+/* Cards share their React markup with the Mini App; these refinements belong only to public Web. */
+.homeasy-public .property-card { background: #fffefa; border-color: #e3e5dc; }
+.homeasy-public .property-card__photo { background: #e7e9e1; }
+.homeasy-public .property-card__badge { background: rgba(23, 51, 41, .86); border-radius: 7px; padding: 6px 10px; font-size: 10px; letter-spacing: .045em; }
+.homeasy-public .property-card__favorite { background: rgba(255, 254, 250, .94); color: var(--public-forest); }
+.homeasy-public .property-card__favorite svg { color: var(--public-forest); }
+.homeasy-public .property-card__favorite svg.fill-rose-500 { color: var(--public-terracotta); fill: var(--public-terracotta); }
+.homeasy-public .property-card__content { gap: 1px; }
+.homeasy-public .property-card__price { color: var(--public-forest-dark); font-size: 25px; letter-spacing: -.045em; }
+.homeasy-public .property-card__term { color: var(--public-muted); }
+.homeasy-public .property-card__location { color: var(--public-muted); }
+.homeasy-public .property-card__location svg { color: var(--public-terracotta); }
+.homeasy-public .property-card__title { color: var(--public-ink); font-size: 15px; font-weight: 650; line-height: 1.5; }
+.homeasy-public .property-card__title button:focus-visible { outline-color: var(--public-terracotta); }
+.homeasy-public .property-card__meta { color: #718078; font-size: 11px; }
+.homeasy-public .property-card__amenities { gap: 7px; color: #526758; }
+.homeasy-public .property-card__amenities > span { background: #edf0e8; color: #435b4b; border-radius: 6px; padding: 4px 7px; }
+.homeasy-public .property-card__amenities svg { color: var(--public-forest); }
+.homeasy-public .property-card__contacts { border-top-color: #e7e9e1; padding-top: 12px; gap: 8px; }
+.homeasy-public .property-card__telegram { background: var(--public-forest); color: #fff; border-radius: 9px; font-size: 12px; padding: 11px 10px; }
+.homeasy-public .property-card__telegram:hover { background: var(--public-forest-dark); }
+.homeasy-public .property-card__original { background: #edf0e8; color: var(--public-forest); border-radius: 9px; font-size: 12px; padding: 11px 10px; }
+.homeasy-public .property-card__original:hover { background: #dfe7dd; }
+.homeasy-public .property-card__whatsapp,
+.homeasy-public .property-card__phone { background: #edf0e8; color: var(--public-forest); border-radius: 9px; min-height: 38px; min-width: 38px; }
+.homeasy-public .property-card__whatsapp:hover,
+.homeasy-public .property-card__phone:hover { background: #dfe7dd; }
+.homeasy-public .property-card__whatsapp svg,
+.homeasy-public .property-card__phone svg { color: var(--public-forest); }
+.public-listing-section .public-results-line { font-size: 13px; color: var(--public-muted); }
+.public-listing-section .public-results-line strong { color: var(--public-forest); }
+.public-listing-section .public-results-line button { color: var(--public-terracotta); }
+.public-listing-section .public-load-more { background: var(--public-forest); color: #fff; border-color: var(--public-forest); border-radius: 13px; font-size: 13px; }
+.public-listing-section .public-load-more:hover { background: var(--public-forest-dark); }
+.homeasy-public .public-content-tab { min-height: 65vh; padding: 52px 0 80px; }
+.homeasy-public .public-tab-title { font-family: Iowan Old Style, Georgia, serif; color: var(--public-forest-dark); font-size: clamp(32px, 4vw, 45px); margin-bottom: 16px; }
+
+@media (max-width: 1150px) {
+  .public-header-row { gap: 14px; min-height: 74px; }
+  .public-desktop-links { gap: 13px; }
+  .public-header-cta { display: none; }
+}
+@media (max-width: 760px) {
+  .public-eyebrow-bar { font-size: 9px; }
+  .public-eyebrow-bar-note { display: none; }
+  .public-header-row { min-height: 67px; }
+  .public-desktop-links { display: none; }
+  .public-filter-action { padding: 11px; }
+  .public-filter-action > span:not(.public-filter-count) { display: none; }
+  .public-mobile-links { display: flex; gap: 8px; overflow-x: auto; padding: 0 18px 9px; scrollbar-width: none; }
+  .public-mobile-links::-webkit-scrollbar { display: none; }
+  .public-mobile-links a { display: inline-flex; align-items: center; justify-content: center; gap: 7px; white-space: nowrap; text-decoration: none; padding: 10px 13px; border-radius: 999px; font-size: 12px; font-weight: 700; color: var(--public-muted); }
+  .public-mobile-links a.is-active { background: #e8eee4; color: var(--public-forest); }
+  .public-mobile-links a span { color: var(--public-terracotta); }
+  .public-listing-section { scroll-margin-top: 118px; padding: 48px 0 68px; }
+  .public-catalog-heading { align-items: start; flex-direction: column; gap: 18px; margin-bottom: 22px; }
+  .public-section-description { font-size: 14px; }
+  .public-listing-section .public-sort-toolbar { align-items: stretch; }
+  .public-listing-section .public-sort-options { width: 100%; }
+  .public-listing-section .public-sort-options button { flex: 1; padding: 10px 9px; }
+  .public-listing-section article > div:first-child { aspect-ratio: 1.65; }
+}
+@media (max-width: 400px) {
+  .public-mobile-links { justify-content: space-between; gap: 3px; padding-inline: 9px; }
+  .public-mobile-links a { gap: 5px; padding-inline: 8px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .homeasy-public *, .homeasy-public *::before, .homeasy-public *::after { scroll-behavior: auto !important; transition-duration: 0.01ms !important; }
+}

@@ -20,7 +20,7 @@ import { assertLegacyPropertiesUnchanged, installLegacyPropertiesWriteGuard, sna
 import type { AppContainer } from '../../container';
 import { createContainer } from '../../container';
 import type { PropertyCategory } from '../../config/settings';
-import { Khmer24LiveAdapter, type LiveListingEnvelope } from './live-source-adapters';
+import type { LiveListingEnvelope } from './live-source-adapters';
 import {
   extractListingsBatchWithLLM,
   categoryFromPropertyType,
@@ -31,7 +31,7 @@ import { isNonRealEstateSpam } from './spam-detector';
 import { findCanonicalLocation, isCoordinateInSanityBounds, resolveGoogleMapsShortlink } from '../../config/locations';
 import { launchCamoufox, type CamoufoxBrowser } from './camoufox-server';
 import { attachTrafficGuard } from './traffic-guard';
-import { isStaleKhmer24Original, khmer24OriginalPostedAt, khmer24PublishedAt, khmer24SourceLocation } from './khmer24-http';
+import { isKhmer24OriginalWithinDays, isStaleKhmer24Original, khmer24OriginalPostedAt, khmer24PublishedAt, khmer24SourceLocation } from './khmer24-http';
 import { isKnownKhmer24AdministrativePin } from './source-geography';
 import { factualListingFallback } from './listing-editorial';
 
@@ -68,9 +68,16 @@ export const KHMER24_TARGETS: ScrapeTarget[] = [
   { name: 'Siem Reap — Rooms for Rent', category: 'room', city: 'siem_reap', type: 'rent', categorySlug: 'room-for-rent', locationSlug: 'siem-reap' },
 ];
 
-export function buildFeedPageUrl(target: ScrapeTarget): string {
+export function buildFeedPageUrl(target: ScrapeTarget, days?: 14, limit?: number): string {
   // Khmer24 recognizes province=siem-reap; location=siem-reap leaves the city unselected.
-  return `https://www.khmer24.com/en/c-${target.categorySlug}?province=${target.locationSlug}&sortby=newads&date=last-7-days`;
+  const query = new URLSearchParams({
+    province: target.locationSlug,
+    sortby: 'newads',
+    date: days === 14 ? 'last-14-days' : 'last-7-days',
+  });
+  // Khmer24 SSR honors limit=250 (verified on all three rental feeds); no pagination needed today.
+  if (limit && limit > 30) query.set('limit', String(limit));
+  return `https://www.khmer24.com/en/c-${target.categorySlug}?${query}`;
 }
 
 /**
@@ -179,8 +186,9 @@ async function fetchListingUrlsFromFeed(
   ctx: BrowserContext,
   target: ScrapeTarget,
   maxLinks = 15,
+  days?: 14,
 ): Promise<string[]> {
-  const feedUrl = buildFeedPageUrl(target);
+  const feedUrl = buildFeedPageUrl(target, days, maxLinks);
   const page = await ctx.newPage();
 
   try {
@@ -213,7 +221,7 @@ async function fetchListingUrlsFromFeed(
  *
  * Falls back to DOM extraction if JSON-LD is missing or malformed.
  */
-export async function scrapeListingDetail(ctx: BrowserContext, target: ScrapeTarget, url: string): Promise<RawListing | null> {
+export async function scrapeListingDetail(ctx: BrowserContext, target: ScrapeTarget, url: string, requireOriginalDate = false): Promise<RawListing | null> {
   const page = await ctx.newPage();
   let listing: RawListing | null = null;
 
@@ -224,6 +232,10 @@ export async function scrapeListingDetail(ctx: BrowserContext, target: ScrapeTar
 
     const nuxtPayload = await page.evaluate(() => document.getElementById('__NUXT_DATA__')?.textContent ?? '');
     const originalPostedAt = khmer24OriginalPostedAt(nuxtPayload, url);
+    if (requireOriginalDate && !originalPostedAt) {
+      console.log(`  🗓️  Skipping missing original posted_date: ${url.split('/').pop()}`);
+      return null;
+    }
 
     // ── Primary: extract from JSON-LD (no hydration needed, pure SSR) ──────────
     const extracted = await page.evaluate(() => {
@@ -455,6 +467,7 @@ export async function scrapeTargetWithBrowser(
   browser: Browser,
   target: ScrapeTarget,
   maxListings = 15,
+  days?: 14,
 ): Promise<RawListing[]> {
   console.log(`\n🔎 Scraping [${target.name}]...`);
   const listings: RawListing[] = [];
@@ -471,15 +484,20 @@ export async function scrapeTargetWithBrowser(
 
   try {
     // 1. Get raw URLs from feed
-    const urls = await fetchListingUrlsFromFeed(ctx, target, maxListings);
+    const urls = await fetchListingUrlsFromFeed(ctx, target, maxListings, days);
     console.log(`  🔗 Found ${urls.length} raw URLs in feed.`);
 
     // 2. Process each URL
     for (const url of urls) {
       console.log(`  📄 Processing: ${url.split('/').pop()}`);
-      const listing = await scrapeListingDetail(ctx, target, url);
+      const listing = await scrapeListingDetail(ctx, target, url, days === 14);
       if (listing) {
-        if (isStaleKhmer24Original(listing.posted_at)) {
+        if (days === 14 && !isKhmer24OriginalWithinDays(listing.posted_at, days)) {
+          staleCount++;
+          console.log(`  ⏳ Skipping original post outside ${days}-day window (${listing.posted_at}): ${url.split('/').pop()}`);
+          continue;
+        }
+        if (days !== 14 && isStaleKhmer24Original(listing.posted_at)) {
           staleCount++;
           console.log(`  ⏳ Skipping original post over 30 days old (${listing.posted_at}): ${url.split('/').pop()}`);
           continue;
@@ -505,12 +523,13 @@ export async function scrapeTargetWithRecovery(
   target: ScrapeTarget,
   maxListings = 15,
   launchBrowser: () => Promise<CamoufoxBrowser> = () => launchCamoufox({ headless: true, devicePath: K24_DEVICE_PATH }),
+  days?: 14,
 ): Promise<RawListing[]> {
   for (let attempt = 0; attempt < 2; attempt++) {
     let handle: CamoufoxBrowser | null = null;
     try {
       handle = await launchBrowser();
-      return await scrapeTargetWithBrowser(handle.browser, target, maxListings);
+      return await scrapeTargetWithBrowser(handle.browser, target, maxListings, days);
     } catch (err: unknown) {
       if (attempt !== 0 || !isKhmer24BrowserClosedError(err)) throw err;
       console.warn(`⚠️  [Khmer24] Camoufox closed while scraping ${target.name}; restarting this category once.`);
@@ -880,11 +899,15 @@ export async function runKhmer24FreshnessSweep(
 
 export interface RunKhmer24Options {
   limitListings?: number;
+  /** Khmer24 last-14-days feed + strict original publication date cutoff. */
+  days?: 14;
   noEnrich?: boolean;
   targetIndex?: number;
   dumpRaw?: string;
   dbPath?: string;
   shadowOnly?: boolean;
+  /** Mac-only collection: queue raw listings and let the VPS enrich and ingest. */
+  remote?: boolean;
 }
 
 export async function runKhmer24Scraper(
@@ -900,32 +923,49 @@ export async function runKhmer24Scraper(
   console.log('🤖 Khmer24 Scraper (Camoufox + Nuxt SSR + AI-First) — HomEasy');
   console.log('═══════════════════════════════════════════════════════════════');
 
-  const container = containerInstance ?? createContainer(options.dbPath ? { dbPath: options.dbPath } : undefined);
-  runMigrations(container.db);
-  // Canonical ingestion is the normal path. Keep --shadow as a CLI alias while
-  // older job configurations migrate; neither mode can mutate legacy inventory.
-  const legacySnapshot = snapshotLegacyProperties(container.db);
-  installLegacyPropertiesWriteGuard(container.db);
+  if (options.remote && (options.dbPath || options.noEnrich || options.dumpRaw || containerInstance)) {
+    throw new Error('--remote cannot be combined with local database, --no-enrich or --dump-raw options');
+  }
+  if (options.remote && process.env.HOMEASY_DEPLOYMENT_ROLE === 'vps') {
+    throw new Error('Remote Khmer24 collection must run on the Mac, not the VPS');
+  }
+  const container = options.remote ? undefined : (containerInstance ?? createContainer(options.dbPath ? { dbPath: options.dbPath } : undefined));
+  if (container) {
+    runMigrations(container.db);
+    // Canonical ingestion is the normal local path; never write legacy inventory.
+  }
+  const legacySnapshot = container ? snapshotLegacyProperties(container.db) : undefined;
+  if (container) {
+    installLegacyPropertiesWriteGuard(container.db);
+  }
 
   const targets = options.targetIndex !== undefined
     ? KHMER24_TARGETS.filter((_, i) => i === options.targetIndex)
     : KHMER24_TARGETS;
-
-  if (targets.length === 0) {
-    console.error(`💥 No Khmer24 target with index ${options.targetIndex}`);
-    return { totalScraped: 0, inserted: 0, duplicates: 0, errors: 1 };
-  }
+  if (targets.length === 0) throw new Error(`Unknown Khmer24 target index: ${options.targetIndex}`);
 
   let totalScraped = 0;
   let totalInserted = 0;
   let totalDuplicates = 0;
   let totalErrors = 0;
-  const maxListings = options.limitListings ?? 10;
+  const maxListings = options.limitListings ?? (options.days === 14 ? 250 : 10);
 
   try {
+    if (options.remote) {
+      const { flushKhmer24Outbox } = await import('./khmer24-outbox');
+      try {
+        await flushKhmer24Outbox(); // Retry previously saved batches before collecting new ones.
+      } catch (err: unknown) {
+        // Collection can still continue offline: each new batch is durably queued
+        // before any delivery attempt, and will be retried on the next flush.
+        totalErrors++;
+        console.warn('  ⚠️ Earlier Khmer24 batches remain queued:', err instanceof Error ? err.message : String(err));
+      }
+      console.log('  📤 Remote mode: Mac collects, VPS enriches/deduplicates; no local SQLite writes');
+    }
     for (const target of targets) {
       try {
-        const rawListings = await scrapeTargetWithRecovery(target, maxListings);
+        const rawListings = await scrapeTargetWithRecovery(target, maxListings, undefined, options.days);
         totalScraped += rawListings.length;
 
         if (options.dumpRaw) {
@@ -934,52 +974,26 @@ export async function runKhmer24Scraper(
           continue;
         }
 
-        {
-          const envelopes: LiveListingEnvelope[] = rawListings.map((listing) => ({
-            listing, sourceName: 'Khmer24 Siem Reap', sourceId: 'siem-reap', sourceUrl: 'https://www.khmer24.com/en',
-          }));
-          const baseAdapter = new Khmer24LiveAdapter(async function* () { yield* envelopes; });
-          const states = new Map<string, { contentChanged:boolean; classification:LiveListingEnvelope['classification'] }>();
-          const contentChanged:LiveListingEnvelope[]=[];
-          for(const envelope of envelopes){
-            const normalized = baseAdapter.normalize(envelope);
-            const sourceId = container.sourceIngestionRepo.findSourceId(container.sourceIngestionRepo.makeSourceKey(normalized.sourceIdentity));
-            const existing=sourceId===undefined?undefined:container.sourceIngestionRepo.findSourceItemState(sourceId,normalized.externalId);
-            const textChanged=!existing||existing.contentHash!==(normalized.contentHash??null)||existing.classification==='UNCLASSIFIED'||existing.classification===null;
-            const classification=existing?.classification;
-            const priorClass=['HOUSING_SUPPLY','HOUSING_DEMAND','HOUSING_ADJACENT','IRRELEVANT','UNCLASSIFIED'].includes(classification??'')
-              ? classification as LiveListingEnvelope['classification'] : undefined;
-            const url=envelope.listing.source_url??envelope.listing.url??'';
-            states.set(url,{contentChanged:textChanged,classification:priorClass});
-            if(textChanged)contentChanged.push(envelope);
-          }
-          const changedListings = options.noEnrich || !contentChanged.length
-            ? contentChanged.map((envelope) => envelope.listing)
-            : await enrichListingsWithLLM(contentChanged.map((envelope) => envelope.listing), { inclusive: true });
-          const enrichedByUrl = new Map(changedListings.map((listing) => [listing.source_url ?? listing.url ?? '', listing]));
-          const shadowEnvelopes = envelopes.map((envelope) => {
-            const url=envelope.listing.source_url??envelope.listing.url??'';
-            const state=states.get(url);
-            const enriched=enrichedByUrl.get(url);
-            const classification=state?.contentChanged
-              ? classifyKhmer24Listing(options.noEnrich ? undefined : enriched)
-              : state?.classification ?? 'UNCLASSIFIED';
-            return {...envelope,classification,listing:enriched??envelope.listing};
-          });
-          const shadowAdapter = new Khmer24LiveAdapter(async function* () { yield* shadowEnvelopes; });
-          const result = await container.ingestionService.ingestBatch(shadowAdapter, {
-            runType: 'DISCOVERY', ingestionMethod: 'KHMER24_SCRAPER', parserVersion: 'khmer24-canonical-v1',
-          });
+        if (options.remote) {
+          const { submitKhmer24Listings } = await import('./khmer24-outbox');
+          const result = await submitKhmer24Listings(rawListings);
+          totalInserted += result.newSourceItems;
+          totalDuplicates += result.unchangedSourceItems;
+          totalErrors += result.errors.length;
+          console.log(`  📤 VPS canonical ingest [${target.name}]: scraped=${rawListings.length}, new=${result.newSourceItems}, updated=${result.updatedSourceItems}, unchanged=${result.unchangedSourceItems}`);
+        } else if (container) {
+          // Lazy load to share the same VPS/local processing logic without a module cycle.
+          const { ingestKhmer24Listings } = await import('./khmer24-ingestion');
+          const result = await ingestKhmer24Listings(container, rawListings, options.noEnrich);
           totalInserted += result.newSourceItems;
           totalDuplicates += result.unchangedSourceItems;
           totalErrors += result.errors.length;
           console.log(`  📥 Canonical ingestion [${target.name}]: received=${result.inputItems}, new=${result.newSourceItems}, changed=${result.updatedSourceItems}, unchanged=${result.unchangedSourceItems}, errors=${result.errors.length}`);
-          continue;
         }
       } catch (err: unknown) {
         if (err instanceof Khmer24SessionExpiredError) {
           console.error(`💥 Khmer24 session expired or Cloudflare 403 blocked: ${err.message}`);
-          await container.notifierService.notifyAdmins(
+          if (container) await container.notifierService.notifyAdmins(
             '⚠️ Khmer24 session expired or Cloudflare 403 blocked. Check access or run `npm run k24:login`',
           ).catch(() => {});
           totalErrors++;
@@ -991,10 +1005,13 @@ export async function runKhmer24Scraper(
       }
     }
   } catch (err: unknown) {
+    totalErrors++;
     console.error('💥 Fatal scraper error:', err instanceof Error ? err.message : String(err));
   } finally {
-    await container.notifierService.flushNotificationQueue().catch((err) => console.error('[Notifier] Flush error:', err));
-    assertLegacyPropertiesUnchanged(container.db, legacySnapshot);
+    if (container) {
+      await container.notifierService.flushNotificationQueue().catch((err) => console.error('[Notifier] Flush error:', err));
+      if (legacySnapshot) assertLegacyPropertiesUnchanged(container.db, legacySnapshot);
+    }
   }
 
   console.log('\n═══════════════════════════════════════════════════════════════');
@@ -1019,11 +1036,16 @@ if (require.main === module) {
     if (arg.startsWith('--limit-listings=')) {
       const n = parseInt(arg.replace('--limit-listings=', ''), 10);
       if (!isNaN(n) && n > 0) options.limitListings = n;
+    } else if (arg.startsWith('--days=')) {
+      if (arg !== '--days=14') throw new Error('Only --days=14 is currently supported');
+      options.days = 14;
     } else if (arg.startsWith('--target=')) {
       const n = parseInt(arg.replace('--target=', ''), 10);
       if (!isNaN(n)) options.targetIndex = n;
     } else if (arg === '--no-enrich') {
       options.noEnrich = true;
+    } else if (arg === '--remote') {
+      options.remote = true;
     } else if (arg === '--shadow') {
       // Backward-compatible no-op: Khmer24 always writes through canonical ingestion.
     } else if (arg === '--freshness') {
@@ -1039,16 +1061,17 @@ if (require.main === module) {
       options.dbPath = arg.replace('--db-path=', '');
       freshnessOptions.dbPath = options.dbPath;
     } else if (arg === '--help' || arg === '-h') {
-      console.log('Usage: ts-node src/modules/parser/khmer24.scraper.ts [--target=N] [--limit-listings=N] [--no-enrich] [--shadow (legacy no-op)] [--dump-raw=path.json] [--db-path=path.db] [--freshness] [--dry-run] [--freshness-limit=N]');
+      console.log('Usage: ts-node src/modules/parser/khmer24.scraper.ts [--remote] [--days=14] [--target=N] [--limit-listings=N] [--no-enrich] [--shadow (legacy no-op)] [--dump-raw=path.json] [--db-path=path.db] [--freshness] [--dry-run] [--freshness-limit=N]');
       process.exit(0);
     }
   }
 
+  if (freshness && options.remote) throw new Error('--freshness cannot be combined with --remote');
   const runner = freshness
     ? runKhmer24FreshnessSweep(undefined, freshnessOptions)
     : runKhmer24Scraper(undefined, options);
 
-  runner.then(() => process.exit(0)).catch((err) => {
+  runner.then((result) => process.exit(result.errors > 0 ? 1 : 0)).catch((err) => {
     console.error('💥 Fatal:', err);
     process.exit(1);
   });

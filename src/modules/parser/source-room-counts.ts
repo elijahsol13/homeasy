@@ -56,7 +56,8 @@ export function sourceRoomCounts(text: string): {
       const index = match.index ?? 0;
       const valueStart = index + match[0].indexOf(match[1]!);
       const prefix = normalized.slice(0, valueStart);
-      const labelBeforeValue = new RegExp(`(?:${oppositeNoun}|${oppositeKhmerNoun})[,;\\s]*$`, 'i').test(prefix);
+      // A label on an earlier line cannot own the next line's number.
+      const labelBeforeValue = new RegExp(`(?:${oppositeNoun}|${oppositeKhmerNoun})[,; \\t]*$`, 'i').test(prefix);
       const precedingOppositeCount = new RegExp(
         `(?:\\b${count}[ \\t]*[-–]?[ \\t]*(?:${oppositeNoun})\\b[,;]?|\\b(?:${oppositeNoun})[ \\t]*[:：=-]?[ \\t]*${count}\\b|${oppositeKhmerNoun}[ \\t]*[:：=-]?[ \\t]*${count})[ \\t]*$`, 'i',
       ).test(prefix);

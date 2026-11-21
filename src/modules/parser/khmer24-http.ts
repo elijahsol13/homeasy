@@ -272,17 +272,28 @@ export function khmer24OriginalPostedAt(payload: string, url: string): string | 
   return detail ? khmer24PublishedAt(detail.resolve(detail.post.posted_date)) : undefined;
 }
 
-/** Khmer24's 'last-7-days' feed includes renewed ads with old original dates.
- * Source timestamps without an offset are local Cambodian time (UTC+07).
- * Missing / unparseable dates are left for the ordinary moderation path. */
-export function isStaleKhmer24Original(postedAt: string | undefined, now = Date.now()): boolean {
-  if (!postedAt || !khmer24PublishedAt(postedAt)) return false;
+/** Source timestamps without an offset are local Cambodian time (UTC+07). */
+function khmer24OriginalTimeMs(postedAt: string | undefined): number | undefined {
+  if (!postedAt || !khmer24PublishedAt(postedAt)) return undefined;
   const normalized = postedAt.trim().replace(' ', 'T');
   const sourceTime = /(?:Z|[+-]\d{2}:\d{2})$/i.test(normalized)
     ? normalized
     : `${normalized.length === 10 ? normalized + 'T00:00:00' : normalized}+07:00`;
   const publishedMs = Date.parse(sourceTime);
-  return Number.isFinite(publishedMs) && now - publishedMs > 30 * 24 * 60 * 60 * 1000;
+  return Number.isFinite(publishedMs) ? publishedMs : undefined;
+}
+
+/** Khmer24 feeds contain renewals. Only the original Nuxt posted_date determines age. */
+export function isStaleKhmer24Original(postedAt: string | undefined, now = Date.now()): boolean {
+  const publishedMs = khmer24OriginalTimeMs(postedAt);
+  return publishedMs !== undefined && now - publishedMs > 30 * 24 * 60 * 60 * 1000;
+}
+
+/** Strict collection window: missing dates and old renewed posts are excluded. */
+export function isKhmer24OriginalWithinDays(postedAt: string | undefined, days: number, now = Date.now()): boolean {
+  const publishedMs = khmer24OriginalTimeMs(postedAt);
+  return publishedMs !== undefined && Number.isInteger(days) && days > 0 &&
+    publishedMs <= now && publishedMs >= now - days * 24 * 60 * 60 * 1000;
 }
 
 type SourceGeo = Partial<Pick<RawListing, 'latitude' | 'longitude' | 'maps_url'>>;

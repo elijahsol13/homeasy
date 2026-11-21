@@ -1,5 +1,5 @@
 import {
-  GROUPS, buildGroupRequest, buildShadowSingleGroupPlan, getBudgetConfig,
+  GROUPS, buildGroupRequest, buildShadowSingleGroupPlan, getBudgetConfig, getDateWindow,
   getGroupsToTest, groupAccess, groupRoute, makeReplayPost,
   isPotentialHousingDemand, selectBoundedUnknownGroups, selectBoundedPublicGroups,
   validateBoundedDiscoveryInvocation,
@@ -11,6 +11,21 @@ const base = {
 };
 
 describe('Bright Data single-group shadow preflight', () => {
+  test('defaults to a 30-day Cambodia lookback, including posts from a week ago', () => {
+    // 2026-11-08 UTC, but already 2026-11-09 in Cambodia.
+    const now = new Date('2026-11-08T18:00:00.000Z');
+    expect(getDateWindow({}, now)).toEqual({ startDate: '2026-10-10', endDate: '2026-11-09' });
+  });
+
+  test('keeps explicitly selected dates and rejects incomplete or invalid overrides', () => {
+    const now = new Date('2026-11-08T18:00:00.000Z');
+    expect(getDateWindow({ BRIGHTDATA_START_DATE: '2026-11-02', BRIGHTDATA_END_DATE: '2026-11-09' }, now))
+      .toEqual({ startDate: '2026-11-02', endDate: '2026-11-09' });
+    expect(() => getDateWindow({ BRIGHTDATA_START_DATE: '2026-11-02' }, now)).toThrow();
+    expect(() => getDateWindow({ BRIGHTDATA_START_DATE: '2026-11-09', BRIGHTDATA_END_DATE: '2026-11-02' }, now)).toThrow();
+    expect(() => getDateWindow({ BRIGHTDATA_START_DATE: '2026-02-30', BRIGHTDATA_END_DATE: '2026-11-09' }, now)).toThrow();
+  });
+
   test('keeps all 23 sources with evidence-backed public, private and unresolved routes', () => {
     expect(GROUPS).toHaveLength(23);
     expect(new Set(GROUPS.map((group) => group.url)).size).toBe(23);
@@ -21,6 +36,23 @@ describe('Bright Data single-group shadow preflight', () => {
     expect(getGroupsToTest()).toHaveLength(16);
     expect(getGroupsToTest(true)).toHaveLength(2);
     expect(getGroupsToTest().every((group) => groupAccess(group) === 'public')).toBe(true);
+  });
+
+  test('selects ranked public groups by explicit IDs without changing the 16-group default', () => {
+    const ids = ['385053483002145', '201561753758474', 'cheaprentsiemreap'];
+    const selected = getGroupsToTest(false, ids);
+    expect(selected.map((group) => group.name)).toEqual([
+      'Rental & Sale Siem Reap',
+      'SIEM REAP Rent House, Villa, Apartment...',
+      'Cheap Rent Siem Reap',
+    ]);
+    expect(selected.every((group) => groupRoute(group) === 'BRIGHTDATA')).toBe(true);
+    expect(getGroupsToTest()).toHaveLength(16);
+    expect(() => getGroupsToTest(false, [])).toThrow();
+    expect(() => getGroupsToTest(false, [ids[0], ids[0]])).toThrow();
+    expect(() => getGroupsToTest(false, ['siemreap'])).toThrow('non-public');
+    expect(() => getGroupsToTest(false, ['missing'])).toThrow('Unknown');
+    expect(() => getGroupsToTest(true, ids)).toThrow('--full');
   });
 
   test('caps provider requests and rejects private/unknown groups before billing', () => {

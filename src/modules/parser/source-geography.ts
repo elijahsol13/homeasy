@@ -64,6 +64,33 @@ function hasLocationAssertionOutside(raw: string): boolean {
   });
 }
 
+/** Original property-specific city assertions only. Incidental mentions of an
+ * agency office, a contact address or nearby attractions do not locate a home.
+ * This is deliberately narrower than the geography moderation triage. */
+export function sourceAssertsSiemReapPropertyCity(rawText: string | null | undefined): boolean {
+  const raw = rawText ?? '';
+  if (assessSiemReapGeography({ rawText: raw }).tier !== 'EXACT_CITY') return false;
+  const lines = raw.split(/\r?\n/);
+  return lines.some((line, index) => {
+    const value = line.trim().replace(/^[\s📍🏠✅🔹📌⛳•*+\-–—:]+/u, '');
+    if (/\b(?:agency|office|showroom|headquarters|contact)\b|ការិយាល័យ/i.test(value)) return false;
+    const previousNonEmpty = lines.slice(0, index).reverse().find((previous) => previous.trim()) ?? '';
+    const precedingContactLabel = /^(?:agency\s+office|office|contact\s+(?:address|location)|agency\s+address|ការិយាល័យ)\s*[:：-]?\s*$/iu.test(previousNonEmpty.trim());
+    const standaloneCity = /^(?:siem\s*reap\b|សៀមរាប)(?:\s*[/,–-]\s*[\p{L}\s]+)?$/iu.test(value);
+    if (standaloneCity) {
+      if (/\b(?:agency|office|showroom|headquarters|contact)\b|ការិយាល័យ/i.test(previousNonEmpty)) return false;
+    }
+    if (precedingContactLabel) return false;
+    if (/^(?:(?:property\s+)?(?:location|address|city)\s*[:=-]\s*|(?:located|situated)\s+(?:in|at)\s+)(?:siem\s*reap\b|សៀមរាប)/i.test(value)) return true;
+    if (/^(?:property\s+)?(?:location|address|city)\s*[:=-]\s*.{1,100},\s*siem\s*reap\b/i.test(value)) return true;
+    if (/^(?:ទីតាំង|អាសយដ្ឋាន)\s*[:៖=-]?\s*សៀមរាប/u.test(value)) return true;
+    if (/^(?:ទីតាំង|អាសយដ្ឋាន)\s*[:៖=-]?\s*[\p{L}\p{M}\s,()-]{1,60}ក្រុង\s*សៀមរាប/u.test(value)) return true;
+    if (/\b(?:apartment|villa|house|home|condo|flat|studio|room|land|property|hotel)\b.{0,95}\bfor\s+(?:rent|lease)\s+in\s+.{1,90},\s*siem\s*reap\b/i.test(value)) return true;
+    if (/\b(?:apartment|villa|house|home|condo|flat|studio|room|land|property|hotel)\b.{0,95}\b(?:in|at)\s+siem\s*reap\b/i.test(value)) return true;
+    return standaloneCity;
+  });
+}
+
 export function assessSiemReapGeography(input: SourceGeographyInput): {
   tier: SourceGeographyTier;
   flags: string[];
