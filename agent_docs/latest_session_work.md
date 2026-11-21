@@ -1,23 +1,16 @@
 # Homeasy — active handoff (2026-11-21)
 
-## Published integration
+## Published integration and verification
 
-Owner approved modernization stage 1 with main for production and develop for integration. Separate integration worktree: /private/tmp/homeasy-develop-20261121. Original Mac checkout on main 7ad0ec7 stays dirty.
+Owner approved modernization stage 1 with `main` for production and `develop` for integration. Isolated integration worktree: `/private/tmp/homeasy-develop-20261121`. Original Mac checkout on `main` at `7ad0ec7` remains dirty and preserved.
 
-- Published develop commits 03075b1 (selected source, CI, manifests and release guide) and f935941 (four frontend test waits). GitHub Actions run 44875663342 on SHA f935941cd4bea35dc8e66e48d2bc4493e1a2ff33 completed SUCCESS. Both Node 22 checks/builds and Docker api-runner build succeeded. CI verifies backend typecheck/lint/Jest/build, Bright Data tools, frontend lint/Vitest, Web/TMA builds and artifact SHA-256.
-- GitHub build artifact ID 14694969574, name homeasy-f935941cd4bea35dc8e66e48d2bc4493e1a2ff33-builds, ZIP SHA-256 865d0d5a5769e43227919dbdb8a055130304dc73f8ac1faa038f8a1047f7d706. Docker provenance artifact ID 14695643157, ZIP SHA-256 91036f13d2897288ee6d5f17407489352f6644b5b982c5dc775d8be41619966e. ZIP digests differ from individual built-file and Docker image hashes, which are in the respective artifacts.
-- Preservation bundle /private/tmp/homeasy-stage1-20261121-preserve contains selected-source.tar.gz, tracked.patch, manifest and detached-worktree archives. Original Mac, VPS and detached working trees were never reset. Integration has an untracked node_modules symlink that must stay untracked.
-- Verified GitHub branches: main 7ad0ec7, develop f935941, codex/vps-migration-ready 9d57576, feature/telegram-mini-app 23c6bd2.
-- GitHub Cloudflare Pages check on develop f935941 succeeded for homeasy-app deployment a39a9363-39e1-4163-80e2-8b8fa0d9f8d3. Earlier main 7ad0ec7 check succeeded for homeasy-app deployment 18dd8691-befe-4125-8dcd-5f3742ae4f90. Success checks do not prove the current production-branch setting or public delivery.
+- `develop` now at `05dc91952f1e1e12a139ab82754044a4895545a3` after selected source/CI/release documentation commits `03075b1`, `f935941`, `299d6f5`, and deterministic frontend request-wait fix `05dc919`. GitHub run `44876358662` on `299d6f5` exposed an intermittent Vitest timing race (1/185); the test waited for a 5 ms timeout instead of the requested state. The fix replaced sleeps with observable request assertions. Local full Vitest 14/14 files, 185/185 tests, lint exit 0 with existing frontend warnings, targeted file 31/31 tests across five repeated passes.
+- GitHub Actions run `44876869101` on `05dc919` completed SUCCESS for both `Typecheck, lint, tests, and release builds` and `Docker api-runner build`. Node 22 CI includes backend Jest/typecheck/lint/build, Bright Data checks, frontend Vitest/lint, Web and TMA builds with SHA-identified release manifests and checksums. Artifacts: builds ID `14696211454` (4,750,177 bytes), Docker provenance ID `14696261385` (274 bytes). These are CI artifacts; no production image was deployed.
+- Preservation bundle `/private/tmp/homeasy-stage1-20261121-preserve` includes `selected-source.tar.gz`, `tracked.patch`, manifest and detached-worktree archives. Original Mac, detached and VPS worktrees were not reset. Integration's untracked `node_modules` symlink is only for test dependencies and must not be staged.
+- GitHub remote refs checked before the latest documentation commit: `main` `7ad0ec7`, `develop` `05dc919`, `codex/vps-migration-ready` `9d57576`, `feature/telegram-mini-app` `23c6bd2`.
 
-## Open verification gates
+## Production read-only observations and remaining gates
 
-- Cloudflare Dashboard redirected to login (2026-11-21). Wrangler OAuth credentials expired 2026-10-21. Wrangler interactive CLI initiated a fresh login and it was cancelled. Current production and preview branch bindings, particularly the Telegram Mini App project, are unverified. Keep feature/telegram-mini-app remote ref.
-- Earlier 2026-11-21 SSH read verified VPS /home/ubuntu/homeasy on codex/vps-migration-ready at 07bf9eb with 20 local changes and five running Homeasy containers. Latest probe authenticated using the existing SSH key and ran a printf command after ~45 seconds, but subsequent Git/Compose read timed out and a minimal recheck could not connect. Current VPS Git/service state is unverified. Keep codex/vps-migration-ready remote ref and all VPS local changes.
-- No production deployment, live SQLite modification, scraper, paid provider, container recreation or Cloudflare branch switch. Release and rollback are documented in release_process.md but production rollback has not been rehearsed.
-
-## Next approved work
-
-1. Authenticated read of each Cloudflare Pages project to record production branch, current deployment ID/source SHA and preview-branch behavior.
-2. Stable read-only VPS SSH and reconciliation of its dirty 07bf9eb checkout against remote 9d57576.
-3. Only after both dependencies clear, delete obsolete GitHub branches and verify only main and develop remain. A production release is a separate step.
+- VPS SSH read 2026-11-21 succeeded. `/home/ubuntu/homeasy` is on branch `codex/vps-migration-ready` at `07bf9eb1b8756dc004a9c3697a2dd71c53772527` with 20 modified/untracked paths. `homeasy-api`, `homeasy-bot`, `homeasy-brightdata-worker` are running (10 days), `homeasy-tunnel` (4 weeks), `homeasy-backup` (4 weeks, healthy). Public `https://api.rustycat.cc/health` returned HTTP 200 at 2026-11-21 06:44 UTC. Do not detach its upstream or overwrite local work to tidy Git.
+- Cloudflare Dashboard redirected to login (2026-11-21); Wrangler OAuth expired 2026-10-21. Production and preview branch bindings for Web and Telegram Mini App remain unverified. A GitHub Cloudflare Pages check succeeded for `homeasy-app` at the earlier `f935941` integration commit, but that does not identify current production binding. Keep `feature/telegram-mini-app` until authenticated Pages project settings are read.
+- No production deploy, live SQLite changes, scraper, paid provider, container recreation, branch deletion, or Cloudflare configuration change. Release/rollback instructions exist in `release_process.md`, but no production rollback rehearsal has been carried out. For stage 1 acceptance, verify Pages branch settings, reconcile VPS checkout and private changes with the two-branch design, then safely retire obsolete remote refs. A production release needs its own authorization.
