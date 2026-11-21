@@ -102,6 +102,43 @@ describe('Database Backup Service', () => {
     }
   });
 
+  test('serializes competing WAL writers and preserves both commits in a verified restored backup', () => {
+    const file = path.join(testDir, 'concurrent_wal.db');
+    const first = new DatabaseSync(file);
+    const second = new DatabaseSync(file);
+    const reader = new DatabaseSync(file);
+    try {
+      first.exec(`PRAGMA journal_mode=WAL; PRAGMA busy_timeout=0;
+        CREATE TABLE records (id INTEGER PRIMARY KEY, value TEXT);
+        INSERT INTO records(value) VALUES('seed');`);
+      second.exec('PRAGMA busy_timeout=0');
+      first.exec("BEGIN IMMEDIATE; INSERT INTO records(value) VALUES('first');");
+      expect(() => second.exec("INSERT INTO records(value) VALUES('second')")).toThrow(/database is locked/i);
+      expect(reader.prepare('SELECT COUNT(*) AS n FROM records').get()).toEqual({ n: 1 });
+      first.exec('COMMIT');
+      second.exec("INSERT INTO records(value) VALUES('second')");
+      expect(reader.prepare('SELECT COUNT(*) AS n FROM records').get()).toEqual({ n: 3 });
+      const backup = createDatabaseBackup({ dbPath: file, backupDir: path.join(testDir, 'concurrent_backups') });
+      expect(backup.success).toBe(true);
+      const restored = new DatabaseSync(backup.backupPath!);
+      try {
+        expect(restored.prepare('PRAGMA integrity_check').get()).toEqual({ integrity_check: 'ok' });
+        expect(restored.prepare('PRAGMA foreign_key_check').all()).toEqual([]);
+        expect(restored.prepare('SELECT value FROM records ORDER BY id').all()).toEqual([
+          { value: 'seed' }, { value: 'first' }, { value: 'second' },
+        ]);
+        restored.exec("INSERT INTO records(value) VALUES('restored-write')");
+        expect(restored.prepare('SELECT COUNT(*) AS n FROM records').get()).toEqual({ n: 4 });
+      } finally {
+        restored.close();
+      }
+    } finally {
+      first.close();
+      second.close();
+      reader.close();
+    }
+  });
+
   test('rejects a snapshot containing foreign key violations', () => {
     const invalidDbPath = path.join(testDir, 'invalid_foreign_keys.db');
     const invalid = new DatabaseSync(invalidDbPath);

@@ -4,7 +4,7 @@ import type { AppContainer } from '../../../container';
 import { env } from '../../../config/env';
 import { RawListingSchema } from '../../parser/schemas';
 import { ingestFacebookGroupListings } from '../../parser/facebook-ingestion';
-import { constantTimeBearer, logIngestionBatch } from './internal-ingest-helpers';
+import { constantTimeBearer, logIngestionBatch, notifyIngestionFailure } from './internal-ingest-helpers';
 
 const isFacebookUrl = (value: string): boolean => {
   try {
@@ -42,8 +42,17 @@ export const facebookIngestRoutes: FastifyPluginAsync<{ container: AppContainer 
     if (!parsed.success) return reply.code(400).send({ error: 'Invalid Facebook batch' });
 
     const startedAt = Date.now();
-    const result = await ingestFacebookGroupListings(container, parsed.data.target, parsed.data.listings);
+    let result: Awaited<ReturnType<typeof ingestFacebookGroupListings>>;
+    try {
+      result = await ingestFacebookGroupListings(container, parsed.data.target, parsed.data.listings);
+    } catch (error) {
+      request.log.warn({ event: 'ingestion_batch_failed', source: 'facebook', elapsedMs: Date.now() - startedAt },
+        'Ingestion batch crashed');
+      await notifyIngestionFailure(request.log, container.alertService, 'facebook');
+      throw error;
+    }
     logIngestionBatch(request.log, 'facebook', result, startedAt);
+    await notifyIngestionFailure(request.log, container.alertService, 'facebook', result);
     const summary = {
       newSourceItems: result.newSourceItems,
       updatedSourceItems: result.updatedSourceItems,

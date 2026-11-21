@@ -80,7 +80,7 @@ describe('AlertService', () => {
   });
 
   test('Telegram API failure does not crash or throw', async () => {
-    const sendMessageMock = jest.fn().mockRejectedValue(new Error('Network timeout'));
+    const sendMessageMock = jest.fn().mockRejectedValue(new Error('https://api.telegram.org/botFAKE_PRIVATE_TOKEN/sendMessage failed'));
     const mockApi = { sendMessage: sendMessageMock } as unknown as Api;
     const adminIds = [12345];
 
@@ -89,10 +89,8 @@ describe('AlertService', () => {
     // Must resolve without throwing
     await expect(alertService.critical('Fatal error')).resolves.toBeUndefined();
     expect(consoleErrorSpy).toHaveBeenCalledWith('🚨 [CRITICAL] Fatal error');
-    expect(consoleWarnSpy).toHaveBeenCalledWith(
-      '[AlertService] Failed to deliver alert to admin 12345:',
-      expect.any(Error),
-    );
+    expect(consoleWarnSpy).toHaveBeenCalledWith(expect.stringContaining('Failed to deliver alert to admin 12345'));
+    expect(JSON.stringify(consoleWarnSpy.mock.calls)).not.toContain('FAKE_PRIVATE_TOKEN');
   });
 
   test('handles empty admin list gracefully without calling sendMessage', async () => {

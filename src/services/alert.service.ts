@@ -30,8 +30,8 @@ export class AlertService {
     if (!this.api && env.BOT_TOKEN) {
       try {
         this.api = new Api(env.BOT_TOKEN);
-      } catch (err) {
-        console.warn('[AlertService] Failed to initialize fallback Api client:', err);
+      } catch {
+        console.warn('[AlertService] Failed to initialize fallback Api client');
       }
     }
 
@@ -42,8 +42,8 @@ export class AlertService {
     for (const adminId of this.adminIds) {
       try {
         await this.api.sendMessage(adminId, formatted, { parse_mode: 'HTML' });
-      } catch (err) {
-        console.warn(`[AlertService] Failed to deliver alert to admin ${adminId}:`, err);
+      } catch {
+        console.warn(`[AlertService] Failed to deliver alert to admin ${adminId}`);
       }
     }
   }
@@ -85,8 +85,8 @@ export class AlertService {
             ]],
           },
         });
-      } catch (err) {
-        console.warn(`[AlertService] Failed to deliver review #${propertyId} to admin ${adminId}:`, err);
+      } catch {
+        console.warn(`[AlertService] Failed to deliver review #${propertyId} to admin ${adminId}`);
       }
     }
   }

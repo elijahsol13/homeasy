@@ -1,14 +1,18 @@
 import { DatabaseSync } from 'node:sqlite';
 import type { FastifyInstance } from 'fastify';
+import type { Api } from 'grammy';
 import { createContainer } from '../src/container';
 import { runMigrations } from '../src/database/migrate';
 import { env } from '../src/config/env';
 import { buildApiServer } from '../src/modules/api/server';
 import * as khmer24Scraper from '../src/modules/parser/khmer24.scraper';
+import { AlertService } from '../src/services/alert.service';
 
 describe('Khmer24 Mac-to-VPS raw ingest', () => {
   let db: DatabaseSync;
   let app: FastifyInstance;
+  let container: ReturnType<typeof createContainer>;
+  const telegramSend = jest.fn().mockResolvedValue({});
   const initialToken = (env as { K24_INGEST_TOKEN?: string }).K24_INGEST_TOKEN;
   const payload = {
     target: { name: 'Khmer24 Siem Reap', url: 'https://www.khmer24.com/en', city: 'siem_reap' },
@@ -24,8 +28,11 @@ describe('Khmer24 Mac-to-VPS raw ingest', () => {
       listings.map((listing) => ({ ...listing, is_real_estate: true })));
     db = new DatabaseSync(':memory:');
     runMigrations(db);
-    app = await buildApiServer({ container: createContainer({ db }) });
+    container = createContainer({ db });
+    container.alertService = new AlertService({ sendMessage: telegramSend } as unknown as Api, [98765]);
+    app = await buildApiServer({ container });
     await app.ready();
+    container.alertService.setApi({ sendMessage: telegramSend } as unknown as Api);
   });
 
   afterAll(async () => {
@@ -80,6 +87,7 @@ describe('Khmer24 Mac-to-VPS raw ingest', () => {
     const warn = jest.spyOn(app.log, 'warn').mockImplementation(() => {});
     const info = jest.spyOn(app.log, 'info').mockImplementation(() => {});
     const child = jest.spyOn(app.log, 'child').mockReturnValue(app.log);
+    const telegram = jest.spyOn(container.alertService, 'warn');
     enrich.mockImplementationOnce(async (listings) => listings.map((item) => ({
       ...item,
       is_real_estate: null,
@@ -89,6 +97,11 @@ describe('Khmer24 Mac-to-VPS raw ingest', () => {
 
     const first = await app.inject(request);
     expect(first.statusCode).toBe(503);
+    expect(telegram).toHaveBeenCalledTimes(1);
+    expect(telegram.mock.calls[0][0]).toContain('Khmer24');
+    expect(telegram.mock.calls[0][0]).not.toContain(listing.raw_text);
+    expect(telegramSend.mock.calls.at(-1)?.[0]).toBe(98765);
+    expect(telegramSend.mock.calls.at(-1)?.[1]).toContain('Khmer24 import failed');
     expect(warn).toHaveBeenCalledWith(expect.objectContaining({
       event: 'ingestion_batch_failed', source: 'khmer24', inputItems: 1,
       processedItems: 1, failedItems: 1, runId: expect.any(Number),
@@ -113,6 +126,7 @@ describe('Khmer24 Mac-to-VPS raw ingest', () => {
 
     const replay = await app.inject(request);
     expect(replay.statusCode).toBe(200);
+    expect(telegram).toHaveBeenCalledTimes(1);
     expect(info).toHaveBeenCalledWith(expect.objectContaining({
       event: 'ingestion_batch_completed', source: 'khmer24', inputItems: 1,
       processedItems: 1, failedItems: 0, runId: expect.any(Number),
@@ -132,6 +146,7 @@ describe('Khmer24 Mac-to-VPS raw ingest', () => {
     child.mockRestore();
     warn.mockRestore();
     info.mockRestore();
+    telegram.mockRestore();
   });
 
   it('retains a batch for replay when AI enrichment omits an expected listing', async () => {
@@ -206,5 +221,24 @@ describe('Khmer24 Mac-to-VPS raw ingest', () => {
       JOIN canonical_listing_source_occurrences o ON o.listing_id=l.id AND o.is_current=1
       JOIN source_items s ON s.id=o.source_item_id WHERE s.external_id='87654322'`).get() as { listing_facts_json: string };
     expect(JSON.parse(latest.listing_facts_json)).toMatchObject({ latitude: 13.359721, longitude: 103.858632 });
+  });
+
+  it('notifies on thrown AI enrichment errors while preserving the retryable HTTP failure', async () => {
+    (env as { K24_INGEST_TOKEN?: string }).K24_INGEST_TOKEN = 'k'.repeat(40);
+    const warn = jest.spyOn(container.alertService, 'warn').mockResolvedValue();
+    jest.mocked(khmer24Scraper.enrichListingsWithLLM)
+      .mockRejectedValueOnce(new Error('private provider response'));
+    try {
+      const response = await app.inject({ method: 'POST', url: '/api/v1/internal/khmer24/ingest',
+        headers: { authorization: `Bearer ${'k'.repeat(40)}` },
+        payload: { ...payload, listings: [{ ...payload.listings[0],
+          source_url: 'https://www.khmer24.com/en/property/ai-failure-adid-89123456' }] },
+      });
+      expect(response.statusCode).toBe(500);
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining('Khmer24'));
+      expect(JSON.stringify(warn.mock.calls)).not.toContain('private provider response');
+    } finally {
+      warn.mockRestore();
+    }
   });
 });

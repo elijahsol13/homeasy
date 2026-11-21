@@ -4,7 +4,7 @@ import type { AppContainer } from '../../../container';
 import { env } from '../../../config/env';
 import { RawListingSchema } from '../../parser/schemas';
 import { ingestKhmer24Listings } from '../../parser/khmer24-ingestion';
-import { constantTimeBearer, logIngestionBatch } from './internal-ingest-helpers';
+import { constantTimeBearer, logIngestionBatch, notifyIngestionFailure } from './internal-ingest-helpers';
 
 const validKhmer24DetailUrl = (value: string): boolean => {
   try {
@@ -45,8 +45,17 @@ export const khmer24IngestRoutes: FastifyPluginAsync<{ container: AppContainer }
     if (!parsed.success) return reply.code(400).send({ error: 'Invalid Khmer24 batch' });
 
     const startedAt = Date.now();
-    const result = await ingestKhmer24Listings(container, parsed.data.listings);
+    let result: Awaited<ReturnType<typeof ingestKhmer24Listings>>;
+    try {
+      result = await ingestKhmer24Listings(container, parsed.data.listings);
+    } catch (error) {
+      request.log.warn({ event: 'ingestion_batch_failed', source: 'khmer24', elapsedMs: Date.now() - startedAt },
+        'Ingestion batch crashed');
+      await notifyIngestionFailure(request.log, container.alertService, 'khmer24');
+      throw error;
+    }
     logIngestionBatch(request.log, 'khmer24', result, startedAt);
+    await notifyIngestionFailure(request.log, container.alertService, 'khmer24', result);
     const summary = {
       newSourceItems: result.newSourceItems,
       updatedSourceItems: result.updatedSourceItems,

@@ -4,7 +4,10 @@ import { runMigrations } from '../src/database/migrate';
 import { env } from '../src/config/env';
 import { buildApiServer } from '../src/modules/api/server';
 import type { FastifyInstance } from 'fastify';
+import type { Api } from 'grammy';
 import { assertFacebookLocalHost } from '../src/modules/parser/fb-runtime';
+import * as facebookIngestion from '../src/modules/parser/facebook-ingestion';
+import { AlertService } from '../src/services/alert.service';
 
 describe('Facebook automation host interlock', () => {
   const originalRole = process.env.HOMEASY_DEPLOYMENT_ROLE;
@@ -22,6 +25,8 @@ describe('Facebook automation host interlock', () => {
 describe('Facebook Mac-to-VPS ingest', () => {
   let db: DatabaseSync;
   let app: FastifyInstance;
+  let container: ReturnType<typeof createContainer>;
+  const telegramSend = jest.fn().mockResolvedValue({});
   const initialToken = (env as { FB_INGEST_TOKEN?: string }).FB_INGEST_TOKEN;
   const payload = {
     target: { name: 'Test group', url: 'https://www.facebook.com/groups/siemreaprealestate', city: 'siem_reap' },
@@ -36,8 +41,12 @@ describe('Facebook Mac-to-VPS ingest', () => {
   beforeAll(async () => {
     db = new DatabaseSync(':memory:');
     runMigrations(db);
-    app = await buildApiServer({ container: createContainer({ db }) });
+    container = createContainer({ db });
+    container.alertService = new AlertService({ sendMessage: telegramSend } as unknown as Api, [98765]);
+    app = await buildApiServer({ container });
     await app.ready();
+    // Webhook registration rewires the bot API, so restore the offline transport after registration.
+    container.alertService.setApi({ sendMessage: telegramSend } as unknown as Api);
   });
 
   afterAll(async () => {
@@ -79,5 +88,63 @@ describe('Facebook Mac-to-VPS ingest', () => {
     expect(count.n).toBe(1);
     child.mockRestore();
     info.mockRestore();
+  });
+
+  it('alerts on an uncaught ingestion failure without including exception details', async () => {
+    (env as { FB_INGEST_TOKEN?: string }).FB_INGEST_TOKEN = 'b'.repeat(40);
+    const ingest = jest.spyOn(facebookIngestion, 'ingestFacebookGroupListings')
+      .mockRejectedValueOnce(new Error('private parser details'));
+    const warn = jest.spyOn(container.alertService, 'warn').mockResolvedValue();
+    try {
+      const response = await app.inject({ method: 'POST', url: '/api/v1/internal/facebook/ingest',
+        headers: { authorization: `Bearer ${'b'.repeat(40)}` }, payload });
+      expect(response.statusCode).toBe(500);
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining('Facebook'));
+      expect(JSON.stringify(warn.mock.calls)).not.toContain('private parser details');
+    } finally {
+      ingest.mockRestore();
+      warn.mockRestore();
+    }
+  });
+
+  it('alerts on a failed batch, throttles retries, rearms after recovery, and preserves HTTP 503 on alert failure', async () => {
+    (env as { FB_INGEST_TOKEN?: string }).FB_INGEST_TOKEN = 'b'.repeat(40);
+    const request = { method: 'POST' as const, url: '/api/v1/internal/facebook/ingest',
+      headers: { authorization: `Bearer ${'b'.repeat(40)}` }, payload };
+    // End the previous test's simulated crash incident before testing a fresh failure window.
+    expect((await app.inject(request)).statusCode).toBe(200);
+    telegramSend.mockClear();
+    const failed = {
+      inputItems: 1, processedItems: 0, runId: 9001,
+      newSourceItems: 0, updatedSourceItems: 0, unchangedSourceItems: 0,
+      errors: [{ externalId: '909877111', message: 'secret listing details' }],
+    } as Awaited<ReturnType<typeof facebookIngestion.ingestFacebookGroupListings>>;
+    const recovered = { ...failed, errors: [], processedItems: 1 };
+    const ingest = jest.spyOn(facebookIngestion, 'ingestFacebookGroupListings');
+    const warn = jest.spyOn(container.alertService, 'warn');
+    try {
+      ingest.mockResolvedValueOnce(failed).mockResolvedValueOnce(failed)
+        .mockResolvedValueOnce(recovered).mockResolvedValueOnce(failed)
+        .mockResolvedValueOnce(recovered).mockResolvedValueOnce(failed);
+      expect((await app.inject(request)).statusCode).toBe(503);
+      expect((await app.inject(request)).statusCode).toBe(503);
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(warn.mock.calls[0][0]).toContain('Facebook');
+      expect(warn.mock.calls[0][0]).toContain('9001');
+      expect(warn.mock.calls[0][0]).not.toContain('secret listing details');
+      expect(telegramSend).toHaveBeenCalledTimes(1);
+      expect(telegramSend.mock.calls[0][0]).toBe(98765);
+      expect(telegramSend.mock.calls[0][1]).not.toContain('secret listing details');
+      expect((await app.inject(request)).statusCode).toBe(200);
+      warn.mockRejectedValueOnce(new Error('Telegram offline with sensitive internals'));
+      expect((await app.inject(request)).statusCode).toBe(503);
+      expect(warn).toHaveBeenCalledTimes(2);
+      expect((await app.inject(request)).statusCode).toBe(200);
+      expect((await app.inject(request)).statusCode).toBe(503);
+      expect(warn).toHaveBeenCalledTimes(3);
+    } finally {
+      ingest.mockRestore();
+      warn.mockRestore();
+    }
   });
 });
