@@ -58,6 +58,8 @@ describe('Facebook Mac-to-VPS ingest', () => {
   it('rejects malformed batches and imports the same Facebook post idempotently', async () => {
     (env as { FB_INGEST_TOKEN?: string }).FB_INGEST_TOKEN = 'b'.repeat(40);
     const headers = { authorization: 'Bearer ' + 'b'.repeat(40) };
+    const info = jest.spyOn(app.log, 'info').mockImplementation(() => {});
+    const child = jest.spyOn(app.log, 'child').mockReturnValue(app.log);
     const bad = await app.inject({ method: 'POST', url: '/api/v1/internal/facebook/ingest', headers,
       payload: { ...payload, listings: [{ ...payload.listings[0], source_url: 'https://evil.example/posts/1' }] } });
     expect(bad.statusCode).toBe(400);
@@ -65,10 +67,17 @@ describe('Facebook Mac-to-VPS ingest', () => {
     const first = await app.inject({ method: 'POST', url: '/api/v1/internal/facebook/ingest', headers, payload });
     expect(first.statusCode).toBe(200);
     expect(first.json().newSourceItems).toBe(1);
+    expect(info).toHaveBeenCalledWith(expect.objectContaining({
+      event: 'ingestion_batch_completed', source: 'facebook', inputItems: 1,
+      processedItems: 1, failedItems: 0, runId: expect.any(Number),
+      elapsedMs: expect.any(Number),
+    }), 'Ingestion batch completed');
     const repeated = await app.inject({ method: 'POST', url: '/api/v1/internal/facebook/ingest', headers, payload });
     expect(repeated.statusCode).toBe(200);
     expect(repeated.json().newSourceItems).toBe(0);
     const count = db.prepare('SELECT count(*) AS n FROM source_items WHERE external_id = ?').get('909877111') as { n: number };
     expect(count.n).toBe(1);
+    child.mockRestore();
+    info.mockRestore();
   });
 });

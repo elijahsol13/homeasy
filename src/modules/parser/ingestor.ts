@@ -39,14 +39,16 @@ import type { CanonicalShadowService } from './canonical-dedupe';
 
 /** Source-confirmed Khmer24 map pins can change without a text or photo edit.
  * Compare the trusted scraper extraction, never AI facts or marketing landmarks. */
-function khmer24MapPin(raw: unknown): { latitude: number; longitude: number } | null {
+function khmer24MapPin(raw: unknown): { latitude: number; longitude: number; mapsUrl?: string } | null {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
   const extracted = (raw as Record<string, unknown>).listingExtraction;
   if (!extracted || typeof extracted !== 'object' || Array.isArray(extracted)) return null;
   const facts = extracted as Record<string, unknown>;
   if (typeof facts.latitude !== 'number' || typeof facts.longitude !== 'number') return null;
   if (!Number.isFinite(facts.latitude) || !Number.isFinite(facts.longitude)) return null;
-  return { latitude: facts.latitude, longitude: facts.longitude };
+  return { latitude: facts.latitude, longitude: facts.longitude,
+    ...(typeof facts.maps_url === 'string' ? { mapsUrl: facts.maps_url } : {}),
+  };
 }
 
 type RawListing = z.infer<typeof RawListingSchema>;
@@ -612,6 +614,12 @@ export class IngestionService {
         let item = adapter.normalize(raw);
         externalId = item.externalId;
         sourceKey = repo.makeSourceKey(item.sourceIdentity);
+        // Account for a known source even when enrichment fails before item persistence.
+        if (!context.dryRun && !sourceIds.has(sourceKey)) {
+          const source = repo.upsertSourceDetailed(item.sourceIdentity);
+          sourceIds.set(sourceKey, source);
+          if (source.inserted) newSourceKeys.add(sourceKey);
+        }
         let didProcessChangedItem = false;
         const priorSourceId = repo.findSourceId(sourceKey);
         const priorState = priorSourceId === undefined ? undefined : repo.findSourceItemState(priorSourceId, item.externalId);
@@ -625,9 +633,30 @@ export class IngestionService {
           } catch { /* Treat malformed historical payload as lacking a trusted pin. */ }
         }
         const oldPin = khmer24MapPin(previousPayload);
-        const incomingPin = khmer24MapPin(item.raw);
+        let incomingPin = khmer24MapPin(item.raw);
+        // A missing URL alongside the same verified coordinates is a parser
+        // omission. Keep the last source-backed link unless the source supplied
+        // a new (or explicitly empty) URL.
+        if (oldPin?.mapsUrl && incomingPin && incomingPin.mapsUrl === undefined &&
+            oldPin.latitude === incomingPin.latitude && oldPin.longitude === incomingPin.longitude) {
+          const rawRecord = item.raw as Record<string, unknown>;
+          const listing = rawRecord.listing;
+          const sourceMapUrl = listing && typeof listing === 'object' && !Array.isArray(listing)
+            ? (listing as Record<string, unknown>).maps_url : undefined;
+          if (sourceMapUrl == null) {
+            item = { ...item, raw: {
+              ...rawRecord,
+              listingExtraction: {
+                ...(rawRecord.listingExtraction as Record<string, unknown> | undefined),
+                maps_url: oldPin.mapsUrl,
+              },
+            } as T };
+            incomingPin = khmer24MapPin(item.raw);
+          }
+        }
         const verifiedMapChanged = incomingPin !== null && (oldPin === null
-          || incomingPin.latitude !== oldPin.latitude || incomingPin.longitude !== oldPin.longitude);
+          || incomingPin.latitude !== oldPin.latitude || incomingPin.longitude !== oldPin.longitude
+          || incomingPin.mapsUrl !== oldPin.mapsUrl);
         // A temporary parser omission must not discard an already verified pin.
         if (oldPin && !incomingPin && item.raw && typeof item.raw === 'object') {
           const rawRecord = item.raw as Record<string, unknown>;
@@ -637,6 +666,7 @@ export class IngestionService {
               ...(rawRecord.listingExtraction as Record<string, unknown> | undefined),
               latitude: (previousPayload!.listingExtraction as Record<string, unknown>).latitude,
               longitude: (previousPayload!.listingExtraction as Record<string, unknown>).longitude,
+              ...(oldPin.mapsUrl ? { maps_url: oldPin.mapsUrl } : {}),
             },
           } as T };
         }
@@ -753,7 +783,12 @@ export class IngestionService {
         if (outcome.source.inserted) newSourceKeys.add(sourceKey);
         const counts = sourceCounts.get(sourceKey) ?? { input: 0, success: 0, failed: 0 };
         counts.input++;
-        counts.success++;
+        if (item.processingError) {
+          counts.failed++;
+          result.errors.push({ externalId: item.externalId, message: item.processingError });
+        } else {
+          counts.success++;
+        }
         sourceCounts.set(sourceKey, counts);
         result.processedItems++;
         result.newVersions += Number(outcome.upsert.newVersion);
@@ -761,7 +796,7 @@ export class IngestionService {
         else if (outcome.upsert.updated) result.updatedSourceItems++;
         else result.unchangedSourceItems++;
         result.items.push({ externalId: item.externalId, sourceKey,
-          status: outcome.upsert.inserted ? 'new' : outcome.upsert.updated ? 'updated' : 'unchanged' });
+          status: item.processingError ? 'error' : outcome.upsert.inserted ? 'new' : outcome.upsert.updated ? 'updated' : 'unchanged' });
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         result.errors.push({ externalId, message });
@@ -801,7 +836,8 @@ export class IngestionService {
         repo.addRunSourceCounts(runId, source.id, context.ingestionMethod, counts);
       }
       repo.finishRun(runId, { input: result.inputItems, processed: result.processedItems,
-        success: result.processedItems, failed: result.errors.length });
+        success: [...sourceCounts.values()].reduce((total, counts) => total + counts.success, 0),
+        failed: result.errors.length });
       const liveProvider = context.runType === 'DISCOVERY'
         ? context.ingestionMethod === 'BRIGHTDATA' ? 'BRIGHTDATA'
           : context.ingestionMethod === 'KHMER24_SCRAPER' ? 'KHMER24' : null

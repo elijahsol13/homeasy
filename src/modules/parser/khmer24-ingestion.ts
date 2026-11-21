@@ -40,10 +40,15 @@ export async function ingestKhmer24Listings(
     const url = envelope.listing.source_url ?? envelope.listing.url ?? '';
     const state = states.get(url);
     const enriched = enrichedByUrl.get(url);
+    // The extractor can return an UNCLASSIFIED fallback after a transient AI
+    // failure. Keep the raw source in SQLite, but require Mac outbox replay.
+    const processingError = !noEnrich && state?.contentChanged &&
+      (!enriched || (enriched.is_real_estate == null && enriched.review_reason === 'LLM extraction unavailable'))
+      ? 'LLM extraction unavailable' : undefined;
     const classification = state?.contentChanged
       ? classifyKhmer24Listing(noEnrich ? undefined : enriched)
       : state?.classification ?? 'UNCLASSIFIED';
-    return { ...envelope, classification, listing: enriched ?? envelope.listing };
+    return { ...envelope, classification, processingError, listing: enriched ?? envelope.listing };
   });
   return container.ingestionService.ingestBatch(new Khmer24LiveAdapter(async function* () { yield* processed; }), {
     runType: 'DISCOVERY', ingestionMethod: 'KHMER24_SCRAPER', parserVersion: 'khmer24-canonical-v1',

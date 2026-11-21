@@ -315,44 +315,69 @@ export class SourceIngestionRepository {
   }
 
   upsertSourceItemDetailed(sourceRegistryId: number, item: SourceItemInput, observedAt = new Date().toISOString(),
-    verifiedMapPin?: { latitude: number; longitude: number }): SourceItemUpsertResult {
+    verifiedMapPin?: { latitude: number; longitude: number; mapsUrl?: string }): SourceItemUpsertResult {
     const payload = JSON.stringify(item.rawPayload ?? {});
     const existing = this.db.prepare(`
-      SELECT id, content_hash, raw_text, raw_payload_json, media_hash, last_seen_at
+      SELECT id, content_hash, raw_text, raw_payload_json, media_hash, last_seen_at, classification
       FROM source_items WHERE source_registry_id = ? AND external_id = ?
     `).get(sourceRegistryId, item.externalId) as {
       id: number; content_hash: string | null; raw_text: string | null;
       raw_payload_json: string; media_hash: string | null; last_seen_at: string;
+      classification: SourceItemInput['classification'];
     } | undefined;
 
     const changed = Boolean(existing && (existing.content_hash !== item.contentHash || existing.media_hash !== (item.mediaHash ?? null)));
     if (existing && !changed) {
+      const recoveredClassification = Boolean(
+        (existing.classification === 'UNCLASSIFIED' || existing.classification == null) &&
+        item.classification && item.classification !== 'UNCLASSIFIED',
+      );
       // A discovery re-read is not a new source version. Keep the last accepted
       // payload/parser facts intact: a transport/parser-only difference must
-      // not silently replace richer canonical extraction data.
+      // not silently replace richer canonical extraction data. A previously
+      // unclassified item may accept a successful AI retry without a new
+      // source-content version.
       // A source-verified pin is an exception: only those two location fields
       // may change without a content/media version or another AI invocation.
-      let retainedPayload = existing.raw_payload_json;
-      if (item.sourceType === 'KHMER24' && verifiedMapPin && observedAt >= existing.last_seen_at) {
+      let retainedPayload = recoveredClassification ? payload : existing.raw_payload_json;
+      if (item.sourceType === 'KHMER24' && (recoveredClassification || verifiedMapPin)) {
         try {
           const oldRaw: unknown = JSON.parse(existing.raw_payload_json);
           if (oldRaw && typeof oldRaw === 'object' && !Array.isArray(oldRaw)) {
-            const raw = oldRaw as Record<string, unknown>;
-            const oldFacts = raw.listingExtraction;
-            const facts = oldFacts && typeof oldFacts === 'object' && !Array.isArray(oldFacts)
+            const previous = oldRaw as Record<string, unknown>;
+            const raw = recoveredClassification && item.rawPayload && typeof item.rawPayload === 'object'
+              && !Array.isArray(item.rawPayload) ? item.rawPayload as Record<string, unknown> : previous;
+            const oldFacts = previous.listingExtraction;
+            const prior = oldFacts && typeof oldFacts === 'object' && !Array.isArray(oldFacts)
               ? oldFacts as Record<string, unknown> : {};
-            retainedPayload = JSON.stringify({ ...raw, listingExtraction: {
-              ...facts, latitude: verifiedMapPin.latitude, longitude: verifiedMapPin.longitude,
-            } });
+            const currentFacts = raw.listingExtraction;
+            const current = currentFacts && typeof currentFacts === 'object' && !Array.isArray(currentFacts)
+              ? currentFacts as Record<string, unknown> : {};
+            const oldPin = typeof prior.latitude === 'number' && typeof prior.longitude === 'number'
+              && Number.isFinite(prior.latitude) && Number.isFinite(prior.longitude)
+              ? { latitude: prior.latitude, longitude: prior.longitude } : null;
+            const newPin = observedAt >= existing.last_seen_at ? verifiedMapPin : undefined;
+            const pin = newPin ?? (recoveredClassification ? oldPin : null);
+            if (pin) {
+              retainedPayload = JSON.stringify({ ...raw, listingExtraction: {
+                ...current, latitude: pin.latitude, longitude: pin.longitude,
+                maps_url: newPin ? newPin.mapsUrl : prior.maps_url,
+              } });
+            }
           }
         } catch { /* Preserve the original payload if historical JSON is invalid. */ }
       }
       this.db.prepare(`UPDATE source_items SET published_at=COALESCE(?,published_at),
         raw_payload_json=?, last_seen_at=MAX(last_seen_at,?),
+        classification=COALESCE(?,classification), parser_version=COALESCE(?,parser_version),
         processing_run_id=COALESCE(?,processing_run_id),
         updated_at=strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE id=?`)
-        .run(item.publishedAt ?? null, retainedPayload, observedAt, item.processingRunId ?? null, existing.id);
-      return { id: existing.id, inserted: false, updated: false, unchanged: true, newVersion: false };
+        .run(item.publishedAt ?? null, retainedPayload, observedAt,
+          recoveredClassification ? item.classification ?? null : null,
+          recoveredClassification ? item.parserVersion ?? null : null,
+          item.processingRunId ?? null, existing.id);
+      return { id: existing.id, inserted: false, updated: recoveredClassification,
+        unchanged: !recoveredClassification, newVersion: false };
     }
     if (existing && changed) {
       this.db.prepare(`

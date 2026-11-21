@@ -1,10 +1,10 @@
-import crypto from 'node:crypto';
 import type { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
 import type { AppContainer } from '../../../container';
 import { env } from '../../../config/env';
 import { RawListingSchema } from '../../parser/schemas';
 import { ingestKhmer24Listings } from '../../parser/khmer24-ingestion';
+import { constantTimeBearer, logIngestionBatch } from './internal-ingest-helpers';
 
 const validKhmer24DetailUrl = (value: string): boolean => {
   try {
@@ -32,13 +32,6 @@ const batchSchema = z.object({
   })).min(1).max(10),
 }).strict();
 
-function constantTimeBearer(header: unknown, secret: string): boolean {
-  if (typeof header !== 'string' || !header.startsWith('Bearer ')) return false;
-  const supplied = crypto.createHash('sha256').update(header.slice(7)).digest();
-  const expected = crypto.createHash('sha256').update(secret).digest();
-  return crypto.timingSafeEqual(supplied, expected);
-}
-
 export const khmer24IngestRoutes: FastifyPluginAsync<{ container: AppContainer }> = async (app, { container }) => {
   app.post('/api/v1/internal/khmer24/ingest', {
     bodyLimit: 1024 * 1024,
@@ -51,7 +44,9 @@ export const khmer24IngestRoutes: FastifyPluginAsync<{ container: AppContainer }
     const parsed = batchSchema.safeParse(request.body);
     if (!parsed.success) return reply.code(400).send({ error: 'Invalid Khmer24 batch' });
 
+    const startedAt = Date.now();
     const result = await ingestKhmer24Listings(container, parsed.data.listings);
+    logIngestionBatch(request.log, 'khmer24', result, startedAt);
     const summary = {
       newSourceItems: result.newSourceItems,
       updatedSourceItems: result.updatedSourceItems,

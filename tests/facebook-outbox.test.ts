@@ -51,6 +51,28 @@ describe('Facebook delivery outbox', () => {
     expect(fs.readdirSync(directory).filter((f) => f.endsWith('.json'))).toHaveLength(1);
   });
 
+  it('sends each queued file once when flushes overlap in one process', async () => {
+    const offline = jest.fn(async () => { throw new Error('offline'); }) as unknown as typeof fetch;
+    await expect(queueFacebookBatch(target, listings, directory, url, token, offline)).rejects.toThrow('offline');
+
+    let releaseResponse!: () => void;
+    const responseGate = new Promise<void>((resolve) => { releaseResponse = resolve; });
+    const online = jest.fn(async () => {
+      await responseGate;
+      return new Response(JSON.stringify({
+        newSourceItems: 1, updatedSourceItems: 0, unchangedSourceItems: 0, errors: [],
+      }), { status: 200 });
+    }) as unknown as typeof fetch;
+    const first = flushFacebookOutbox(directory, url, token, online);
+    const second = flushFacebookOutbox(directory, url, token, online);
+    releaseResponse();
+
+    const summaries = await Promise.all([first, second]);
+    expect(online).toHaveBeenCalledTimes(1);
+    expect(summaries.reduce((sum, item) => sum + item.newSourceItems, 0)).toBe(1);
+    expect(fs.readdirSync(directory)).toHaveLength(0);
+  });
+
   it('splits more than ten listings into safe batches and only removes acknowledged ones', async () => {
     const twelve = Array.from({ length: 12 }, (_, i) => ({
       ...listings[0], source_url: `https://www.facebook.com/groups/123/posts/${456 + i}`,

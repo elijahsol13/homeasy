@@ -67,6 +67,35 @@ describe('SourceIngestionRepository', () => {
     expect(versions.map((entry)=>entry.media_hash)).toEqual([null,'photos-v1']);
   });
 
+  it('retains source-verified Khmer24 GPS across an AI classification retry with no new coordinates', () => {
+    const sourceId = repo.upsertSource({ sourceType: 'KHMER24', externalSourceId: 'siem-reap', name: 'Khmer24' });
+    const original = {
+      sourceType: 'KHMER24' as const, externalId: 'retry-pin-1', contentHash: 'original-text',
+      classification: 'UNCLASSIFIED' as const,
+      rawPayload: { listingExtraction: {
+        latitude: 13.358721, longitude: 103.857632,
+        maps_url: 'https://www.google.com/maps?q=13.358721,103.857632',
+      } },
+    };
+    const first = repo.upsertSourceItemDetailed(sourceId, original, '2026-11-20T00:00:00Z');
+    const recovered = repo.upsertSourceItemDetailed(sourceId, {
+      ...original, classification: 'HOUSING_SUPPLY',
+      rawPayload: { listingExtraction: { title_en: 'Newly classified rental' } },
+    }, '2026-11-21T00:00:00Z');
+
+    expect(recovered).toMatchObject({ id: first.id, inserted: false, updated: true, newVersion: false });
+    const stored = db.prepare('SELECT raw_payload_json,classification FROM source_items WHERE id=?').get(first.id) as {
+      raw_payload_json: string; classification: string;
+    };
+    expect(stored.classification).toBe('HOUSING_SUPPLY');
+    expect(JSON.parse(stored.raw_payload_json).listingExtraction).toMatchObject({
+      title_en: 'Newly classified rental', latitude: 13.358721, longitude: 103.857632,
+      maps_url: 'https://www.google.com/maps?q=13.358721,103.857632',
+    });
+    expect(db.prepare('SELECT COUNT(*) AS n FROM source_item_versions WHERE source_item_id=?').get(first.id))
+      .toEqual({ n: 1 });
+  });
+
   it('rolls back all writes in a failed repository transaction', () => {
     expect(() => repo.transaction(() => {
       repo.upsertSource({ sourceType: 'KHMER24', externalSourceId: 'cat-1', name: 'Siem Reap' });

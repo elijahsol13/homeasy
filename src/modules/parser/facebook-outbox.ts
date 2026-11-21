@@ -13,6 +13,7 @@ const MAX_BATCH_BYTES = 1024 * 1024;
 
 const emptySummary = (): BatchSummary => ({ newSourceItems: 0, updatedSourceItems: 0, unchangedSourceItems: 0, errors: [] });
 const OUTBOX_DIR = path.resolve('data/fb_outbox');
+const pendingFlushes = new Map<string, Promise<void>>();
 
 function requireSecureTransport(url: string, token: string, source = 'Facebook'): void {
   const parsed = new URL(url);
@@ -27,31 +28,43 @@ export async function flushFacebookOutbox(
   timeoutMs = 30_000, source = 'Facebook',
 ): Promise<BatchSummary> {
   requireSecureTransport(url, token, source);
-  if (!fs.existsSync(outboxDir)) return emptySummary();
-  const combined = emptySummary();
-  const files = fs.readdirSync(outboxDir).filter((file) => file.endsWith('.json')).sort();
-  for (const file of files) {
-    const filePath = path.join(outboxDir, file);
-    const batch = JSON.parse(fs.readFileSync(filePath, 'utf8')) as Batch;
-    const response = await transport(url, {
-      method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-      body: JSON.stringify(batch), signal: AbortSignal.timeout(timeoutMs),
-    });
-    if (!response.ok) throw new Error(`${source} batch ingest HTTP ${response.status}; ${files.length} batch(es) queued`);
-    const result = await response.json() as BatchSummary;
-    if (!Array.isArray(result.errors) || result.errors.length > 0 ||
-        ![result.newSourceItems, result.updatedSourceItems, result.unchangedSourceItems]
-          .every((n) => Number.isSafeInteger(n) && n >= 0) ||
-        result.newSourceItems + result.updatedSourceItems + result.unchangedSourceItems !== batch.listings.length) {
-      throw new Error(`${source} importer returned an invalid or incomplete response; batch retained`);
+  // Serialize flushes for a directory within this process. Each waiter gets
+  // its own fresh directory scan, including files queued while another flush ran.
+  const previousFlush = pendingFlushes.get(outboxDir);
+  let releaseFlush!: () => void;
+  const currentFlush = new Promise<void>((resolve) => { releaseFlush = resolve; });
+  pendingFlushes.set(outboxDir, currentFlush);
+  if (previousFlush) await previousFlush;
+  try {
+    if (!fs.existsSync(outboxDir)) return emptySummary();
+    const combined = emptySummary();
+    const files = fs.readdirSync(outboxDir).filter((file) => file.endsWith('.json')).sort();
+    for (const file of files) {
+      const filePath = path.join(outboxDir, file);
+      const batch = JSON.parse(fs.readFileSync(filePath, 'utf8')) as Batch;
+      const response = await transport(url, {
+        method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify(batch), signal: AbortSignal.timeout(timeoutMs),
+      });
+      if (!response.ok) throw new Error(`${source} batch ingest HTTP ${response.status}; ${files.length} batch(es) queued`);
+      const result = await response.json() as BatchSummary;
+      if (!Array.isArray(result.errors) || result.errors.length > 0 ||
+          ![result.newSourceItems, result.updatedSourceItems, result.unchangedSourceItems]
+            .every((n) => Number.isSafeInteger(n) && n >= 0) ||
+          result.newSourceItems + result.updatedSourceItems + result.unchangedSourceItems !== batch.listings.length) {
+        throw new Error(`${source} importer returned an invalid or incomplete response; batch retained`);
+      }
+      // Remove only after a complete, acknowledged canonical DB ingestion.
+      fs.unlinkSync(filePath);
+      combined.newSourceItems += result.newSourceItems;
+      combined.updatedSourceItems += result.updatedSourceItems;
+      combined.unchangedSourceItems += result.unchangedSourceItems;
     }
-    // Remove only after a complete, acknowledged canonical DB ingestion.
-    fs.unlinkSync(filePath);
-    combined.newSourceItems += result.newSourceItems;
-    combined.updatedSourceItems += result.updatedSourceItems;
-    combined.unchangedSourceItems += result.unchangedSourceItems;
+    return combined;
+  } finally {
+    releaseFlush();
+    if (pendingFlushes.get(outboxDir) === currentFlush) pendingFlushes.delete(outboxDir);
   }
-  return combined;
 }
 
 export async function queueFacebookBatch(

@@ -25,6 +25,8 @@ export interface NormalizedSourceItem<T = unknown> {
   contentHash?: string;
   publishedAt?: string;
   classification?: 'HOUSING_SUPPLY' | 'HOUSING_DEMAND' | 'HOUSING_ADJACENT' | 'IRRELEVANT' | 'UNCLASSIFIED';
+  /** The raw source was persisted but enrichment must be retried. */
+  processingError?: string;
   mediaHash?: string;
   metadata?: Record<string, unknown>;
   aiResults?: Array<{

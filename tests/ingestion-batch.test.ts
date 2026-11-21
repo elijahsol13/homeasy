@@ -40,6 +40,45 @@ describe('IngestionService.ingestBatch', () => {
     runType: 'REPLAY', ingestionMethod, observedAt: '2026-10-07T00:00:00.000Z',
   });
 
+  it('attributes a failed pre-write enrichment to its source in processing run metrics', async () => {
+    const adapter = new FacebookLiveAdapter(async function* () {
+      yield facebookGroupEnvelope({
+        source_url: 'https://www.facebook.com/groups/654321/posts/999888/',
+        raw_text: 'Apartment available for rent', city: 'siem_reap', photos: [],
+      }, { name: 'Siem Reap Rentals', url: 'https://www.facebook.com/groups/654321/' });
+    }, async () => { throw new Error('Transient extraction failure'); });
+
+    const result = await ingestion.ingestBatch(adapter, { ...context('CAMOUFOX'), runType: 'DISCOVERY' });
+    expect(result.runId).toBeDefined();
+    expect(result.errors).toEqual([{ externalId: '999888', message: 'Transient extraction failure' }]);
+    expect(db.prepare(`SELECT items_input,items_processed,items_success,items_failed,status
+      FROM processing_runs WHERE id=?`).get(result.runId!)).toMatchObject({
+      items_input: 1, items_processed: 0, items_success: 0, items_failed: 1, status: 'failed',
+    });
+    expect(db.prepare(`SELECT records_input,records_success,records_failed
+      FROM processing_run_sources WHERE processing_run_id=?`).all(result.runId!)).toEqual([
+      { records_input: 1, records_success: 0, records_failed: 1 },
+    ]);
+  });
+
+  it('marks persisted source items with pending enrichment as failed for replay', async () => {
+    const adapter = new FacebookLiveAdapter(async function* () {
+      yield facebookGroupEnvelope({
+        source_url: 'https://www.facebook.com/groups/654321/posts/999889/',
+        raw_text: 'Apartment in Siem Reap, $600/month', city: 'siem_reap', photos: [],
+      }, { name: 'Siem Reap Rentals', url: 'https://www.facebook.com/groups/654321/' });
+    }, async (_raw, normalized) => ({ ...normalized, processingError: 'Extraction temporarily unavailable' }));
+
+    const result = await ingestion.ingestBatch(adapter, { ...context('CAMOUFOX'), runType: 'DISCOVERY' });
+    expect(result.items).toEqual([expect.objectContaining({ externalId: '999889', status: 'error' })]);
+    expect(result).toMatchObject({ processedItems: 1, newSourceItems: 1 });
+    expect(result.errors).toEqual([{ externalId: '999889', message: 'Extraction temporarily unavailable' }]);
+    expect(db.prepare('SELECT COUNT(*) n FROM source_items WHERE external_id = ?').get('999889'))
+      .toEqual({ n: 1 });
+    expect(db.prepare('SELECT items_success, items_failed FROM processing_runs WHERE id = ?').get(result.runId!))
+      .toMatchObject({ items_success: 0, items_failed: 1 });
+  });
+
   it('persists and reconciles Khmer24 room counts without losing them on a partial refresh', async () => {
     const adapter = (rawText:string, rooms?:{bedrooms:number; bathrooms:number}, fromJson?:{bedrooms:number; bathrooms:number}) =>
       new Khmer24LiveAdapter(async function* () {
@@ -78,15 +117,19 @@ describe('IngestionService.ingestBatch', () => {
 
   it('publishes a newly verified Khmer24 map pin without a text/media edit or extra AI processing', async () => {
     let aiCalls = 0;
-    const ingest = (latitude?: number, longitude?: number, observedAt = '2026-10-07T00:00:00Z') =>
+    const ingest = (latitude?: number, longitude?: number, observedAt = '2026-10-07T00:00:00Z',
+      mapUrl: string | null | undefined = latitude != null && longitude != null
+        ? `https://www.google.com/maps?q=${latitude},${longitude}` : undefined,
+      rawText = 'Villa for $700 monthly 3 bedrooms 4 bathrooms') =>
       ingestion.ingestBatch(new Khmer24LiveAdapter(async function* () {
         yield { sourceId: 'siem-reap', sourceName: 'Khmer24', classification: 'HOUSING_SUPPLY' as const,
           listing: { title: 'Villa for rent in Sala Kamreuk', description: 'Villa for $700 monthly',
-            raw_text: 'Villa for $700 monthly 3 bedrooms 4 bathrooms',
+            raw_text: rawText,
             source_url: 'https://www.khmer24.com/en/villa-for-rent-adid-14071624',
             city: 'siem_reap' as const, location: 'Sala Kamreuk', price: 700, currency: 'USD' as const,
             category: 'house' as const, property_type: 'Villa', bedrooms: 3, bathrooms: 4,
             photos: ['https://example.com/villa.jpg'], latitude, longitude,
+            maps_url: mapUrl ?? undefined,
             listing_facts_json: JSON.stringify({ offer_type: 'rent', sangkat: 'Sala Kamreuk' }),
           },
         };
@@ -101,17 +144,85 @@ describe('IngestionService.ingestBatch', () => {
     expect(added).toMatchObject({ unchangedSourceItems: 1, canonicalBindingsUpdated: 1 });
     let row = db.prepare('SELECT id,listing_facts_json FROM canonical_listings').get() as typeof initial;
     expect(row.id).toBe(initial.id);
-    expect(JSON.parse(row.listing_facts_json)).toMatchObject({ latitude: 13.360123, longitude: 103.862345 });
+    expect(JSON.parse(row.listing_facts_json)).toMatchObject({
+      latitude: 13.360123, longitude: 103.862345,
+      maps_url: 'https://www.google.com/maps?q=13.360123,103.862345',
+    });
+    expect(JSON.parse((db.prepare('SELECT raw_payload_json FROM source_items').get() as { raw_payload_json: string })
+      .raw_payload_json).listingExtraction.maps_url).toBe('https://www.google.com/maps?q=13.360123,103.862345');
     const absent = await ingest(undefined, undefined, '2026-10-09T00:00:00Z');
     expect(absent).toMatchObject({ unchangedSourceItems: 1, canonicalBindingsUpdated: 0 });
     row = db.prepare('SELECT id,listing_facts_json FROM canonical_listings').get() as typeof initial;
-    expect(JSON.parse(row.listing_facts_json)).toMatchObject({ latitude: 13.360123, longitude: 103.862345 });
+    expect(JSON.parse(row.listing_facts_json)).toMatchObject({
+      latitude: 13.360123, longitude: 103.862345,
+      maps_url: 'https://www.google.com/maps?q=13.360123,103.862345',
+    });
+    expect(JSON.parse((db.prepare('SELECT raw_payload_json FROM source_items').get() as { raw_payload_json: string })
+      .raw_payload_json).listingExtraction.maps_url).toBe('https://www.google.com/maps?q=13.360123,103.862345');
     const moved = await ingest(13.360223, 103.862445, '2026-10-10T00:00:00Z');
     expect(moved).toMatchObject({ unchangedSourceItems: 1, canonicalBindingsUpdated: 1 });
     row = db.prepare('SELECT id,listing_facts_json FROM canonical_listings').get() as typeof initial;
-    expect(JSON.parse(row.listing_facts_json)).toMatchObject({ latitude: 13.360223, longitude: 103.862445 });
+    expect(JSON.parse(row.listing_facts_json)).toMatchObject({
+      latitude: 13.360223, longitude: 103.862445,
+      maps_url: 'https://www.google.com/maps?q=13.360223,103.862445',
+    });
+    expect(JSON.parse((db.prepare('SELECT raw_payload_json FROM source_items').get() as { raw_payload_json: string })
+      .raw_payload_json).listingExtraction.maps_url).toBe('https://www.google.com/maps?q=13.360223,103.862445');
+    const stale = await ingest(13.123456, 103.123456, '2026-10-09T12:00:00Z');
+    expect(stale).toMatchObject({ unchangedSourceItems: 1, canonicalBindingsUpdated: 0 });
+    row = db.prepare('SELECT id,listing_facts_json FROM canonical_listings').get() as typeof initial;
+    expect(JSON.parse(row.listing_facts_json)).toMatchObject({
+      latitude: 13.360223, longitude: 103.862445,
+      maps_url: 'https://www.google.com/maps?q=13.360223,103.862445',
+    });
+    expect(JSON.parse((db.prepare('SELECT raw_payload_json FROM source_items').get() as { raw_payload_json: string })
+      .raw_payload_json).listingExtraction).toMatchObject({
+        latitude: 13.360223, longitude: 103.862445,
+        maps_url: 'https://www.google.com/maps?q=13.360223,103.862445',
+      });
+    const changedWithoutLink = await ingest(13.360323, 103.862545, '2026-10-11T00:00:00Z', '');
+    expect(changedWithoutLink).toMatchObject({ unchangedSourceItems: 1, canonicalBindingsUpdated: 1 });
+    row = db.prepare('SELECT id,listing_facts_json FROM canonical_listings').get() as typeof initial;
+    const factsWithoutLink = JSON.parse(row.listing_facts_json);
+    expect(factsWithoutLink).toMatchObject({ latitude: 13.360323, longitude: 103.862545 });
+    expect(factsWithoutLink.maps_url).toBeUndefined();
+    expect(JSON.parse((db.prepare('SELECT raw_payload_json FROM source_items').get() as { raw_payload_json: string })
+      .raw_payload_json).listingExtraction.maps_url).toBeUndefined();
     expect(aiCalls).toBe(1);
     expect(db.prepare('SELECT COUNT(*) n FROM source_item_versions').get()).toEqual({ n: 1 });
+
+    const newlyLinked = await ingest(13.360323, 103.862545, '2026-10-12T00:00:00Z',
+      'https://www.google.com/maps?q=13.360323,103.862545');
+    expect(newlyLinked).toMatchObject({ unchangedSourceItems: 1, canonicalBindingsUpdated: 1 });
+    row = db.prepare('SELECT id,listing_facts_json FROM canonical_listings').get() as typeof initial;
+    expect(row.id).toBe(initial.id);
+    expect(JSON.parse(row.listing_facts_json).maps_url)
+      .toBe('https://www.google.com/maps?q=13.360323,103.862545');
+    expect(aiCalls).toBe(1);
+    expect(db.prepare('SELECT COUNT(*) n FROM source_item_versions').get()).toEqual({ n: 1 });
+
+    const temporaryLinkOmission = await ingest(13.360323, 103.862545, '2026-10-12T12:00:00Z', null);
+    expect(temporaryLinkOmission).toMatchObject({ unchangedSourceItems: 1 });
+    row = db.prepare('SELECT id,listing_facts_json FROM canonical_listings').get() as typeof initial;
+    expect(JSON.parse(row.listing_facts_json).maps_url)
+      .toBe('https://www.google.com/maps?q=13.360323,103.862545');
+    expect(JSON.parse((db.prepare('SELECT raw_payload_json FROM source_items').get() as { raw_payload_json: string })
+      .raw_payload_json).listingExtraction.maps_url)
+      .toBe('https://www.google.com/maps?q=13.360323,103.862545');
+
+    const editedWithoutPin = await ingest(undefined, undefined, '2026-10-13T00:00:00Z', undefined,
+      'Villa for $700 monthly 3 bedrooms 4 bathrooms, updated description');
+    expect(editedWithoutPin.newVersions).toBe(1);
+    expect(JSON.parse((db.prepare('SELECT raw_payload_json FROM source_items').get() as { raw_payload_json: string })
+      .raw_payload_json).listingExtraction).toMatchObject({
+        latitude: 13.360323, longitude: 103.862545,
+        maps_url: 'https://www.google.com/maps?q=13.360323,103.862545',
+      });
+    const editedListing = db.prepare('SELECT listing_facts_json FROM canonical_listings').get() as { listing_facts_json: string };
+    expect(JSON.parse(editedListing.listing_facts_json)).toMatchObject({
+      latitude: 13.360323, longitude: 103.862545,
+      maps_url: 'https://www.google.com/maps?q=13.360323,103.862545',
+    });
   });
 
   it('keeps one source item and preserves the previous version after an edit', async () => {

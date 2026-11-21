@@ -23,6 +23,7 @@ export interface LiveListingEnvelope {
   groupId?: string;
   groupName?: string;
   classification?: 'HOUSING_SUPPLY' | 'HOUSING_DEMAND' | 'HOUSING_ADJACENT' | 'IRRELEVANT' | 'UNCLASSIFIED';
+  processingError?: string;
 }
 
 export type LiveListingFetcher = (context: SourceRunContext) => AsyncIterable<LiveListingEnvelope>;
@@ -163,7 +164,7 @@ export class LiveListingAdapter implements SourceAdapter<LiveListingEnvelope> {
       authorName: undefined, rawText, contentHash,
       // Match ReplayAdapter: Facebook CDN signed URLs/hosts change without a media edit.
       mediaHash: stableMediaHash(photoUrls) ?? undefined,
-      publishedAt: listing.posted_at, classification: envelope.classification ??
+      publishedAt: listing.posted_at, processingError: envelope.processingError, classification: envelope.classification ??
         (this.sourceType === 'FACEBOOK_GROUP'
           ? listing.is_real_estate === true ? 'HOUSING_SUPPLY' : listing.is_real_estate === false ? 'IRRELEVANT' : 'UNCLASSIFIED'
           : 'UNCLASSIFIED'),
