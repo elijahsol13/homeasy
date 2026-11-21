@@ -1,23 +1,23 @@
 # Homeasy — active handoff (2026-11-21)
 
-## Goal and current result
+## Published integration
 
-Owner chose step 1 of [the full audit](../reports/homeasy-full-audit-20261121.md): release baseline and a clean two-branch Git policy. The verified inventory, checks and completion procedure are in [the baseline report](../reports/homeasy-release-baseline-20261121.md). Chosen mapping: `main` production, `develop` development. This is **prepared but not committed/published**. The audit handoff was archived byte-for-byte under `history/session_work_2026-11-21_before_release_baseline.md`.
+Owner approved modernization stage 1 with main for production and develop for integration. Separate integration worktree: /private/tmp/homeasy-develop-20261121. Original Mac checkout on main 7ad0ec7 stays dirty.
 
-## Evidence and impact
+- Published develop commits 03075b1 (selected source, CI, manifests and release guide) and f935941 (four frontend test waits). GitHub Actions run 44875663342 on SHA f935941cd4bea35dc8e66e48d2bc4493e1a2ff33 completed SUCCESS. Both Node 22 checks/builds and Docker api-runner build succeeded. CI verifies backend typecheck/lint/Jest/build, Bright Data tools, frontend lint/Vitest, Web/TMA builds and artifact SHA-256.
+- GitHub build artifact ID 14694969574, name homeasy-f935941cd4bea35dc8e66e48d2bc4493e1a2ff33-builds, ZIP SHA-256 865d0d5a5769e43227919dbdb8a055130304dc73f8ac1faa038f8a1047f7d706. Docker provenance artifact ID 14695643157, ZIP SHA-256 91036f13d2897288ee6d5f17407489352f6644b5b982c5dc775d8be41619966e. ZIP digests differ from individual built-file and Docker image hashes, which are in the respective artifacts.
+- Preservation bundle /private/tmp/homeasy-stage1-20261121-preserve contains selected-source.tar.gz, tracked.patch, manifest and detached-worktree archives. Original Mac, VPS and detached working trees were never reset. Integration has an untracked node_modules symlink that must stay untracked.
+- Verified GitHub branches: main 7ad0ec7, develop f935941, codex/vps-migration-ready 9d57576, feature/telegram-mini-app 23c6bd2.
+- GitHub Cloudflare Pages check on develop f935941 succeeded for homeasy-app deployment a39a9363-39e1-4163-80e2-8b8fa0d9f8d3. Earlier main 7ad0ec7 check succeeded for homeasy-app deployment 18dd8691-befe-4125-8dcd-5f3742ae4f90. Success checks do not prove the current production-branch setting or public delivery.
 
-- GitHub branches: `main` `7ad0ec7`, `codex/vps-migration-ready` `9d57576` (+9 unique), `feature/telegram-mini-app` `23c6bd2` (merged ancestor). Local checkout on main: 58 modified tracked and 796 untracked paths before this report and doc updates; `data/` ignored and untracked in Git. Three detached Codex worktrees exist; two contain 4 and 7 paths of distinct frontend changes, respectively. No Git operation modified refs or index.
-- Fresh checks: `npm test -- --runInBand --silent` **99/99 suites, 1092/1092** (existing open async handle warning); frontend Vitest **14/14, 185/185**; root typecheck/lint/build, `npx tsc -p tsconfig.brightdata.json`, Web/TMA builds, frontend lint exit 0 (8 warnings), and `git diff --check` pass. Compiled `dist/modules/parser/canonical-dedupe.js` contains the scoped moderation v13 call.
-- `git fetch origin --prune` failed immediately: `cannot open '.git/FETCH_HEAD': Operation not permitted`; `git ls-remote origin` cannot resolve github.com from shell, while the GitHub connector works with admin/push permission. The configured `ovh` SSH alias points to the production VPS `/home/ubuntu/homeasy`, but SSH is blocked by `Operation not permitted` on port 22 before authentication; this is not evidence of a VPS outage. Local Docker daemon/socket absent; image can instead be built and checked on VPS once SSH access is available. No live SQLite, scraper, paid provider, container or production operation. No remote branch deletion/push; no unstaged work discarded.
+## Open verification gates
 
-## Access recheck in the follow-up (2026-11-21)
+- Cloudflare Dashboard redirected to login (2026-11-21). Wrangler OAuth credentials expired 2026-10-21. Wrangler interactive CLI initiated a fresh login and it was cancelled. Current production and preview branch bindings, particularly the Telegram Mini App project, are unverified. Keep feature/telegram-mini-app remote ref.
+- Earlier 2026-11-21 SSH read verified VPS /home/ubuntu/homeasy on codex/vps-migration-ready at 07bf9eb with 20 local changes and five running Homeasy containers. Latest probe authenticated using the existing SSH key and ran a printf command after ~45 seconds, but subsequent Git/Compose read timed out and a minimal recheck could not connect. Current VPS Git/service state is unverified. Keep codex/vps-migration-ready remote ref and all VPS local changes.
+- No production deployment, live SQLite modification, scraper, paid provider, container recreation or Cloudflare branch switch. Release and rollback are documented in release_process.md but production rollback has not been rehearsed.
 
-- Default sandbox calls still fail with `Operation not permitted` for `.git/FETCH_HEAD` and outbound SSH port 22, and DNS fails for `github.com`.
-- The native Codex command tool with `sandbox_permissions=require_escalated` succeeded in a reversible `.git` write/delete probe (`LOCAL_GIT_WRITE_OK`), and `git ls-remote --heads origin` returned all three remote branches. No refs or index were changed.
-- `ssh ovh` with the same escalation successfully authenticated as `ubuntu` to `vps-184e5427`, found `/home/ubuntu/homeasy/.git`, and read the VPS checkout at `07bf9eb` on `codex/vps-migration-ready` with 20 status entries. Remote `codex/vps-migration-ready` head is still `9d57576`; investigate this divergence before any integration or deployment.
-- Read-only `docker ps` on VPS succeeded. `homeasy-bot`, `homeasy-api`, `homeasy-brightdata-worker`, `homeasy-tunnel`, and `homeasy-backup` were running, with the backup container reporting healthy. This only verifies current access and process status, not application correctness or code parity.
-- Escalation is session/approval-dependent and must be requested on later attempts as needed. The two-branch cleanup has not started.
+## Next approved work
 
-## Resume exactly here
-
-Use the native command tool's `require_escalated` path for `.git`, Git remote and SSH as needed. Follow the report's explicit source selection and branch integration, first reconciling VPS checkout `07bf9eb` against remote `9d57576`, independent Codex worktree changes and current Pages branch bindings before pruning refs. Re-run checks on the actual staged tree, check the private-file hook and build the image from the resulting commit on VPS or another suitable builder. Keep `main` at the known production source until a controlled release; the following product step is read-only 264→219 cohort/photo analysis.
+1. Authenticated read of each Cloudflare Pages project to record production branch, current deployment ID/source SHA and preview-branch behavior.
+2. Stable read-only VPS SSH and reconciliation of its dirty 07bf9eb checkout against remote 9d57576.
+3. Only after both dependencies clear, delete obsolete GitHub branches and verify only main and develop remain. A production release is a separate step.
