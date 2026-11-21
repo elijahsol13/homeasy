@@ -225,7 +225,16 @@ export class CanonicalListingRepository {
   private projectionSql(detail: boolean, options: PropertyFilterOptions = {}): string {
     const photoProjection = `(SELECT group_concat(photo_url,char(10)) FROM (
         SELECT photo_url FROM (
-          SELECT ma.source_url AS photo_url, 0 AS source_order, ma.id AS item_order
+          SELECT ma.source_url AS photo_url, 0 AS source_order,
+            COALESCE((SELECT CAST(raw_photo.key AS INTEGER)
+              FROM json_each(COALESCE(json_extract(s.raw_payload_json,'$.photos'),
+                json_extract(s.raw_payload_json,'$.listing.photos'),
+                json_extract(s.raw_payload_json,'$.image_urls'),
+                json_extract(s.raw_payload_json,'$.images'),'[]')) raw_photo
+              WHERE ma.source_url=CASE WHEN raw_photo.type='text' THEN raw_photo.value
+                ELSE COALESCE(json_extract(raw_photo.value,'$.url'),json_extract(raw_photo.value,'$.uri'),
+                  json_extract(raw_photo.value,'$.src')) END
+              ORDER BY CAST(raw_photo.key AS INTEGER) LIMIT 1),1000000000+ma.id) AS item_order
           FROM media_asset_source_occurrences maso
           JOIN media_assets ma ON ma.id=maso.media_asset_id
           WHERE maso.listing_id=l.id AND maso.source_occurrence_id=o.id

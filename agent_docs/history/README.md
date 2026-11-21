@@ -14,6 +14,7 @@ This folder preserves full, **byte-identical** working memory from immediately b
 - `session_work_2026-11-21_before_stage3_handoff.md` — byte-identical 2026-11-21 Stage 2 ingestion/SQLite/alerts verification handoff, archived before Stage 3 catalog work; SHA-256 `4bf02d9338f78583b480fc13a169b34934e8e8b763b1e5dc517536a6f39bc8c6`.
 
 - `session_work_2026-11-21_before_stage3_og_handoff.md` — byte-identical earlier Stage 3 geography/cover-fallback checkpoint, archived before Facebook OG renewal; SHA-256 `2aa6a24ffff718f2263c355ae820a3a4336b3d3de87ffc64471be72526893ad8`.
+- `session_work_2026-11-21_before_stage3_map_handoff.md` — byte-identical earlier Stage 3 Facebook OG cover-renewal checkpoint, archived before map optimization; SHA-256 `cd0719e214668e9c868af9b361a3cac9c4fb95b2adc00c7c963a1ce437f474a5`.
 
 Current progress and work handoff: `../project_progress.md` and `../latest_session_work.md`. Accepted owner decisions: `../decisions.md`; detailed dated evaluation outputs in `../../reports/`.
 

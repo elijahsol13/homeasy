@@ -78,6 +78,7 @@ async function main() {
     vite = await createServer({
       root: webRoot,
       configFile: path.join(webRoot, 'vite.config.ts'),
+      mode: 'web',
       server: { host: '127.0.0.1', port: 0, strictPort: false },
       logLevel: 'error',
     });
@@ -91,6 +92,8 @@ async function main() {
     });
     const context = await browser.newContext();
     const page = await context.newPage();
+    const pageErrors = [];
+    page.on('pageerror', (error) => pageErrors.push(error.message));
     // Keep the test offline: only the two temporary loopback listeners may be contacted.
     await page.route('**/*', (route) => {
       try {
@@ -107,10 +110,10 @@ async function main() {
     assert.equal(await page.getByRole('button', { name: 'Newest', exact: true }).getAttribute('aria-pressed'), 'true');
     console.log('PASS: real browser initial React feed from HTTP + SQLite (A)');
 
+    await page.getByRole('button', { name: /^Open property filters/ }).click();
+    await page.getByRole('button', { name: '4+ BR' }).click();
     const filteredResponse = page.waitForResponse((response) => response.url().includes('/properties?')
       && new URL(response.url()).searchParams.get('bedrooms') === '4');
-    await page.getByRole('button', { name: 'Open Filters' }).click();
-    await page.getByRole('button', { name: '4+ BR' }).click();
     await page.getByRole('button', { name: 'Show Listings' }).click();
     const filtered = await (await filteredResponse).json();
     assert.deepEqual(filtered.items.map((item) => item.bedrooms).sort((a, b) => a - b), [4, 5, 6]);
@@ -134,14 +137,14 @@ async function main() {
     // Verify the map inherits the applied bedroom filter through a real browser request.
     const filteredMapResponse = page.waitForResponse((response) => response.url().includes('/properties/map?')
       && new URL(response.url()).searchParams.get('bedrooms') === '4');
-    await page.getByRole('button', { name: 'Map', exact: true }).click();
+    await page.getByRole('link', { name: 'Map view', exact: true }).click();
     const filteredMap = await filteredMapResponse;
     assert.equal(filteredMap.status(), 200);
     const mapBody = await filteredMap.json();
     assert.ok(mapBody.markers.every((marker) => marker.bedrooms == null || marker.bedrooms >= 4));
     const visibleOffers = mapBody.markers.reduce((count, marker) => count + (marker.count ?? 1), 0);
     assert.equal(visibleOffers, 3, 'map exact pins and cluster counts must represent the same filtered cohort');
-    await page.getByRole('button', { name: 'Explore', exact: true }).click();
+    await page.getByRole('link', { name: 'Explore homes', exact: true }).click();
     console.log('PASS: applied bedroom filters reach the map API in a real browser (G)');
 
     await page.evaluate(() => localStorage.setItem('homeasy_filters', '{broken-json'));
@@ -153,12 +156,46 @@ async function main() {
     assert.equal(bad.status, 400);
     console.log('PASS: malformed storage recovery and real HTTP 400 (F, H)');
 
+    const mapRequests = [];
+    const onMapRequest = (request) => {
+      if (request.url().includes('/properties/map?')) mapRequests.push(request.url());
+    };
+    page.on('request', onMapRequest);
     const mapResponse = page.waitForResponse((response) => response.url().includes('/properties/map?'));
-    await page.getByRole('button', { name: 'Map', exact: true }).click();
+    await page.getByRole('link', { name: 'Map view', exact: true }).click();
     const mapResult = await mapResponse;
     assert.equal(mapResult.status(), 200);
     await page.locator('.leaflet-container').waitFor();
-    console.log('PASS: live React map tab makes a successful HTTP map request (G)');
+    await page.waitForTimeout(650); // Wait past the map's 300ms moveend debounce and lazy basemap import.
+    assert.equal(mapRequests.length, 1, `opening the map must request its initial viewport only once: ${JSON.stringify(mapRequests)}`);
+
+    const mapBox = await page.locator('.leaflet-container').boundingBox();
+    assert.ok(mapBox, 'map must have a visible Leaflet viewport');
+    const dragStart = await page.evaluate(({ x, y, width, height }) => {
+      for (const yRatio of [0.2, 0.35, 0.5, 0.65, 0.8]) {
+        for (const xRatio of [0.25, 0.5, 0.75]) {
+          const point = { x: x + width * xRatio, y: y + height * yRatio };
+          const target = document.elementFromPoint(point.x, point.y);
+          if (target?.closest('.leaflet-container')
+            && !target.closest('.leaflet-marker-icon, .leaflet-control-container, .leaflet-popup')) {
+            return point;
+          }
+        }
+      }
+      return null;
+    }, mapBox);
+    assert.ok(dragStart, 'map must expose an unobstructed point for drag interaction');
+    const initialMinLng = new URL(mapRequests[0]).searchParams.get('minLng');
+    const pannedMapResponse = page.waitForResponse((response) => response.url().includes('/properties/map?')
+      && new URL(response.url()).searchParams.get('minLng') !== initialMinLng);
+    await page.mouse.move(dragStart.x, dragStart.y);
+    await page.mouse.down();
+    await page.mouse.move(dragStart.x + 120, dragStart.y + 30, { steps: 8 });
+    await page.mouse.up();
+    assert.equal((await pannedMapResponse).status(), 200);
+    assert.equal(mapRequests.length, 2, 'panning must trigger one updated viewport request');
+    page.off('request', onMapRequest);
+    console.log('PASS: one initial map request; panning updates viewport; lazy basemap does not duplicate requests (G)');
 
     const firstPin = page.locator('.leaflet-marker-icon').first();
     if (await firstPin.count()) {
@@ -171,11 +208,11 @@ async function main() {
         assert.equal((await clusterResponse).status(), 200);
         console.log('PASS: district map cluster → real HTTP filtered feed (G)');
       } else {
-        await page.getByRole('button', { name: 'Explore', exact: true }).click();
+        await page.getByRole('link', { name: 'Explore homes', exact: true }).click();
         console.log('INFO: selected map pin did not expose a district cluster');
       }
     } else {
-      await page.getByRole('button', { name: 'Explore', exact: true }).click();
+      await page.getByRole('link', { name: 'Explore homes', exact: true }).click();
       console.log('INFO: map fixture returned no clickable pin in the default viewport');
     }
 
@@ -196,13 +233,14 @@ async function main() {
 
     await page.route(listRoute, (route) => route.abort('failed'));
     await page.getByRole('button', { name: 'Cheapest' }).click();
-    await page.getByText('Failed to fetch').waitFor();
+    await page.getByRole('alert').getByText('Could not connect to the server. Check your connection and try again.').waitFor();
     assert.equal((await cardTitles()).length, 0, 'network failure must hide previous listings');
     await page.unroute(listRoute);
     await page.getByRole('button', { name: 'Newest', exact: true }).click();
     await page.waitForFunction(() => [...document.querySelectorAll('h3')]
       .some((el) => /^Integration \d/.test(el.textContent || '')));
     console.log('PASS: browser HTTP 500/network fault injection hides stale cards and recovers (H)');
+    assert.deepEqual(pageErrors, [], 'the browser must not emit uncaught JavaScript errors');
     await context.close();
   } finally {
     if (browser) await browser.close();

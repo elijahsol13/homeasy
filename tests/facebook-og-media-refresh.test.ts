@@ -4,6 +4,7 @@ import { runMigrations } from '../src/database/migrate';
 import { FacebookLiveAdapter } from '../src/modules/parser/live-source-adapters';
 import { inspectFacebookOgPhoto, applyFacebookOgPhotoRenewal } from '../src/modules/parser/facebook-og-media-refresh';
 import { knownFacebookMediaUrls } from '../src/modules/parser/media-identity';
+import { toPropertyDTO } from '../src/modules/api/dto';
 
 const postUrl = 'https://www.facebook.com/groups/654321/posts/1001/';
 const original = 'https://scontent-a.fbcdn.net/v/t39.30808-6/cover.jpg?oe=expired';
@@ -177,6 +178,35 @@ describe('Facebook media-only renewal on isolated canonical SQLite', () => {
   });
   afterEach(() => db.close());
 
+  it('keeps a renewed cover first in public list and detail gallery order', async () => {
+    const source = db.prepare('SELECT id FROM source_items').get() as { id: number };
+    const listing = db.prepare('SELECT id FROM canonical_listings').get() as { id: number };
+    const recent = new Date(Date.now() - 2 * 86_400_000).toISOString();
+    db.prepare('UPDATE canonical_listing_source_occurrences SET posted_at=?').run(recent);
+    db.prepare('UPDATE source_items SET published_at=?').run(recent);
+    db.prepare("UPDATE canonical_listing_moderation SET review_status='approved' WHERE listing_id=?")
+      .run(listing.id);
+
+    const repository = createContainer({ db }).canonicalListingRepo;
+    const publicItem = () => repository.searchProperties({ city: 'siem_reap', type: 'rent' }).items
+      .find((item) => item.id === listing.id);
+    expect(repository.listPublicListingIds({ city: 'siem_reap', type: 'rent' }))
+      .toContain(listing.id);
+    expect(publicItem()?.photos).toEqual([original, second]);
+    expect(toPropertyDTO(publicItem()!).thumbnail).toBe(original);
+
+    const proof = await inspectFacebookOgPhoto(request, mockFetch());
+    expect(applyFacebookOgPhotoRenewal(db, source.id, proof!)).toBe(true);
+
+    expect(publicItem()?.photos).toEqual([renewed, second]);
+    expect(toPropertyDTO(publicItem()!).thumbnail).toBe(renewed);
+    const detail = repository.getPropertyById(listing.id);
+    expect(detail?.photos).toEqual([renewed, second]);
+    expect(toPropertyDTO(detail!, undefined, { includeAllPhotos: true }).photos)
+      .toEqual([renewed, second]);
+    expect(toPropertyDTO(detail!).thumbnail).toBe(renewed);
+  });
+
   it('changes only the matched photo and source media link while preserving timestamps and versions', async () => {
     const source = db.prepare('SELECT id FROM source_items').get() as { id: number };
     const listing = db.prepare('SELECT id FROM canonical_listings').get() as { id: number };
@@ -231,6 +261,10 @@ describe('Facebook media-only renewal on isolated canonical SQLite', () => {
     const joined = db.prepare(`SELECT ma.source_url FROM media_asset_source_occurrences mo
       JOIN media_assets ma ON ma.id=mo.media_asset_id WHERE mo.source_item_id=?`).all(other.id) as Array<{ source_url: string }>;
     expect(joined.map((row) => row.source_url)).toContain(original);
+    const otherListing = db.prepare('SELECT listing_id FROM canonical_listing_source_occurrences WHERE source_item_id=?')
+      .get(other.id) as { listing_id: number };
+    expect(createContainer({ db }).canonicalListingRepo.getPropertyById(otherListing.listing_id, true)?.photos)
+      .toEqual([original]);
   });
 
   it('reuses an existing renewed media asset without losing either source association', async () => {
@@ -255,6 +289,10 @@ describe('Facebook media-only renewal on isolated canonical SQLite', () => {
       .toEqual([renewed]);
     expect(db.prepare('SELECT COUNT(*) AS count FROM media_assets WHERE normalized_url=?').get(renewed))
       .toEqual({ count: 1 });
+    const listing = db.prepare('SELECT listing_id FROM canonical_listing_source_occurrences WHERE source_item_id=?')
+      .get(source.id) as { listing_id: number };
+    expect(createContainer({ db }).canonicalListingRepo.getPropertyById(listing.listing_id, true)?.photos)
+      .toEqual([renewed, second]);
     expect(applyFacebookOgPhotoRenewal(db, source.id, proof)).toBe(false);
   });
 

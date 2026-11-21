@@ -1,34 +1,10 @@
 import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import L from 'leaflet';
-import { maplibreGL } from '@maplibre/maplibre-gl-leaflet';
-import { setWorkerUrl, type Map as MapLibreMap } from 'maplibre-gl';
-import workerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?worker&url';
-import 'maplibre-gl/dist/maplibre-gl.css';
 import type { CityKey, FilterState, MapFocusRequest, MapMarkerDTO, PropertyDTO } from '../types';
 import { fetchMapMarkers, fetchPropertyById } from '../services/api';
 import { triggerHaptic } from '../services/telegram';
 import { ArrowLeft, ChevronRight, Waves, MapPin } from 'lucide-react';
 import { formatPropertyTypeLabel } from '../formatters';
-
-const OPENFREEMAP_STYLE_URL = 'https://tiles.openfreemap.org/styles/liberty';
-const ENGLISH_LABEL_EXPRESSION = ['coalesce', ['get', 'name:en'], ['get', 'name_en'], ['get', 'name:latin']];
-
-setWorkerUrl(workerUrl);
-
-function referencesNameField(value: unknown): boolean {
-  if (!Array.isArray(value)) return false;
-  if (value[0] === 'get' && typeof value[1] === 'string' && /^name(?::|_|$)/.test(value[1])) return true;
-  return value.some(referencesNameField);
-}
-
-function applyEnglishFirstLabels(map: MapLibreMap): void {
-  for (const layer of map.getStyle().layers) {
-    if (layer.type !== 'symbol') continue;
-    const textField = layer.layout?.['text-field'];
-    if (!textField || !referencesNameField(textField)) continue;
-    map.setLayoutProperty(layer.id, 'text-field', ENGLISH_LABEL_EXPRESSION as never);
-  }
-}
 
 interface MapViewProps {
   filters: FilterState;
@@ -122,15 +98,21 @@ export const MapView: React.FC<MapViewProps> = ({
         zoomControl: false,
       });
 
-      const openFreeMapLayer = maplibreGL({ style: OPENFREEMAP_STYLE_URL }).addTo(map);
-      const maplibreMap = openFreeMapLayer.getMaplibreMap();
-      maplibreMap.on('style.load', () => applyEnglishFirstLabels(maplibreMap));
-
       L.control.zoom({ position: 'topright' }).addTo(map);
 
       const markersLayer = L.layerGroup().addTo(map);
       markersLayerRef.current = markersLayer;
       mapInstanceRef.current = map;
+
+      // Start fetching viewport markers immediately; the vector renderer loads
+      // independently and is attached only if this map is still mounted.
+      void import('./openFreeMapBasemap')
+        .then(({ addOpenFreeMapBasemap }) => {
+          if (mapInstanceRef.current === map) addOpenFreeMapBasemap(map);
+        })
+        .catch((error: unknown) => {
+          if (mapInstanceRef.current === map) console.error('Failed to load map background:', error);
+        });
 
       const onMoveEnd = () => {
         if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current);
@@ -141,9 +123,6 @@ export const MapView: React.FC<MapViewProps> = ({
 
       map.on('moveend', onMoveEnd);
 
-      map.whenReady(() => {
-        fetchMarkersForCurrentBounds();
-      });
     } else {
       mapInstanceRef.current.setView(CITY_COORDS[city], 13);
     }
@@ -161,10 +140,13 @@ export const MapView: React.FC<MapViewProps> = ({
   // Applied cohort changes refetch against the current bounds, even while
   // Leaflet stays mounted behind the filter drawer.
   useEffect(() => {
-    if (mapInstanceRef.current) {
+    // Defer one tick so React StrictMode's setup/cleanup replay can cancel
+    // the first scheduled fetch instead of sending the same HTTP request twice.
+    const initialFetchTimer = setTimeout(() => {
       fetchMarkersForCurrentBounds();
-    }
+    }, 0);
     return () => {
+      clearTimeout(initialFetchTimer);
       if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current);
       ++markersRequestId.current;
     };

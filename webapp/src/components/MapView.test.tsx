@@ -1,4 +1,4 @@
-import { act } from 'react';
+import { StrictMode, act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { FilterState, MapMarkerDTO } from '../types';
@@ -137,12 +137,19 @@ describe('MapView viewport marker requests', () => {
     vi.restoreAllMocks();
   });
 
+  async function flushScheduledFetch() {
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    });
+  }
+
   async function mountAndMove() {
     await act(async () => {
       root.render(<MapView filters={initialFilters} onSelectProperty={vi.fn()} />);
     });
-    // The initial whenReady callback and city effect both request the initial viewport.
-    expect(requests).toHaveLength(2);
+    await flushScheduledFetch();
+    // The map should request the first viewport only once.
+    expect(requests).toHaveLength(1);
     const initial = requests.at(-1)!;
 
     Object.assign(leaflet.bounds, { south: 13, north: 14, west: 103, east: 104 });
@@ -150,12 +157,34 @@ describe('MapView viewport marker requests', () => {
       leaflet.handlers.get('moveend')!();
       await new Promise((resolve) => setTimeout(resolve, 320));
     });
-    expect(requests).toHaveLength(3);
+    expect(requests).toHaveLength(2);
     expect(api.fetchMapMarkers).toHaveBeenLastCalledWith(initialFilters, {
       minLat: 13, maxLat: 14, minLng: 103, maxLng: 104, paddingRatio: 0.2,
     });
     return { initial, latest: requests.at(-1)! };
   }
+
+  it('requests the initial viewport once under React StrictMode effect replay', async () => {
+    await act(async () => {
+      root.render(<StrictMode><MapView filters={initialFilters} onSelectProperty={vi.fn()} /></StrictMode>);
+    });
+    await flushScheduledFetch();
+
+    expect(api.fetchMapMarkers).toHaveBeenCalledTimes(1);
+  });
+
+  it('fetches markers independently of the vector basemap', async () => {
+    act(() => {
+      root.render(<MapView filters={initialFilters} onSelectProperty={vi.fn()} />);
+    });
+
+    expect(maplibre.maplibreGL).not.toHaveBeenCalled();
+    await flushScheduledFetch();
+    expect(api.fetchMapMarkers).toHaveBeenCalledTimes(1);
+
+    await act(async () => { await import('./openFreeMapBasemap'); });
+    expect(maplibre.maplibreGL).toHaveBeenCalledTimes(1);
+  });
 
   it('keeps latest viewport markers when an older request resolves afterward', async () => {
     const { initial, latest } = await mountAndMove();
@@ -203,6 +232,7 @@ describe('MapView viewport marker requests', () => {
     await act(async () => {
       root.render(<MapView filters={applied} onSelectProperty={vi.fn()} />);
     });
+    await flushScheduledFetch();
     expect(api.fetchMapMarkers).toHaveBeenLastCalledWith(applied, {
       minLat: 13, maxLat: 14, minLng: 103, maxLng: 104, paddingRatio: 0.2,
     });
@@ -212,6 +242,7 @@ describe('MapView viewport marker requests', () => {
     await act(async () => {
       root.render(<MapView filters={initialFilters} onSelectProperty={vi.fn()} />);
     });
+    await flushScheduledFetch();
     expect(api.fetchMapMarkers).toHaveBeenLastCalledWith(initialFilters, expect.anything());
     const reset = requests.at(-1)!;
     await act(async () => {
@@ -253,5 +284,35 @@ describe('MapView viewport marker requests', () => {
     await act(async () => root.render(null));
 
     expect(leaflet.removeMap).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not attach the vector basemap after the map unmounts', async () => {
+    act(() => root.render(<MapView filters={initialFilters} onSelectProperty={vi.fn()} />));
+    act(() => root.render(null));
+
+    await act(async () => { await import('./openFreeMapBasemap'); });
+
+    expect(leaflet.removeMap).toHaveBeenCalledTimes(1);
+    expect(maplibre.maplibreGL).not.toHaveBeenCalled();
+  });
+
+  it('keeps map markers usable if the vector basemap fails to initialize', async () => {
+    const failure = new Error('Basemap initialization failed');
+    const logError = vi.spyOn(console, 'error').mockImplementation(() => {});
+    maplibre.maplibreGL.mockImplementation(() => { throw failure; });
+
+    await act(async () => {
+      root.render(<MapView filters={initialFilters} onSelectProperty={vi.fn()} />);
+      await import('./openFreeMapBasemap');
+    });
+    expect(logError).toHaveBeenCalledWith('Failed to load map background:', failure);
+    await flushScheduledFetch();
+
+    await act(async () => {
+      requests[0].resolve([marker(1, 13.5, 103.5)]);
+      await Promise.resolve();
+    });
+    expect(leaflet.layers).toEqual([[13.5, 103.5]]);
+    expect(host.textContent).not.toContain('Loading map pins...');
   });
 });
