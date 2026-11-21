@@ -2,7 +2,7 @@
 
 Цель: перенести **API, Telegram-бота, сбор Khmer24, SQLite и резервные копии** на VPS в Сингапуре (2 vCPU / 4 ГБ RAM / ~40 ГБ NVMe). Сайт и Mini App уже размещаются на Cloudflare Pages. **Facebook/Camoufox остаётся на Mac с домашним IP, своей сессией и отпечатком устройства.** Bright Data запускается по требованию отдельно, если потребуется.
 
-Эта инструкция предназначена для **ручного выполнения владельцем**. Скрипты и конфигурация подготовлены локально, но фактическая миграция и VPS пока не проверялись. В командах замените `USER`, `VPS_IP` своими значениями. **Перед шагом 1 проверьте существование ветки `codex/vps-migration-ready` на GitHub и её точный SHA по проверенному отчёту о выпуске; пока публикация не подтверждена, команды клонирования и переноса выполнять нельзя.** Не публикуйте `.env`, ключи Cloudflare, базы или Facebook-сессии в Git, чате либо логах.
+Это **историческая инструкция первоначального переноса**, который уже выполнен. На 2026-11-21 действующий VPS работает из checkout `07bf9eb` с 20 локальными изменёнными/новыми путями. **Не повторяйте перенос и переключение контейнеров на действующем VPS.** Для следующих выпусков и отката используйте [`agent_docs/release_process.md`](../../agent_docs/release_process.md) с проверенным Git SHA и отдельно утверждённым production-релизом. В командах замените `USER`, `VPS_IP` своими значениями. **Историческая ветка `codex/vps-migration-ready` удалена с GitHub после сохранения всех коммитов в `develop`; следующие команды первичного переноса приведены только как историческая справка.** Не публикуйте `.env`, ключи Cloudflare, базы или Facebook-сессии в Git, чате либо логах.
 
 ## 0. Как работает откат
 
@@ -36,7 +36,8 @@ sudo docker compose version
 В SSH-сессии на VPS:
 
 ```bash
-git clone --branch codex/vps-migration-ready --single-branch https://github.com/elijahsol13/homeasy.git ~/homeasy
+# Историческая команда первоначального переноса; ветка удалена из GitHub.
+# git clone --branch codex/vps-migration-ready --single-branch https://github.com/elijahsol13/homeasy.git ~/homeasy
 cd ~/homeasy
 git show -s --format='%h %s' HEAD
 git config --local core.hooksPath .githooks
@@ -46,7 +47,7 @@ chmod 600 .env
 nano .env
 ```
 
-`codex/vps-migration-ready` — ветка с подготовленным кодом; имя и проверенный commit SHA должны совпадать с указанными в отчёте о подготовке. **Не клонируйте `main` вслепую.** В `.env` перенесите только реально нужные настройки текущей Mac-установки (Telegram, AI, режим бота, Telegram Mini App, администраторы). Удалите либо замените все `CHANGE_ME`; шаблон не содержит действующих ключей. На VPS настройте `FB_INGEST_TOKEN` длиной минимум 32 символа; удобно сгенерировать 64 шестнадцатеричных символа командой `openssl rand -hex 32` и записать **тот же** токен позднее в `.env` на Mac. `FB_INGEST_URL` на VPS **не нужен**. `HOMEASY_DEPLOYMENT_ROLE=vps` и `DATABASE_PATH=/app/data/homeasy.db` устанавливаются в Compose.
+Историческая ветка `codex/vps-migration-ready` целиком содержится в `develop`. **Новый релиз собирайте из явно проверенного SHA по `agent_docs/release_process.md`; не клонируйте `main` вслепую.** В `.env` перенесите только реально нужные настройки текущей Mac-установки (Telegram, AI, режим бота, Telegram Mini App, администраторы). Удалите либо замените все `CHANGE_ME`; шаблон не содержит действующих ключей. На VPS настройте `FB_INGEST_TOKEN` длиной минимум 32 символа; удобно сгенерировать 64 шестнадцатеричных символа командой `openssl rand -hex 32` и записать **тот же** токен позднее в `.env` на Mac. `FB_INGEST_URL` на VPS **не нужен**. `HOMEASY_DEPLOYMENT_ROLE=vps` и `DATABASE_PATH=/app/data/homeasy.db` устанавливаются в Compose.
 
 Файл Cloudflare Tunnel `deploy/cloudflared/config.yml` уже входит в код и содержит существующие хосты `api.rustycat.cc` и `go.rustycat.cc`. С Mac отдельно и защищённо передайте на VPS **существующий** файл учётных данных туннеля `deploy/cloudflared/7d65861e-355d-45ce-8adf-498432aa148f.json` в тот же каталог. Команда с Mac (после замены адреса):
 
