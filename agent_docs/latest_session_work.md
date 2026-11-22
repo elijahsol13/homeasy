@@ -2,11 +2,18 @@
 
 ## Sequential repair after independent audit (local checkpoint)
 
+- Local repair/audit commit: `7148e77` on `develop`; staged safety hook passed, only the two fixes, regression tests, existing handoff documents and the independent audit report were committed. Working tree was clean afterwards, local branch seven commits ahead of `origin/develop`. No push or deploy.
 - Steps 1–3 of the owner-approved repair order: the read-only release/rollback and VPS dirty-overlay baseline was recorded in the independent audit. The operational rollback rehearsal remains a release gate.
 - Stage 2 Telegram alert fix: `AlertService.warnWithDeliveryResult()` now returns whether any administrator accepted a Telegram message. Failed/missing deliveries release the per-source 30-minute cooldown for the next failure; successful deliveries retain throttling. Concurrent failures share the active attempt. Token-bearing errors are not logged.
 - Stage 2 Khmer24 fix: an isolated same-URL two-version batch demonstrated the old URL-keyed enrichment collision. Per-position state and the ordered inclusive enrichment contract now preserve version-specific enrichment. An incomplete AI result makes the changed cohort retryable; `noEnrich` bypass stays intact.
 - Fresh local validation on these edits: targeted Jest **3 suites / 26 tests**, full backend Jest **100 suites / 1142 tests**, `npm run typecheck`, `npm run lint`, `npm run build` and `git diff --check` all passed. Jest retains its existing open-handles warning. Replacement independent read-only reviewer `01a20180-86a4-7d41-9421-1091e69440ab` completed with **no actionable findings** in the three source fixes and associated tests. The first reviewer disconnected. Production ingest, Telegram delivery and release are pending.
 - Next dependency is durable Facebook image/gallery serving (subject to the owner's 2026-10-22 decision against S3/object storage at this stage), followed by source-backed catalog QA, repeatable same-SHA release/rollback, and real-device acceptance. No live data edits, scraping, paid AI, deployment or push occurred in this repair checkpoint.
+
+## Stage 4 media dependency — read-only technical assessment, choice pending
+
+- Current `media_assets` stores source URLs and image metadata, without durable image bytes. `CanonicalListingRepository` projects those URLs and `src/modules/api/server.ts` has no local media-serving route. The previously measured 132/132 failed Facebook covers and 260 failed backup URLs therefore cannot be fixed permanently by a frontend fallback.
+- Existing anonymous Facebook OG validation yields one proved matching image per recoverable post (20/24 sampled); its replacement CDN link is still expiring. Previous full-gallery analysis says anonymous direct photo routes redirected to login; live-session/gallery recoverability has not been proven in this turn.
+- Dependency order within the photo workstream: first a narrowly scoped one-post *media-only* recoverability check on the already pinned Mac Camoufox identity, requiring separate approval because it touches the live Facebook session; next choose between bounded HTTP cover renewal and a locally hosted image cache based on that evidence and the owner's cost/hosting decision; then implement and test before any separately approved live media repair or release. The existing owner decision against S3/object-storage at this stage remains in force. Local VPS-disk hosting is a **proposal**, not an approved architecture. No authenticated session, live scrape, VPS write or paid operation was performed in this assessment.
 
 ## Independent audit of Nov 21 modernization work
 
