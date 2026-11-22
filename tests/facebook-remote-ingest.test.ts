@@ -94,7 +94,7 @@ describe('Facebook Mac-to-VPS ingest', () => {
     (env as { FB_INGEST_TOKEN?: string }).FB_INGEST_TOKEN = 'b'.repeat(40);
     const ingest = jest.spyOn(facebookIngestion, 'ingestFacebookGroupListings')
       .mockRejectedValueOnce(new Error('private parser details'));
-    const warn = jest.spyOn(container.alertService, 'warn').mockResolvedValue();
+    const warn = jest.spyOn(container.alertService, 'warnWithDeliveryResult').mockResolvedValue(true);
     try {
       const response = await app.inject({ method: 'POST', url: '/api/v1/internal/facebook/ingest',
         headers: { authorization: `Bearer ${'b'.repeat(40)}` }, payload });
@@ -121,7 +121,7 @@ describe('Facebook Mac-to-VPS ingest', () => {
     } as Awaited<ReturnType<typeof facebookIngestion.ingestFacebookGroupListings>>;
     const recovered = { ...failed, errors: [], processedItems: 1 };
     const ingest = jest.spyOn(facebookIngestion, 'ingestFacebookGroupListings');
-    const warn = jest.spyOn(container.alertService, 'warn');
+    const warn = jest.spyOn(container.alertService, 'warnWithDeliveryResult');
     try {
       ingest.mockResolvedValueOnce(failed).mockResolvedValueOnce(failed)
         .mockResolvedValueOnce(recovered).mockResolvedValueOnce(failed)

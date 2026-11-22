@@ -24,7 +24,7 @@ export class AlertService {
   /**
    * Internal broadcaster: sends formatted HTML message to all configured administrators.
    */
-  private async broadcast(prefix: string, message: string): Promise<void> {
+  private async broadcast(prefix: string, message: string): Promise<boolean> {
     const formatted = `${prefix} ${message}`;
 
     if (!this.api && env.BOT_TOKEN) {
@@ -36,16 +36,19 @@ export class AlertService {
     }
 
     if (!this.api || this.adminIds.length === 0) {
-      return;
+      return false;
     }
 
+    let delivered = false;
     for (const adminId of this.adminIds) {
       try {
         await this.api.sendMessage(adminId, formatted, { parse_mode: 'HTML' });
+        delivered = true;
       } catch {
         console.warn(`[AlertService] Failed to deliver alert to admin ${adminId}`);
       }
     }
+    return delivered;
   }
 
   /**
@@ -60,8 +63,13 @@ export class AlertService {
    * Warning alert: duplicates to console.warn and broadcasts to admins.
    */
   async warn(msg: string): Promise<void> {
+    await this.warnWithDeliveryResult(msg);
+  }
+
+  /** Reports whether at least one Telegram administrator received the warning. */
+  async warnWithDeliveryResult(msg: string): Promise<boolean> {
     console.warn(`⚠️ [WARN] ${msg}`);
-    await this.broadcast('⚠️ [WARN]', msg);
+    return this.broadcast('⚠️ [WARN]', msg);
   }
 
   /**

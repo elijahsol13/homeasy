@@ -1,6 +1,8 @@
 import { AlertService } from '../src/services/alert.service';
 import { createContainer } from '../src/container';
 import type { Api } from 'grammy';
+import type { FastifyBaseLogger } from 'fastify';
+import { notifyIngestionFailure } from '../src/modules/api/routes/internal-ingest-helpers';
 
 describe('AlertService', () => {
   let consoleInfoSpy: jest.SpyInstance;
@@ -91,6 +93,68 @@ describe('AlertService', () => {
     expect(consoleErrorSpy).toHaveBeenCalledWith('🚨 [CRITICAL] Fatal error');
     expect(consoleWarnSpy).toHaveBeenCalledWith(expect.stringContaining('Failed to deliver alert to admin 12345'));
     expect(JSON.stringify(consoleWarnSpy.mock.calls)).not.toContain('FAKE_PRIVATE_TOKEN');
+  });
+
+  test('ingestion alert retries after Telegram delivery fails instead of suppressing the next incident', async () => {
+    const sendMessageMock = jest.fn()
+      .mockRejectedValueOnce(new Error('https://api.telegram.org/botFAKE_PRIVATE_TOKEN/sendMessage failed'))
+      .mockResolvedValue({});
+    const alertService = new AlertService({ sendMessage: sendMessageMock } as unknown as Api, [12345]);
+    const logger = { warn: jest.fn() } as unknown as Pick<FastifyBaseLogger, 'warn'>;
+
+    await notifyIngestionFailure(logger, alertService, 'facebook');
+    await notifyIngestionFailure(logger, alertService, 'facebook');
+
+    expect(sendMessageMock).toHaveBeenCalledTimes(2);
+    expect(logger.warn).toHaveBeenCalledWith(
+      { event: 'ingestion_alert_delivery_failed', source: 'facebook' },
+      'Ingestion alert failed',
+    );
+    expect(JSON.stringify(consoleWarnSpy.mock.calls)).not.toContain('FAKE_PRIVATE_TOKEN');
+  });
+
+  test('ingestion warning is considered delivered when one of multiple admins receives it', async () => {
+    const sendMessageMock = jest.fn()
+      .mockRejectedValueOnce(new Error('delivery failed'))
+      .mockResolvedValue({});
+    const alertService = new AlertService({ sendMessage: sendMessageMock } as unknown as Api, [12345, 67890]);
+    const logger = { warn: jest.fn() } as unknown as Pick<FastifyBaseLogger, 'warn'>;
+
+    await notifyIngestionFailure(logger, alertService, 'khmer24');
+    await notifyIngestionFailure(logger, alertService, 'khmer24');
+
+    expect(sendMessageMock).toHaveBeenCalledTimes(2);
+    expect(logger.warn).not.toHaveBeenCalled();
+  });
+
+  test('missing Telegram administrators leaves ingestion warnings retryable', async () => {
+    const sendMessageMock = jest.fn();
+    const alertService = new AlertService({ sendMessage: sendMessageMock } as unknown as Api, []);
+    const logger = { warn: jest.fn() } as unknown as Pick<FastifyBaseLogger, 'warn'>;
+
+    await notifyIngestionFailure(logger, alertService, 'facebook');
+    await notifyIngestionFailure(logger, alertService, 'facebook');
+
+    expect(sendMessageMock).not.toHaveBeenCalled();
+    expect(logger.warn).toHaveBeenCalledTimes(2);
+  });
+
+  test('concurrent ingestion failures share one in-flight delivery attempt', async () => {
+    let finishDelivery: (() => void) | undefined;
+    const sendMessageMock = jest.fn().mockImplementation(() => new Promise<void>((resolve) => {
+      finishDelivery = resolve;
+    }));
+    const alertService = new AlertService({ sendMessage: sendMessageMock } as unknown as Api, [12345]);
+    const logger = { warn: jest.fn() } as unknown as Pick<FastifyBaseLogger, 'warn'>;
+
+    const first = notifyIngestionFailure(logger, alertService, 'facebook');
+    const second = notifyIngestionFailure(logger, alertService, 'facebook');
+    expect(sendMessageMock).toHaveBeenCalledTimes(1);
+    finishDelivery?.();
+    await Promise.all([first, second]);
+
+    expect(sendMessageMock).toHaveBeenCalledTimes(1);
+    expect(logger.warn).not.toHaveBeenCalled();
   });
 
   test('handles empty admin list gracefully without calling sendMessage', async () => {

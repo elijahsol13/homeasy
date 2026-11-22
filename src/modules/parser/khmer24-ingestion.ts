@@ -13,9 +13,7 @@ export async function ingestKhmer24Listings(
     listing, sourceName: 'Khmer24 Siem Reap', sourceId: 'siem-reap', sourceUrl: 'https://www.khmer24.com/en',
   }));
   const adapter = new Khmer24LiveAdapter(async function* () { yield* envelopes; });
-  const states = new Map<string, { contentChanged: boolean; classification: LiveListingEnvelope['classification'] }>();
-  const contentChanged: LiveListingEnvelope[] = [];
-  for (const envelope of envelopes) {
+  const states = envelopes.map((envelope) => {
     const normalized = adapter.normalize(envelope);
     const sourceId = container.sourceIngestionRepo.findSourceId(
       container.sourceIngestionRepo.makeSourceKey(normalized.sourceIdentity),
@@ -27,25 +25,27 @@ export async function ingestKhmer24Listings(
     const classification = existing?.classification;
     const priorClass = ['HOUSING_SUPPLY', 'HOUSING_DEMAND', 'HOUSING_ADJACENT', 'IRRELEVANT', 'UNCLASSIFIED']
       .includes(classification ?? '') ? classification as LiveListingEnvelope['classification'] : undefined;
-    const url = envelope.listing.source_url ?? envelope.listing.url ?? '';
-    states.set(url, { contentChanged: changed, classification: priorClass });
-    if (changed) contentChanged.push(envelope);
-  }
+    return { contentChanged: changed, classification: priorClass };
+  });
+  const contentChanged = envelopes.filter((_, index) => states[index].contentChanged);
 
   const changedListings = noEnrich || !contentChanged.length
     ? contentChanged.map((envelope) => envelope.listing)
     : await enrichListingsWithLLM(contentChanged.map((envelope) => envelope.listing), { inclusive: true });
-  const enrichedByUrl = new Map(changedListings.map((listing) => [listing.source_url ?? listing.url ?? '', listing]));
-  const processed = envelopes.map((envelope) => {
-    const url = envelope.listing.source_url ?? envelope.listing.url ?? '';
-    const state = states.get(url);
-    const enriched = enrichedByUrl.get(url);
+  // Inclusive enrichment preserves input order. Missing/shortened results require
+  // a retry for the entire changed cohort rather than shifting data between posts.
+  let enrichmentIndex = 0;
+  const enrichmentComplete = changedListings.length === contentChanged.length;
+  const processed = envelopes.map((envelope, index) => {
+    const state = states[index];
+    const enriched = state.contentChanged && enrichmentComplete ? changedListings[enrichmentIndex] : undefined;
+    if (state.contentChanged) enrichmentIndex++;
     // The extractor can return an UNCLASSIFIED fallback after a transient AI
     // failure. Keep the raw source in SQLite, but require Mac outbox replay.
-    const processingError = !noEnrich && state?.contentChanged &&
+    const processingError = !noEnrich && state.contentChanged &&
       (!enriched || (enriched.is_real_estate == null && enriched.review_reason === 'LLM extraction unavailable'))
       ? 'LLM extraction unavailable' : undefined;
-    const classification = state?.contentChanged
+    const classification = state.contentChanged
       ? classifyKhmer24Listing(noEnrich ? undefined : enriched)
       : state?.classification ?? 'UNCLASSIFIED';
     return { ...envelope, classification, processingError, listing: enriched ?? envelope.listing };

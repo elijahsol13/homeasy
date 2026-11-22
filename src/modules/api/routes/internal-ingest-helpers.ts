@@ -66,9 +66,11 @@ export async function notifyIngestionFailure(
       'Source batch needs retry.'
     : `<b>${label} import failed</b>\nUnexpected ingestion error. Source batch needs retry.`;
   try {
-    await alertService.warn(message);
+    const delivered = await alertService.warnWithDeliveryResult(message);
+    if (delivered) return;
   } catch {
-    delete alerted[source];
-    logger.warn({ event: 'ingestion_alert_delivery_failed', source }, 'Ingestion alert failed');
+    // Treat unexpected delivery errors the same as undelivered warnings.
   }
+  if (alerted[source] === now) delete alerted[source];
+  logger.warn({ event: 'ingestion_alert_delivery_failed', source }, 'Ingestion alert failed');
 }

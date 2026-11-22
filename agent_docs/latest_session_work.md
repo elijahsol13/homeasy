@@ -1,4 +1,19 @@
-# Homeasy — active handoff (2026-11-21)
+# Homeasy — active handoff (2026-11-22)
+
+## Sequential repair after independent audit (local checkpoint)
+
+- Steps 1–3 of the owner-approved repair order: the read-only release/rollback and VPS dirty-overlay baseline was recorded in the independent audit. The operational rollback rehearsal remains a release gate.
+- Stage 2 Telegram alert fix: `AlertService.warnWithDeliveryResult()` now returns whether any administrator accepted a Telegram message. Failed/missing deliveries release the per-source 30-minute cooldown for the next failure; successful deliveries retain throttling. Concurrent failures share the active attempt. Token-bearing errors are not logged.
+- Stage 2 Khmer24 fix: an isolated same-URL two-version batch demonstrated the old URL-keyed enrichment collision. Per-position state and the ordered inclusive enrichment contract now preserve version-specific enrichment. An incomplete AI result makes the changed cohort retryable; `noEnrich` bypass stays intact.
+- Fresh local validation on these edits: targeted Jest **3 suites / 26 tests**, full backend Jest **100 suites / 1142 tests**, `npm run typecheck`, `npm run lint`, `npm run build` and `git diff --check` all passed. Jest retains its existing open-handles warning. Replacement independent read-only reviewer `01a20180-86a4-7d41-9421-1091e69440ab` completed with **no actionable findings** in the three source fixes and associated tests. The first reviewer disconnected. Production ingest, Telegram delivery and release are pending.
+- Next dependency is durable Facebook image/gallery serving (subject to the owner's 2026-10-22 decision against S3/object storage at this stage), followed by source-backed catalog QA, repeatable same-SHA release/rollback, and real-device acceptance. No live data edits, scraping, paid AI, deployment or push occurred in this repair checkpoint.
+
+## Independent audit of Nov 21 modernization work
+
+- Reviewed each of the three approved stages against `agent_docs/modernization_plan.md`. Detailed evidence, pass/partial/fail criteria and P1/P2 findings are in [`reports/homeasy-independent-audit-20261122.md`](../reports/homeasy-independent-audit-20261122.md). Stage 1 release/digest/rollback, Stage 2 Telegram delivery and Stage 3 live catalog/mobile/pilot gates remain open.
+- Fresh `develop=8ad7219` verification: Jest **100 suites / 1134 tests**, Vitest **14 files / 192 tests**, root typecheck and lint, frontend lint, Web/TMA builds and isolated real-Chrome `node tests/mini-app-browser-smoke.cjs` pass (only previously documented warnings). Initial Chrome smoke failed with sandbox `listen EPERM`, then passed when loopback listening was permitted. No source, live data, containers, network scraper or published Pages changes.
+- Reproduced Stage 2 bug with an injected Telegram API that rejects `sendMessage()`: two failed-ingestion notifications trigger **one** delivery attempt, as `AlertService` catches the first delivery error but `notifyIngestionFailure` retains the 30-minute cooldown. Independent Stage 2 reviewer agrees; a duplicate-URL Khmer24 key collision remains a conditional risk only. The initial Stage 3 reviewer ended `stream disconnected before completion`; replacement independent read-only Stage 1/3 reviewers completed on Nov 22 and confirmed the verdicts. Stage 1 found 14-day CI artifact retention, lack of scraper-runner provenance and existing old VPS images/backups without source-SHA linkage. Stage 3 clarified that the heavy basemap starts loading immediately after MapView mounts. Local tests/desktop browser passed, while mobile/production QA remains open.
+- Remote `main=7ad0ec7`, `develop=6cd16ba`; local `develop=8ad7219` is ahead by six committed changes. VPS read-only observed historical `07bf9eb`; published `/release-manifest.json` URLs yielded HTML. Local reachable Git history has no missing objects; `.git/refs/.DS_Store` and a stale commit-graph cause `fsck`/verify warnings, deferred as safe maintenance.
 
 ## Stage 3 — public Facebook photos and local cover-order regression
 

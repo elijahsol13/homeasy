@@ -6,6 +6,7 @@ import { runMigrations } from '../src/database/migrate';
 import { env } from '../src/config/env';
 import { buildApiServer } from '../src/modules/api/server';
 import * as khmer24Scraper from '../src/modules/parser/khmer24.scraper';
+import { ingestKhmer24Listings } from '../src/modules/parser/khmer24-ingestion';
 import { AlertService } from '../src/services/alert.service';
 
 describe('Khmer24 Mac-to-VPS raw ingest', () => {
@@ -71,6 +72,115 @@ describe('Khmer24 Mac-to-VPS raw ingest', () => {
     expect(count.n).toBe(1);
   });
 
+  it('keeps enrichment paired to the right source version when a batch repeats one detail URL', async () => {
+    (env as { K24_INGEST_TOKEN?: string }).K24_INGEST_TOKEN = 'k'.repeat(40);
+    const url = 'https://www.khmer24.com/en/property/repeated-adid-89123457';
+    const first = { ...payload.listings[0], source_url: url, raw_text: 'Version one $410/month' };
+    const second = { ...first, raw_text: 'Version two $420/month' };
+    jest.mocked(khmer24Scraper.enrichListingsWithLLM).mockImplementationOnce(async (listings) =>
+      listings.map((listing, index) => ({ ...listing, title: `Enriched version ${index + 1}`, is_real_estate: true })));
+
+    const response = await app.inject({
+      method: 'POST', url: '/api/v1/internal/khmer24/ingest',
+      headers: { authorization: `Bearer ${'k'.repeat(40)}` },
+      payload: { ...payload, listings: [first, second] },
+    });
+
+    expect(response.statusCode).toBe(200);
+    const versions = db.prepare(`SELECT raw_text, raw_payload_json FROM source_item_versions
+      WHERE source_item_id = (SELECT id FROM source_items WHERE external_id = '89123457')
+      ORDER BY id`).all() as { raw_text: string; raw_payload_json: string }[];
+    expect(versions.map((version) => ({
+      rawText: version.raw_text,
+      enrichedTitle: (JSON.parse(version.raw_payload_json) as { listing: { title: string } }).listing.title,
+    }))).toEqual([
+      { rawText: first.raw_text, enrichedTitle: 'Enriched version 1' },
+      { rawText: second.raw_text, enrichedTitle: 'Enriched version 2' },
+    ]);
+  });
+
+  it('enriches changed listings in order even when an unchanged listing sits between them', async () => {
+    (env as { K24_INGEST_TOKEN?: string }).K24_INGEST_TOKEN = 'k'.repeat(40);
+    const headers = { authorization: `Bearer ${'k'.repeat(40)}` };
+    const endpoint = '/api/v1/internal/khmer24/ingest';
+    const unchanged = { ...payload.listings[0],
+      source_url: 'https://www.khmer24.com/en/property/unchanged-adid-89123458' };
+    const first = { ...payload.listings[0],
+      source_url: 'https://www.khmer24.com/en/property/first-adid-89123459', raw_text: 'First $410/month' };
+    const last = { ...payload.listings[0],
+      source_url: 'https://www.khmer24.com/en/property/last-adid-89123460', raw_text: 'Last $420/month' };
+
+    expect((await app.inject({ method: 'POST', url: endpoint, headers,
+      payload: { ...payload, listings: [unchanged] } })).statusCode).toBe(200);
+
+    const enrich = jest.mocked(khmer24Scraper.enrichListingsWithLLM);
+    enrich.mockImplementationOnce(async (listings) => listings.map((listing, index) => ({
+      ...listing, title: `Changed ${index + 1}`, is_real_estate: true,
+    })));
+    const response = await app.inject({ method: 'POST', url: endpoint, headers,
+      payload: { ...payload, listings: [first, unchanged, last] },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(enrich).toHaveBeenLastCalledWith([first, last], { inclusive: true });
+    const versions = db.prepare(`SELECT s.external_id, v.raw_payload_json
+      FROM source_item_versions v JOIN source_items s ON s.id = v.source_item_id
+      WHERE s.external_id IN ('89123459', '89123460') ORDER BY s.external_id`).all() as {
+      external_id: string; raw_payload_json: string;
+    }[];
+    expect(versions.map((version) => ({
+      id: version.external_id,
+      title: (JSON.parse(version.raw_payload_json) as { listing: { title: string } }).listing.title,
+    }))).toEqual([
+      { id: '89123459', title: 'Changed 1' },
+      { id: '89123460', title: 'Changed 2' },
+    ]);
+  });
+
+  it('retries every changed listing when AI returns fewer results than the changed cohort', async () => {
+    (env as { K24_INGEST_TOKEN?: string }).K24_INGEST_TOKEN = 'k'.repeat(40);
+    const first = { ...payload.listings[0],
+      source_url: 'https://www.khmer24.com/en/property/first-adid-89123461', raw_text: 'First $410/month' };
+    const second = { ...payload.listings[0],
+      source_url: 'https://www.khmer24.com/en/property/second-adid-89123462', raw_text: 'Second $420/month' };
+    const request = { method: 'POST' as const, url: '/api/v1/internal/khmer24/ingest',
+      headers: { authorization: `Bearer ${'k'.repeat(40)}` },
+      payload: { ...payload, listings: [first, second] },
+    };
+    jest.mocked(khmer24Scraper.enrichListingsWithLLM).mockImplementationOnce(async (listings) => [
+      { ...listings[1], title: 'Must not land on first listing', is_real_estate: true },
+    ]);
+
+    const failed = await app.inject(request);
+    expect(failed.statusCode).toBe(503);
+    expect(failed.json().errors).toEqual([
+      { externalId: '89123461', message: 'LLM extraction unavailable' },
+      { externalId: '89123462', message: 'LLM extraction unavailable' },
+    ]);
+    for (const id of ['89123461', '89123462']) {
+      expect(db.prepare('SELECT classification FROM source_items WHERE external_id = ?').get(id))
+        .toMatchObject({ classification: 'UNCLASSIFIED' });
+    }
+
+    const replay = await app.inject(request);
+    expect(replay.statusCode).toBe(200);
+    expect(replay.json().errors).toEqual([]);
+  });
+
+  it('keeps the explicit noEnrich path free of AI calls', async () => {
+    const enrich = jest.mocked(khmer24Scraper.enrichListingsWithLLM);
+    enrich.mockClear();
+    const listing = { ...payload.listings[0],
+      source_url: 'https://www.khmer24.com/en/property/raw-adid-89123463' };
+
+    const result = await ingestKhmer24Listings(container, [listing], true);
+
+    expect(result.errors).toEqual([]);
+    expect(enrich).not.toHaveBeenCalled();
+    expect(db.prepare('SELECT classification FROM source_items WHERE external_id = ?')
+      .get('89123463')).toMatchObject({ classification: 'UNCLASSIFIED' });
+  });
+
   it('keeps a failed AI enrichment batch retryable and classifies it on replay', async () => {
     (env as { K24_INGEST_TOKEN?: string }).K24_INGEST_TOKEN = 'k'.repeat(40);
     const listing = {
@@ -87,7 +197,7 @@ describe('Khmer24 Mac-to-VPS raw ingest', () => {
     const warn = jest.spyOn(app.log, 'warn').mockImplementation(() => {});
     const info = jest.spyOn(app.log, 'info').mockImplementation(() => {});
     const child = jest.spyOn(app.log, 'child').mockReturnValue(app.log);
-    const telegram = jest.spyOn(container.alertService, 'warn');
+    const telegram = jest.spyOn(container.alertService, 'warnWithDeliveryResult');
     enrich.mockImplementationOnce(async (listings) => listings.map((item) => ({
       ...item,
       is_real_estate: null,
@@ -225,7 +335,7 @@ describe('Khmer24 Mac-to-VPS raw ingest', () => {
 
   it('notifies on thrown AI enrichment errors while preserving the retryable HTTP failure', async () => {
     (env as { K24_INGEST_TOKEN?: string }).K24_INGEST_TOKEN = 'k'.repeat(40);
-    const warn = jest.spyOn(container.alertService, 'warn').mockResolvedValue();
+    const warn = jest.spyOn(container.alertService, 'warnWithDeliveryResult').mockResolvedValue(true);
     jest.mocked(khmer24Scraper.enrichListingsWithLLM)
       .mockRejectedValueOnce(new Error('private provider response'));
     try {
