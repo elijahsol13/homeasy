@@ -52,13 +52,13 @@ async function main() {
         sourceType: 'FACEBOOK_GROUP', externalId: `browser-${i}`,
         sourceUrl: `https://facebook.com/groups/mini-app-browser-smoke/posts/${i}`,
         contentHash: `browser-${i}`,
-        rawText: `${title}: separate Siem Reap rental for $${offer.price}/month`,
+        rawText: `${title}: separate rental for $${offer.price}/month in Sangkat Sala Kamreuk, Siem Reap`,
         classification: 'HOUSING_SUPPLY',
         rawPayload: { listingExtraction: {
           title_en: title, description_en: `Apartment ${i} in Siem Reap`,
           price: offer.price, currency: 'USD', category: 'apartment',
           bedrooms: offer.rooms, bathrooms: 1, city: 'siem_reap',
-          sangkat: 'Wat Bo', offer_type: 'rent', min_lease_months: 6,
+          sangkat: 'Sala Kamreuk', offer_type: 'rent', min_lease_months: 6,
         }, photos: [] },
       });
     }
@@ -198,23 +198,15 @@ async function main() {
     console.log('PASS: one initial map request; panning updates viewport; lazy basemap does not duplicate requests (G)');
 
     const firstPin = page.locator('.leaflet-marker-icon').first();
-    if (await firstPin.count()) {
-      await firstPin.click();
-      const viewAsList = page.getByRole('button', { name: /View as list/ });
-      if (await viewAsList.count()) {
-        const clusterResponse = page.waitForResponse((response) => response.url().includes('/properties?')
-          && new URL(response.url()).searchParams.has('map_cluster_key'));
-        await viewAsList.click();
-        assert.equal((await clusterResponse).status(), 200);
-        console.log('PASS: district map cluster → real HTTP filtered feed (G)');
-      } else {
-        await page.getByRole('link', { name: 'Explore homes', exact: true }).click();
-        console.log('INFO: selected map pin did not expose a district cluster');
-      }
-    } else {
-      await page.getByRole('link', { name: 'Explore homes', exact: true }).click();
-      console.log('INFO: map fixture returned no clickable pin in the default viewport');
-    }
+    assert.ok(await firstPin.count(), 'map fixture must expose a clickable district pin');
+    await firstPin.click();
+    const viewAsList = page.getByRole('button', { name: /View as list/ });
+    assert.ok(await viewAsList.count(), 'a verified district cluster must offer list navigation');
+    const clusterResponse = page.waitForResponse((response) => response.url().includes('/properties?')
+      && new URL(response.url()).searchParams.has('map_cluster_key'));
+    await viewAsList.click();
+    assert.equal((await clusterResponse).status(), 200);
+    console.log('PASS: district map cluster → real HTTP filtered feed (G)');
 
     // Fault injection exercises the real browser's error UI without stopping
     // the temporary API or risking production services.

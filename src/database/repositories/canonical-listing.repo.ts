@@ -532,7 +532,7 @@ export class CanonicalListingRepository {
       bedrooms:row.bedrooms===null?null:Number(row.bedrooms),bathrooms:row.bathrooms===null?null:Number(row.bathrooms),
       deposit:row.deposit_amount===null?null:Number(row.deposit_amount),min_lease:row.min_lease_months===null?null:Number(row.min_lease_months),
       has_pool:typeof facts.has_pool==='boolean'?facts.has_pool:null,location,location_key:locationKey,raw_location:null,
-      city,coordinate_precision:latitude!==null&&longitude!==null?'exact':location!==city?'district':'city',maps_url:mapsUrl,
+      city,coordinate_precision:latitude!==null&&longitude!==null?'exact':locationKey?'district':'city',maps_url:mapsUrl,
       source_url:sourceUrl,photos,image_phash:null,image_phashes:[],direct_contact:contact,original_url:sourceUrl??'',reports_count:0,
       is_active:row.status==='active' && row.availability_status!=='rented' && row.availability_status!=='removed' ? 1 : 0,
       parsed_at:postedAt??updatedAt,posted_at:postedAt,updated_at:updatedAt,created_at:nonEmpty(row.created_at)??updatedAt,

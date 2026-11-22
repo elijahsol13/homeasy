@@ -188,6 +188,7 @@ const CATEGORY_FROM_TYPE: Record<ListingPropertyType, ListingCategory> = {
  * or an invented model spelling must never create an address/filter value. */
 function sourceSangkatCandidates(source: string): string[] {
   const candidates = new Set<string>();
+  const lines = source.split(/\r?\n/);
   for (const entry of CAMBODIA_LOCATIONS) {
     if (entry.city !== 'siem_reap' || entry.administrativeType !== 'sangkat') continue;
     for (const name of [entry.canonicalName, entry.khmerName, ...entry.aliases]) {
@@ -199,8 +200,23 @@ function sourceSangkatCandidates(source: string): string[] {
       // Only aliases eligible for administrative filters can establish a sangkat.
       if (getFilterSangkat(name, 'siem_reap')?.canonicalName !== entry.canonicalName) continue;
       const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/\s+/g, '\\s+');
-      const pattern = new RegExp(`(?:^|[^\\p{L}\\p{N}])${escaped}(?=$|[^\\p{L}\\p{N}])`, 'iu');
-      if (pattern.test(source)) candidates.add(entry.canonicalName);
+      const pattern = new RegExp(`(?:^|[^\\p{L}\\p{N}])(${escaped})(?=$|[^\\p{L}\\p{N}])`, 'giu');
+      for (const [index, line] of lines.entries()) {
+        const previousLine = lines[index - 1]?.trim() ?? '';
+        // Agency contact details and advertised proximity belong to the agent
+        // or a landmark. Neither is evidence of the property's sangkat.
+        if (/\b(?:agency|agent|office|showroom|headquarters|contact)\b|ការិយាល័យ/iu.test(line)
+          || /^(?:agency|agent|office|contact)(?:\s+(?:address|location))?\s*[:：-]?$/i.test(previousLine)) continue;
+        for (const match of line.matchAll(pattern)) {
+          const before = line.slice(0, match.index!);
+          const after = line.slice(match.index! + match[0].length);
+          if (/\b(?:near(?:by)?|close\s+to|next\s+to|distance\s+to|minutes?\s+(?:to|from)|min(?:ute)?s?\s+(?:drive|walk)\s+(?:to|from))(?:\s+the)?\s*$/i.test(before)
+            || /\b\d+(?:[.,]\d+)?\s*(?:km|m|meters?|metres?|kilometers?|kilometres?)\s+(?:away\s+)?(?:from|to|of)(?:\s+the)?\s*$/i.test(before)
+            || /^\s+(?:market|school|temple|hotel|office|pagoda)\b/i.test(after)) continue;
+          candidates.add(entry.canonicalName);
+          break;
+        }
+      }
     }
   }
   return [...candidates];

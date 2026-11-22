@@ -1,7 +1,7 @@
 import { aggregateUnlocatedMapItems } from '../src/modules/api/map-clusters';
 
 describe('aggregateUnlocatedMapItems', () => {
-  it('keeps Wat Bo (Sala Kamreuk) distinct from Sla Kram in map clusters', () => {
+  it('does not promote Wat Bo landmarks into verified district clusters', () => {
     const clusters = aggregateUnlocatedMapItems([
       { city: 'siem_reap', location: 'Wat Bo', locationKey: null, priceUsd: 200 },
       { city: 'siem_reap', location: 'Sla Kram', locationKey: 'siem_reap:sla_kram', priceUsd: 350 },
@@ -10,9 +10,9 @@ describe('aggregateUnlocatedMapItems', () => {
     expect(clusters).toHaveLength(2);
     expect(clusters).toEqual(expect.arrayContaining([
       expect.objectContaining({
-        location: 'Sala Kamreuk', locationKey: 'siem_reap:sala_kamreuk',
+        location: 'Siem Reap — area unverified', locationKey: null,
         count: 1, minPriceUsd: 200, maxPriceUsd: 200,
-        coordinatePrecision: 'district', locationAliases: ['Wat Bo'],
+        coordinatePrecision: 'city', locationAliases: ['Wat Bo'],
       }),
       expect.objectContaining({
         location: 'Sla Kram', locationKey: 'siem_reap:sla_kram',
@@ -42,7 +42,7 @@ describe('aggregateUnlocatedMapItems', () => {
     });
   });
 
-  it('maps explicit Srangae address text and Phsa Kraom residence to district clusters', () => {
+  it('uses verified Srangae key but keeps Phsa Kraom residence unverified', () => {
     const clusters = aggregateUnlocatedMapItems([
       {
         city: 'siem_reap',
@@ -68,10 +68,28 @@ describe('aggregateUnlocatedMapItems', () => {
         lng: 103.81,
       }),
       expect.objectContaining({
-        location: 'Svay Dangkum',
-        locationKey: 'siem_reap:svay_dangkum',
-        coordinatePrecision: 'district',
+        location: 'Siem Reap — area unverified',
+        locationKey: null,
+        coordinatePrecision: 'city',
       }),
     ]));
+  });
+
+  it('groups a landmark with a confirmed key alongside the same district', () => {
+    const clusters = aggregateUnlocatedMapItems([
+      { city: 'siem_reap', location: 'Wat Bo', locationKey: 'siem_reap:sala_kamreuk', priceUsd: 250 },
+      { city: 'siem_reap', location: 'Sala Kamreuk', locationKey: 'siem_reap:sala_kamreuk', priceUsd: 300 },
+    ], 'siem_reap');
+
+    expect(clusters).toHaveLength(1);
+    expect(clusters[0]).toMatchObject({
+      location: 'Sala Kamreuk',
+      locationKey: 'siem_reap:sala_kamreuk',
+      coordinatePrecision: 'district',
+      count: 2,
+      minPriceUsd: 250,
+      maxPriceUsd: 300,
+    });
+    expect(clusters[0].locationAliases).toEqual(['Wat Bo', 'Sala Kamreuk']);
   });
 });

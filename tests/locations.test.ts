@@ -137,10 +137,11 @@ describe('Cambodia Locations & Smart Google Maps Link Generator', () => {
         .toBe('Srangae');
     });
 
-    it('prepends Sangkat on unknown Siem Reap location fallback', () => {
+    it('keeps an unknown place name as a search query without inventing a Sangkat', () => {
       const url = formatGoogleMapsUrl('Green Village', 'siem_reap');
       const decoded = decodeURIComponent(url);
-      expect(decoded).toContain('Sangkat Green Village, Krong Siem Reap, Cambodia');
+      expect(decoded).toContain('Green Village, Siem Reap, Cambodia');
+      expect(decoded).not.toContain('Sangkat Green Village');
     });
   });
 
@@ -149,6 +150,12 @@ describe('Cambodia Locations & Smart Google Maps Link Generator', () => {
       const url = formatGoogleMapsUrl('BKK1', 'phnom_penh');
       const decoded = decodeURIComponent(url);
       expect(decoded).toContain('Sangkat Boeng Keng Kang Ti Muoy, Khan Boeng Keng Kang, Phnom Penh');
+    });
+
+    it('keeps an unknown Phnom Penh place name as-is rather than making up a Khan', () => {
+      const decoded = decodeURIComponent(formatGoogleMapsUrl('Green Village', 'phnom_penh'));
+      expect(decoded).toContain('Green Village, Phnom Penh, Cambodia');
+      expect(decoded).not.toContain('Khan Green Village');
     });
 
     it('maps Russian Market / TTP to Sangkat Tuol Tompoung', () => {

@@ -1,6 +1,5 @@
 import {
   CAMBODIA_LOCATIONS,
-  findCanonicalLocation,
   getCanonicalLocationKey,
   getSangkatCentroid,
 } from '../../config/locations';
@@ -29,9 +28,9 @@ export interface MapAreaCluster {
 }
 
 /**
- * Group unlocated listings only when their location resolves to a known area
- * in the requested city. Everything else is kept in one explicitly city-level
- * bucket so unknown addresses are never shown at a fabricated district pin.
+ * Group unlocated listings by their source-verified canonical location key.
+ * Display-only landmarks must remain in the city-level bucket because feed
+ * filters use the verified key, not a broad free-text location match.
  */
 export function aggregateUnlocatedMapItems(items: UnlocatedMapItem[], city: CityKey): MapAreaCluster[] {
   const groups = new Map<string, {
@@ -52,16 +51,7 @@ export function aggregateUnlocatedMapItems(items: UnlocatedMapItem[], city: City
   );
 
   for (const item of items) {
-    const textEntry = item.location.trim() ? findCanonicalLocation(item.location, city) : undefined;
-    const keyEntry = item.locationKey ? keyEntries.get(item.locationKey) : undefined;
-    const locationConflictsWithKey = Boolean(
-      textEntry && keyEntry && textEntry.canonicalName !== keyEntry.canonicalName,
-    );
-    const resolvedEntry = !locationConflictsWithKey
-      ? textEntry ?? (!item.location.trim() ? keyEntry : undefined)
-      : undefined;
-
-    const verifiedArea = resolvedEntry?.city === city ? resolvedEntry : undefined;
+    const verifiedArea = item.locationKey ? keyEntries.get(item.locationKey) : undefined;
     const groupKey = verifiedArea
       ? getCanonicalLocationKey(verifiedArea.canonicalName) ?? `${city}:area_unverified`
       : `${city}:area_unverified`;

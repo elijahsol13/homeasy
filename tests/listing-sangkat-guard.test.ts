@@ -38,6 +38,32 @@ describe('administrative locality and property-type source guards', () => {
       'House is described as being in Sla Kram and in Sala Kamreuk.')?.sangkat).toBeNull();
   });
 
+  it('does not treat a nearby sangkat or an agent office as the property address', () => {
+    const source = 'House for rent in Siem Reap\nNear Sala Kamreuk market\nAgency office: Sla Kram';
+    expect(sanitizeListingFacts(generated, source)?.sangkat).toBeNull();
+    expect(sanitizeListingFacts(generated,
+      'House for rent in Siem Reap\nLocation: Sla Kram\nNear Sala Kamreuk market')?.sangkat)
+      .toBe('Sla Kram');
+    expect(sanitizeListingFacts(generated,
+      'House for rent in Siem Reap\nAgency office: Sala Kamreuk')?.sangkat).toBeNull();
+  });
+
+  it('rejects proximity descriptions even with distances and intervening articles', () => {
+    expect(sanitizeListingFacts(generated,
+      'House for rent in Siem Reap\nNear the Sala Kamreuk market')?.sangkat).toBeNull();
+    expect(sanitizeListingFacts(generated,
+      'House for rent in Siem Reap\nNear the Sla Kram area')?.sangkat).toBeNull();
+    expect(sanitizeListingFacts(generated,
+      'House for rent in Siem Reap\n500m from Sla Kram')?.sangkat).toBeNull();
+    expect(sanitizeListingFacts(generated,
+      'House for rent in Siem Reap\n2 km from Sala Kamreuk')?.sangkat).toBeNull();
+    expect(sanitizeListingFacts(generated,
+      'House for rent in Siem Reap\nWithin 500m of Sla Kram')?.sangkat).toBeNull();
+    expect(sanitizeListingFacts(generated,
+      'House for rent in Siem Reap\nLocation: Sla Kram\n500m from Sala Kamreuk')?.sangkat)
+      .toBe('Sla Kram');
+  });
+
   it('does not confuse the Khmer city name with Sangkat Siem Reap', () => {
     expect(sanitizeListingFacts(generated,
       'ផ្ទះសម្រាប់ជួលនៅក្រុងសៀមរាប (house for rent in Siem Reap city)')?.sangkat).toBeNull();

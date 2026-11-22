@@ -424,6 +424,21 @@ describe('CanonicalListingRepository', () => {
     expect(repository.searchProperties({city:'siem_reap',type:'rent',locations:['Srangae']}).total).toBe(1);
   });
 
+  it('does not mark a landmark-only location as verified district precision', () => {
+    db.prepare("UPDATE canonical_listings SET explicit_location='Wat Bo',sangkat=NULL WHERE id=1").run();
+    const unknown = repository.getPropertyById(1)!;
+    expect(unknown.location).toBe('Wat Bo');
+    expect(unknown.location_key).toBeNull();
+    expect(unknown.coordinate_precision).toBe('city');
+    expect(unknown.latitude).toBeNull();
+    expect(unknown.longitude).toBeNull();
+
+    db.prepare("UPDATE canonical_listings SET sangkat='Sala Kamreuk' WHERE id=1").run();
+    const verified = repository.getPropertyById(1)!;
+    expect(verified.location_key).toBe('siem_reap:sala_kamreuk');
+    expect(verified.coordinate_precision).toBe('district');
+  });
+
   it('combines verified sangkat variants without publishing marketing addresses or generic city mentions', () => {
     db.prepare("UPDATE canonical_listings SET explicit_location='Wat Bo Village',sangkat=NULL WHERE id=1").run();
     db.prepare("UPDATE canonical_listings SET availability_status='available',explicit_location='Slorkram',sangkat=NULL WHERE id=2").run();

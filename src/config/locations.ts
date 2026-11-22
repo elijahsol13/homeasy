@@ -510,18 +510,9 @@ export function formatGoogleMapsUrl(
     return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(matched.googleMapsPlaceQuery)}`;
   }
 
-  // Smart fallback: if in Siem Reap and doesn't mention "Sangkat" or "District", prepend "Sangkat"
-  if (cityKey === 'siem_reap') {
-    const query = lower.includes('sangkat') || lower.includes('district')
-      ? `${loc}, Krong Siem Reap, Cambodia`
-      : `Sangkat ${loc}, Krong Siem Reap, Cambodia`;
-    return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(query)}`;
-  }
-
-  // Smart fallback for Phnom Penh
-  const query = lower.includes('khan') || lower.includes('sangkat')
-    ? `${loc}, Phnom Penh, Cambodia`
-    : `Khan ${loc}, Phnom Penh, Cambodia`;
+  // Unrecognized text may name a building, market or landmark, not a district.
+  // Preserve it in the search query without fabricating an administrative label.
+  const query = `${loc}, ${cityLabel}, Cambodia`;
   return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(query)}`;
 }
 

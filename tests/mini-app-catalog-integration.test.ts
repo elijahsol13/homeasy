@@ -118,7 +118,7 @@ describe('Mini App listing query integration through Fastify and in-memory SQLit
         expect(mixed.total).toBe(4);
       });
 
-      it('uses identical cohort filters for map clusters and list, including cluster-key navigation', async () => {
+      it('keeps map and list membership identical without assigning a district to Wat Bo', async () => {
         const selectedLocation = path === 'legacy' ? 'Sala Kamreuk' : 'Wat Bo';
         const params = `category=house&locations_json=${encodeURIComponent(JSON.stringify([selectedLocation]))}&min_price=350&max_price=550&bedrooms=4&bathrooms=2&min_lease_max=6&query=Integration`;
         const feed = await list(params);
@@ -127,6 +127,15 @@ describe('Mini App listing query integration through Fastify and in-memory SQLit
         expect(markers.markers.filter((item) => item.isExact)).toHaveLength(0);
         expect(markers.markers.reduce((count, marker) => count + (marker.count ?? 1), 0)).toBe(feed.total);
         const cluster = markers.markers.find((marker) => !marker.isExact);
+        expect(cluster).toBeDefined();
+        if (path === 'canonical') {
+          expect(cluster).toMatchObject({
+            location: 'Siem Reap — area unverified', locationKey: null,
+            coordinatePrecision: 'city', count: 2,
+          });
+          expect(cluster?.locationKey).toBeNull();
+          return;
+        }
         expect(cluster?.locationKey).toBeTruthy();
         const fromCluster = await list(`${params}&map_cluster_key=${encodeURIComponent(cluster!.locationKey!)}`);
         expect(fromCluster.total).toBe(2);
@@ -181,6 +190,23 @@ describe('Mini App listing query integration through Fastify and in-memory SQLit
       });
     });
   }
+
+  it('drills down to the source-stated Sala Kamreuk sangkat in the canonical catalog', async () => {
+    env.LISTING_READ_PATH = 'canonical';
+    const params = `category=house&locations_json=${encodeURIComponent(JSON.stringify(['Sala Kamreuk']))}&min_price=250&max_price=350&bedrooms=3&query=Integration`;
+    const feed = await list(params);
+    expect(feed.total).toBe(1);
+    const markers = await map(`${params}&limit=1`);
+    expect(markers.markers.reduce((count, marker) => count + (marker.count ?? 1), 0)).toBe(feed.total);
+    const cluster = markers.markers.find((marker) => !marker.isExact);
+    expect(cluster).toMatchObject({
+      location: 'Sala Kamreuk', locationKey: 'siem_reap:sala_kamreuk',
+      coordinatePrecision: 'district', count: 1,
+    });
+    const fromCluster = await list(`${params}&map_cluster_key=${encodeURIComponent(cluster!.locationKey!)}`);
+    expect(fromCluster.total).toBe(1);
+    expect(bedrooms(fromCluster)).toEqual([3]);
+  });
 
   it('preserves canonical unknown-price matches but excludes unknown-bedroom matches (C)', async () => {
     env.LISTING_READ_PATH = 'canonical';
