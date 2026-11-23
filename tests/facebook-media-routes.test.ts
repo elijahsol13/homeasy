@@ -28,7 +28,7 @@ describe('Facebook hosted media API', () => {
     runMigrations(db);
     const registryId = Number(db.prepare("INSERT INTO source_registry(source_key,source_type,name) VALUES ('fb:test','FACEBOOK_GROUP','Test')").run().lastInsertRowid);
     db.prepare(`INSERT INTO source_items(source_registry_id,source_type,external_id,group_id,canonical_url,classification)
-      VALUES (?,'FACEBOOK_GROUP','1001','123','https://www.facebook.com/groups/123/posts/1001/','HOUSING_SUPPLY')`).run(registryId);
+      VALUES (?,'FACEBOOK_GROUP','1001','123','https://www.facebook.com/groups/siemreaprealestate/posts/1001/','HOUSING_SUPPLY')`).run(registryId);
     app = await buildApiServer({ container: createContainer({ db }) });
     await app.ready();
     const full = await sharp({ create: { width: 8, height: 8, channels: 3, background: '#334455' } }).webp().toBuffer();
@@ -53,7 +53,7 @@ describe('Facebook hosted media API', () => {
       payload: { ...payload, postId: '9999' } })).statusCode).toBe(404);
   });
 
-  it('publishes a gallery idempotently and serves its WebP bytes', async () => {
+  it('publishes from a group slug permalink idempotently and serves its WebP bytes', async () => {
     const first = await app.inject({ method: 'POST', url: '/api/v1/internal/facebook/media', headers, payload });
     expect(first.statusCode).toBe(200);
     const result = first.json() as { galleryId: number; photos: Array<{ fullUrl: string; thumbUrl: string }> };
@@ -76,11 +76,11 @@ describe('Facebook hosted media API', () => {
   });
 
   it('refuses a source row whose canonical permalink disagrees with the upload identity', async () => {
-    db.prepare("UPDATE source_items SET canonical_url='https://www.facebook.com/groups/123/posts/9999/' WHERE external_id='1001'").run();
+    db.prepare("UPDATE source_items SET canonical_url='https://www.facebook.com/groups/999/posts/1001/' WHERE external_id='1001'").run();
     const response = await app.inject({ method: 'POST', url: '/api/v1/internal/facebook/media', headers,
       payload: { ...payload, capturedAt: '2026-11-23T12:00:00Z' } });
     expect(response.statusCode).toBe(404);
-    db.prepare("UPDATE source_items SET canonical_url='https://www.facebook.com/groups/123/posts/1001/' WHERE external_id='1001'").run();
+    db.prepare("UPDATE source_items SET canonical_url='https://www.facebook.com/groups/siemreaprealestate/posts/1001/' WHERE external_id='1001'").run();
   });
 
   it('rejects a non-Facebook photo URL even when the post identity matches', async () => {

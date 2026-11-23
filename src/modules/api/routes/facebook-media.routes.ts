@@ -58,7 +58,8 @@ export const facebookMediaRoutes: FastifyPluginAsync<{ container: AppContainer }
       WHERE source_type='FACEBOOK_GROUP' AND group_id=? AND external_id=? LIMIT 2`)
       .all(input.groupId, input.postId) as Array<{ id: number; canonical_url: string }>;
     const identity = sources.length === 1 ? facebookPostIdentity(sources[0].canonical_url) : null;
-    if (!identity || identity.groupId !== input.groupId || identity.postId !== input.postId) {
+    if (!identity || identity.postId !== input.postId
+      || (/^\d+$/.test(identity.groupId) && identity.groupId !== input.groupId)) {
       return reply.code(404).send({ error: 'Source post not found' });
     }
     const source = sources[0];
