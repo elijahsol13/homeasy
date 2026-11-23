@@ -76,6 +76,7 @@ describe('Independent local backup worker health', () => {
     db.close();
 
     const attempts: { atMs: number; success: boolean }[] = [];
+    const housekeeping: number[] = [];
     const waits: number[] = [];
     let clockMs = 0;
 
@@ -88,6 +89,7 @@ describe('Independent local backup worker health', () => {
       async (ms) => { waits.push(ms); clockMs += ms; },
       () => attempts.length < 4,
       (result) => { attempts.push({ atMs: clockMs, success: result.success }); },
+      () => { housekeeping.push(clockMs); if (housekeeping.length === 1) throw new Error('GC failed'); },
     );
 
     expect(attempts).toEqual([
@@ -97,6 +99,7 @@ describe('Independent local backup worker health', () => {
       { atMs: 2 * BACKUP_INTERVAL_MS + BACKUP_RETRY_MS, success: true },
     ]);
     expect(waits).toEqual([BACKUP_INTERVAL_MS, BACKUP_RETRY_MS, BACKUP_INTERVAL_MS]);
+    expect(housekeeping).toEqual([0, BACKUP_INTERVAL_MS + BACKUP_RETRY_MS, 2 * BACKUP_INTERVAL_MS + BACKUP_RETRY_MS]);
 
     const published = fs.readdirSync(backupDir).filter((name) => name.endsWith('.db'));
     expect(published).toHaveLength(3);

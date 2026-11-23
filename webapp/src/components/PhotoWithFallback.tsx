@@ -5,9 +5,23 @@ type Props = React.ImgHTMLAttributes<HTMLImageElement> & {
   fallbackSrcs?: readonly string[];
 };
 
+function imageCandidates(src: string): string[] {
+  if (!/^\/api\/v1\/media\/[0-9a-f]{64}\/(?:full|thumb)(?:#|$)/.test(src)) return [src];
+  const hosted = new URL(src, 'http://localhost');
+  const apiOrigin = new URL(import.meta.env.VITE_API_URL || 'https://api.rustycat.cc/api/v1').origin;
+  const candidates = [`${apiOrigin}${hosted.pathname}${hosted.hash}`];
+  const original = new URLSearchParams(hosted.hash.slice(1)).get('source');
+  if (original) {
+    try {
+      if (['http:', 'https:'].includes(new URL(original).protocol)) candidates.push(original);
+    } catch { /* Invalid source URL: show the unavailable placeholder on 404. */ }
+  }
+  return candidates;
+}
+
 /** Source-hosted Facebook image URLs can expire before the listing does. */
 export function PhotoWithFallback({ src, fallbackSrcs = [], alt, className = '', onError, ...rest }: Props) {
-  const candidates = [src, ...fallbackSrcs]
+  const candidates = [src, ...fallbackSrcs].flatMap(imageCandidates)
     .filter((url, index, urls) => url && urls.indexOf(url) === index)
     .slice(0, 3);
   const candidateKey = JSON.stringify(candidates);

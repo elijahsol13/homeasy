@@ -13,15 +13,15 @@ describe('SQLite schema compatibility', () => {
 
   afterEach(() => db.close());
 
-  it('initializes v58 on a fresh database and supports repeated startup', () => {
-    expect(db.prepare('SELECT MAX(version) AS version FROM schema_migrations').get()).toEqual({ version: 58 });
+  it('initializes v59 on a fresh database and supports repeated startup', () => {
+    expect(db.prepare('SELECT MAX(version) AS version FROM schema_migrations').get()).toEqual({ version: 59 });
     expect(db.prepare("SELECT name FROM sqlite_master WHERE name='contact_grants'").get()).toEqual({ name: 'contact_grants' });
     expect(db.prepare("SELECT name FROM sqlite_master WHERE name='canonical_listing_reports'").get())
       .toEqual({ name: 'canonical_listing_reports' });
     expect(db.prepare('SELECT consecutive_terminal_checks FROM canonical_listing_source_occurrences').all()).toEqual([]);
 
     runMigrations(db);
-    expect(db.prepare('SELECT COUNT(*) AS count FROM schema_migrations').get()).toEqual({ count: 58 });
+    expect(db.prepare('SELECT COUNT(*) AS count FROM schema_migrations').get()).toEqual({ count: 59 });
     expect(db.prepare('SELECT activated_at FROM canonical_review_alert_rollout WHERE id=1').get())
       .toEqual({ activated_at: null });
     expect(db.prepare('PRAGMA table_info(availability_checks)').all().some((column) => column.name === 'observation_id'))
@@ -29,9 +29,9 @@ describe('SQLite schema compatibility', () => {
   });
 
   it('fails closed when the database contains a migration newer than the running code', () => {
-    db.prepare('INSERT INTO schema_migrations(version) VALUES(59)').run();
-    expect(() => runMigrations(db)).toThrow('migration v59 is not supported');
-    expect(db.prepare('SELECT COUNT(*) AS count FROM schema_migrations').get()).toEqual({ count: 59 });
+    db.prepare('INSERT INTO schema_migrations(version) VALUES(60)').run();
+    expect(() => runMigrations(db)).toThrow('migration v60 is not supported');
+    expect(db.prepare('SELECT COUNT(*) AS count FROM schema_migrations').get()).toEqual({ count: 60 });
   });
 
   it('deduplicates canonical complaints per user without changing a colliding legacy listing', () => {

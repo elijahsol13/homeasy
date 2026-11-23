@@ -18,6 +18,9 @@ describe('CanonicalListingRepository', () => {
       CREATE TABLE source_item_identifiers(source_item_id INTEGER, type TEXT, normalized_value TEXT);
       CREATE TABLE media_assets(id INTEGER PRIMARY KEY, source_url TEXT);
       CREATE TABLE media_asset_source_occurrences(media_asset_id INTEGER, source_item_id INTEGER, source_occurrence_id INTEGER, listing_id INTEGER);
+      CREATE TABLE hosted_media_files(hash TEXT PRIMARY KEY, relative_path TEXT NOT NULL, byte_length INTEGER NOT NULL);
+      CREATE TABLE hosted_media_galleries(id INTEGER PRIMARY KEY, source_item_id INTEGER NOT NULL, captured_at TEXT NOT NULL, is_active INTEGER NOT NULL, purged_at TEXT);
+      CREATE TABLE hosted_media_gallery_photos(gallery_id INTEGER NOT NULL, ordinal INTEGER NOT NULL, source_url TEXT NOT NULL, anchor_id TEXT, full_hash TEXT NOT NULL, thumb_hash TEXT NOT NULL, PRIMARY KEY(gallery_id,ordinal));
     `);
     const insertListing = db.prepare(`INSERT INTO canonical_listings
       (id,public_ref,status,availability_status,price,currency,title,description,category,bedrooms,city,sangkat,explicit_location,first_seen_at,last_seen_at,primary_source_occurrence_id,listing_facts_json,created_at,updated_at)
@@ -502,6 +505,40 @@ describe('CanonicalListingRepository', () => {
     db.prepare('DELETE FROM media_asset_source_occurrences WHERE listing_id=1').run();
     expect(repository.getPropertyById(1)?.photos).toEqual(['https://img.test/a.jpg']);
     expect(repository.searchProperties({city:'siem_reap'}).items[0]?.photos).toEqual(['https://img.test/a.jpg']);
+  });
+
+  it('projects active source-verified gallery order with thumbnails in list and full photos in detail', () => {
+    const hashes = ['a', 'b', 'c', 'd'].map((letter) => letter.repeat(64));
+    db.prepare("UPDATE source_items SET source_type='FACEBOOK_GROUP',raw_payload_json=? WHERE id=1")
+      .run(JSON.stringify({ photos: ['https://img.test/old.jpg'] }));
+    db.prepare("INSERT INTO hosted_media_galleries(id,source_item_id,captured_at,is_active) VALUES(1,1,'2026-11-23',1)").run();
+    for (const hash of hashes) db.prepare('INSERT INTO hosted_media_files(hash,relative_path,byte_length) VALUES(?,?,10)')
+      .run(hash, `${hash.slice(0, 2)}/${hash}.webp`);
+    const insert = db.prepare('INSERT INTO hosted_media_gallery_photos(gallery_id,ordinal,source_url,full_hash,thumb_hash) VALUES(1,?,?,?,?)');
+    insert.run(1, 'https://img.test/second.jpg', hashes[0], hashes[1]);
+    insert.run(0, 'https://img.test/first.jpg', hashes[2], hashes[3]);
+
+    expect(repository.searchProperties({city:'siem_reap'}).items[0]?.photos).toEqual([
+      `/api/v1/media/${hashes[3]}/thumb#source=${encodeURIComponent('https://img.test/first.jpg')}`,
+      `/api/v1/media/${hashes[1]}/thumb#source=${encodeURIComponent('https://img.test/second.jpg')}`,
+    ]);
+    expect(repository.getPropertyById(1)?.photos).toEqual([
+      `/api/v1/media/${hashes[2]}/full#source=${encodeURIComponent('https://img.test/first.jpg')}`,
+      `/api/v1/media/${hashes[0]}/full#source=${encodeURIComponent('https://img.test/second.jpg')}`,
+    ]);
+  });
+
+  it('does not project unrelated, inactive or unverified historical media as hosted', () => {
+    const hash = 'e'.repeat(64);
+    db.prepare("UPDATE source_items SET source_type='FACEBOOK_GROUP' WHERE id=1").run();
+    db.prepare('INSERT INTO hosted_media_files(hash,relative_path,byte_length) VALUES(?,?,10)')
+      .run(hash, `ee/${hash}.webp`);
+    db.prepare("INSERT INTO hosted_media_galleries(id,source_item_id,captured_at,is_active) VALUES(1,2,'2026-11-23',1)").run();
+    db.prepare('INSERT INTO hosted_media_gallery_photos(gallery_id,ordinal,source_url,full_hash,thumb_hash) VALUES(1,0,?,?,?)')
+      .run('https://img.test/a.jpg', hash, hash);
+    expect(repository.getPropertyById(1)?.photos).toEqual(['https://img.test/canonical.jpg']);
+    db.prepare('UPDATE hosted_media_galleries SET source_item_id=1,is_active=0 WHERE id=1').run();
+    expect(repository.searchProperties({city:'siem_reap'}).items[0]?.photos).toEqual(['https://img.test/canonical.jpg']);
   });
 
   it('uses source city only as a hint and excludes explicit out-of-area geography', () => {

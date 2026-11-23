@@ -58,6 +58,8 @@ import { cleanPhotoUrls, extractDirectContacts, formatDomesticPhone } from './no
 import { isNonRealEstateSpam } from './spam-detector';
 import { findCanonicalLocation } from '../../config/locations';
 import { submitFacebookListings, flushConfiguredFacebookOutbox } from './facebook-outbox';
+import { captureFacebookPostMedia, selectMediaCaptureRequests, type MediaCaptureRequest } from './facebook-gallery-media';
+import { flushFacebookMediaOutbox, queueFacebookMedia } from './facebook-media-outbox';
 import { installLegacyPropertiesWriteGuard } from '../../database/legacy-write-guard';
 import { resolvePropertyMapFromText } from './source-map-location';
 import { factualListingFallback } from './listing-editorial';
@@ -68,6 +70,7 @@ export const BROWSER_CACHE_DIR = path.join(process.cwd(), 'data', 'browser_cache
 // disk caching is gone — Playwright cannot serve a persistent context over the
 // Camoufox websocket endpoint, so each run starts with a cold HTTP cache.
 export const SCRAPER_STATE_PATH = path.join(process.cwd(), 'data', 'scraper_state.json');
+const FB_MEDIA_OUTBOX_DIR = path.join(process.cwd(), 'data', 'fb_media_outbox');
 
 export interface ScraperState {
   fbGroupCursor: number;
@@ -1406,6 +1409,8 @@ export async function runFacebookScraper(
   options: {
     targets?: FBGroupTarget[];
     maxScrollsPerGroup?: number;
+    /** Opt-in only; each expected count must be verified from the source post. */
+    mediaCaptureRequests?: MediaCaptureRequest[];
   } = {},
 ): Promise<{
   totalScraped: number;
@@ -1420,6 +1425,11 @@ export async function runFacebookScraper(
   console.log('═══════════════════════════════════════════════════════════════');
 
   const remoteMode = Boolean(env.FB_INGEST_URL);
+  const mediaUploadUrl = env.FB_INGEST_URL?.replace(/\/ingest\/?$/, '/media');
+  if (options.mediaCaptureRequests?.length && (!remoteMode || !mediaUploadUrl
+    || mediaUploadUrl === env.FB_INGEST_URL)) {
+    throw new Error('Explicit media capture requires a configured Facebook media upload endpoint');
+  }
   // On the Mac remote-mode owns only pinned browser/session files and its durable outbox.
   // The VPS API is the sole canonical database writer.
   const container = remoteMode ? undefined : (containerInstance ?? createContainer());
@@ -1434,6 +1444,13 @@ export async function runFacebookScraper(
       console.log(`📤 Replayed Facebook outbox: ${replayed.newSourceItems} new, ${replayed.updatedSourceItems} updated.`);
     } catch (err) {
       console.warn('⚠️ Facebook outbox still pending; newly collected posts will be queued locally:', err);
+    }
+    if (fs.existsSync(FB_MEDIA_OUTBOX_DIR) && mediaUploadUrl && mediaUploadUrl !== env.FB_INGEST_URL) {
+      try {
+        await flushFacebookMediaOutbox(FB_MEDIA_OUTBOX_DIR, mediaUploadUrl, env.FB_INGEST_TOKEN!);
+      } catch (err) {
+        console.warn('⚠️ Facebook media outbox remains pending:', err);
+      }
     }
   }
 
@@ -1503,6 +1520,25 @@ export async function runFacebookScraper(
         totalDuplicates += result.unchangedSourceItems;
         totalErrors += result.errors.length;
         console.log(`  📥 Canonical: new=${result.newSourceItems}, changed=${result.updatedSourceItems}, unchanged=${result.unchangedSourceItems}, errors=${result.errors.length}`);
+        if (result.errors.length === 0 && options.mediaCaptureRequests?.length && mediaUploadUrl) {
+          for (const request of selectMediaCaptureRequests(listings, options.mediaCaptureRequests)) {
+            const mediaPage = await context.newPage();
+            try {
+              await attachTrafficGuard(mediaPage);
+              const mediaBatch = await captureFacebookPostMedia(mediaPage, request.postUrl, request.expectedCount);
+              const challenge = await detectFacebookChallenge(mediaPage);
+              if (challenge) throw new FacebookSessionExpiredError(challenge);
+              if (!mediaBatch) continue;
+              queueFacebookMedia(FB_MEDIA_OUTBOX_DIR, mediaBatch);
+              await flushFacebookMediaOutbox(FB_MEDIA_OUTBOX_DIR, mediaUploadUrl, env.FB_INGEST_TOKEN!);
+            } catch (error) {
+              if (error instanceof FacebookSessionExpiredError) throw error;
+              console.warn('⚠️ Source-bound Facebook media capture remains incomplete:', error);
+            } finally {
+              await mediaPage.close().catch(() => {});
+            }
+          }
+        }
       } catch (err: unknown) {
         if (err instanceof FacebookSessionExpiredError) {
           sessionSafe = false;

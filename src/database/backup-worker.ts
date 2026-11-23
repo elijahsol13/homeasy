@@ -8,8 +8,10 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
 import { createDatabaseBackup, DEFAULT_DB_PATH } from './backup';
 import type { BackupResult } from './backup';
+import { runHostedMediaGc } from '../modules/media/hosted-media-gc';
 
 export const BACKUP_INTERVAL_MS = 12 * 60 * 60 * 1000;
 export const BACKUP_RETRY_MS = 30 * 60 * 1000;
@@ -65,11 +67,33 @@ export async function runBackupSchedule(
   wait: (ms: number) => Promise<void>,
   isRunning: () => boolean,
   report: (result: BackupResult) => void,
+  housekeeping?: () => void,
 ): Promise<void> {
   while (isRunning()) {
     const result = backup();
     report(result);
+    if (result.success && housekeeping) {
+      try { housekeeping(); } catch (error) { console.error('[Backup] Media housekeeping failed:', error); }
+    }
     if (isRunning()) await wait(result.success ? BACKUP_INTERVAL_MS : BACKUP_RETRY_MS);
+  }
+}
+
+function runMediaHousekeeping(): void {
+  const dbPath = process.env.DATABASE_PATH ?? DEFAULT_DB_PATH;
+  const db = new DatabaseSync(dbPath);
+  try {
+    const result = runHostedMediaGc({
+      db,
+      mediaRoot: path.join(path.dirname(path.resolve(dbPath)), 'media'),
+      backupDir: localBackupDir(dbPath),
+      dryRun: false,
+      limit: 25,
+    });
+    if (result.blockedReason) console.error(`[Backup] Media housekeeping blocked: ${result.blockedReason}`);
+    else console.log(`[Backup] Media housekeeping: ${result.markedGalleries} marked, ${result.purgedGalleries} purged, ${result.deletedFiles} indexed files (${result.deletedBytes} bytes), ${result.deletedUnindexedFiles} unindexed files and ${result.deletedTemporaryFiles} temporary files deleted; ${result.restoredQuarantineFiles} quarantined files restored.`);
+  } finally {
+    db.close();
   }
 }
 
@@ -102,7 +126,7 @@ async function runBackupWorker(): Promise<void> {
     } else {
       console.error(`[Backup] Snapshot failed: ${result.error}`);
     }
-  });
+  }, runMediaHousekeeping);
   console.log('[Backup] Worker stopped.');
 }
 

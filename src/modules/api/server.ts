@@ -12,6 +12,7 @@ import { webhookRoutes } from './routes/webhook.routes';
 import { trackingRoutes } from './routes/tracking.routes';
 import { interestsRoutes } from './routes/interests.routes';
 import { facebookIngestRoutes } from './routes/facebook-ingest.routes';
+import { facebookMediaRoutes } from './routes/facebook-media.routes';
 import { khmer24IngestRoutes } from './routes/khmer24-ingest.routes';
 import { createBot } from '../bot/bot';
 
@@ -77,6 +78,7 @@ export async function buildApiServer(options: BuildServerOptions): Promise<Fasti
   await app.register(trackingRoutes, { container });
   await app.register(interestsRoutes, { container });
   await app.register(facebookIngestRoutes, { container });
+  await app.register(facebookMediaRoutes, { container });
   await app.register(khmer24IngestRoutes, { container });
 
   // Webhook route is always registered so it exists for health/diagnostics, but

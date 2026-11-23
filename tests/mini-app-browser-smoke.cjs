@@ -4,6 +4,8 @@
  * Requires loopback listeners and a locally installed Chrome/Chromium.
  */
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const os = require('node:os');
 const path = require('node:path');
 const { pathToFileURL } = require('node:url');
 
@@ -11,12 +13,15 @@ require('ts-node/register/transpile-only');
 
 const { DatabaseSync } = require('node:sqlite');
 const { chromium } = require('playwright');
+const sharp = require('sharp');
 const { createContainer } = require('../src/container');
 const { env } = require('../src/config/env');
 const { runMigrations } = require('../src/database/migrate');
 const { SourceIngestionRepository } = require('../src/database/repositories/source-ingestion.repo');
 const { CanonicalShadowService } = require('../src/modules/parser/canonical-dedupe');
 const { buildApiServer } = require('../src/modules/api/server');
+const { HostedMediaRepository } = require('../src/modules/media/hosted-media.repo');
+const { storeEncodedPhotoSync } = require('../src/modules/media/hosted-media-store');
 
 const projectRoot = path.resolve(__dirname, '..');
 const webRoot = path.join(projectRoot, 'webapp');
@@ -32,15 +37,19 @@ const cases = [
 async function main() {
   const oldReadPath = env.LISTING_READ_PATH;
   const oldShadow = env.LISTING_READ_SHADOW;
+  const oldDatabasePath = env.DATABASE_PATH;
   const oldViteApi = process.env.VITE_API_URL;
   let api;
   let vite;
   let browser;
   let db;
+  let mediaFixtureRoot;
 
   try {
     db = new DatabaseSync(':memory:');
     runMigrations(db);
+    mediaFixtureRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'homeasy-browser-media-'));
+    env.DATABASE_PATH = path.join(mediaFixtureRoot, 'fixture.db');
     const container = createContainer({ db });
     const sources = new SourceIngestionRepository(db);
     const sourceId = sources.upsertSource({
@@ -67,6 +76,24 @@ async function main() {
     db.prepare("UPDATE canonical_listings SET bedrooms=NULL, price=0 WHERE title LIKE 'Integration 5 %'").run();
     assert.equal(db.prepare('SELECT COUNT(*) AS n FROM canonical_listings').get().n, 6);
 
+    const mediaRoot = path.join(mediaFixtureRoot, 'media');
+    fs.mkdirSync(mediaRoot);
+    const hostedFiles = [];
+    const galleryPhotos = [];
+    for (const [index, color] of ['#334455', '#556677'].entries()) {
+      const full = await sharp({ create: { width: 80, height: 60, channels: 3, background: color } }).webp().toBuffer();
+      const thumb = await sharp(full).resize(40).webp().toBuffer();
+      const fullFile = storeEncodedPhotoSync(mediaRoot, full);
+      const thumbFile = storeEncodedPhotoSync(mediaRoot, thumb);
+      hostedFiles.push({ full: fullFile, thumb: thumbFile });
+      galleryPhotos.push({
+        sourceUrl: `https://scontent.fbcdn.net/browser-smoke-${index}.jpg`,
+        anchorId: String(1000 + index), full: fullFile, thumb: thumbFile,
+      });
+    }
+    const fixtureSourceId = db.prepare("SELECT id FROM source_items WHERE external_id='browser-0'").get().id;
+    new HostedMediaRepository(db).publishGallery(fixtureSourceId, new Date().toISOString(), galleryPhotos);
+
     env.LISTING_READ_PATH = 'canonical';
     env.LISTING_READ_SHADOW = false;
     api = await buildApiServer({ container, logger: false });
@@ -92,6 +119,9 @@ async function main() {
     });
     const context = await browser.newContext();
     const page = await context.newPage();
+    // Deleted WebP files must be requested again, not served from Chrome's memory cache.
+    const cdp = await context.newCDPSession(page);
+    await cdp.send('Network.setCacheDisabled', { cacheDisabled: true });
     const pageErrors = [];
     page.on('pageerror', (error) => pageErrors.push(error.message));
     // Keep the test offline: only the two temporary loopback listeners may be contacted.
@@ -232,6 +262,42 @@ async function main() {
     await page.waitForFunction(() => [...document.querySelectorAll('h3')]
       .some((el) => /^Integration \d/.test(el.textContent || '')));
     console.log('PASS: browser HTTP 500/network fault injection hides stale cards and recovers (H)');
+
+    const mediaCard = page.locator('article.property-card').filter({ hasText: /Integration 0/ });
+    const cover = mediaCard.locator('.property-card__photo img').first();
+    await page.waitForFunction(() => {
+      const img = [...document.querySelectorAll('article.property-card')]
+        .find((card) => card.textContent?.includes('Integration 0'))?.querySelector('.property-card__photo img');
+      return img instanceof HTMLImageElement && img.complete && img.naturalWidth === 40;
+    });
+    assert.match(await cover.getAttribute('src'), /\/api\/v1\/media\/[0-9a-f]{64}\/thumb/);
+    await mediaCard.click();
+    const dialog = page.getByRole('dialog', { name: /Integration 0/ });
+    await dialog.waitFor();
+    await page.waitForFunction(() => {
+      const images = [...document.querySelectorAll('[role="dialog"] img')];
+      return images.filter((img) => img.naturalWidth === 80).length >= 2;
+    });
+    assert.equal(await dialog.getByRole('button', { name: 'Next photo' }).count(), 1);
+    await dialog.getByRole('button', { name: 'Close', exact: true }).click();
+    console.log('PASS: hosted WebP cover and both full-resolution photos load in real Chrome');
+
+    const mediaPath = (file) => path.join(mediaRoot, file.relativePath);
+    fs.unlinkSync(mediaPath(hostedFiles[0].thumb));
+    await page.reload();
+    await page.waitForFunction(() => {
+      const img = [...document.querySelectorAll('article.property-card')]
+        .find((card) => card.textContent?.includes('Integration 0'))?.querySelector('.property-card__photo img');
+      return img instanceof HTMLImageElement && img.complete && img.naturalWidth === 40
+        && img.src.includes('/api/v1/media/');
+    });
+    assert.match(await cover.getAttribute('src'), new RegExp(hostedFiles[1].thumb.hash));
+    fs.unlinkSync(mediaPath(hostedFiles[1].thumb));
+    await page.reload();
+    await mediaCard.getByText('Photo unavailable', { exact: true }).first().waitFor();
+    assert.equal(await mediaCard.locator('.property-card__photo img').count(), 0);
+    console.log('PASS: missing hosted media falls back to second photo, then placeholder without page errors');
+
     assert.deepEqual(pageErrors, [], 'the browser must not emit uncaught JavaScript errors');
     await context.close();
   } finally {
@@ -239,8 +305,10 @@ async function main() {
     if (vite) await vite.close();
     if (api) await api.close();
     if (db) db.close();
+    if (mediaFixtureRoot) fs.rmSync(mediaFixtureRoot, { recursive: true, force: true });
     env.LISTING_READ_PATH = oldReadPath;
     env.LISTING_READ_SHADOW = oldShadow;
+    env.DATABASE_PATH = oldDatabasePath;
     if (oldViteApi === undefined) delete process.env.VITE_API_URL;
     else process.env.VITE_API_URL = oldViteApi;
   }

@@ -1173,6 +1173,44 @@ CREATE TABLE canonical_review_alert_deliveries (
 CREATE INDEX idx_canonical_review_alert_deliveries_pending
   ON canonical_review_alert_deliveries(status,id);
 `,
+
+  // ── v59: source-bound hosted Facebook gallery files ──────────────────────
+  `
+CREATE TABLE hosted_media_files (
+  hash TEXT PRIMARY KEY,
+  relative_path TEXT NOT NULL,
+  byte_length INTEGER NOT NULL CHECK(byte_length > 0),
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  unreferenced_since TEXT
+);
+
+CREATE TABLE hosted_media_galleries (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  source_item_id INTEGER NOT NULL REFERENCES source_items(id),
+  captured_at TEXT NOT NULL,
+  is_active INTEGER NOT NULL DEFAULT 1 CHECK(is_active IN (0,1)),
+  ever_public INTEGER NOT NULL DEFAULT 0 CHECK(ever_public IN (0,1)),
+  non_public_since TEXT,
+  purged_at TEXT,
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+CREATE UNIQUE INDEX idx_hosted_gallery_active_source
+  ON hosted_media_galleries(source_item_id) WHERE is_active=1 AND purged_at IS NULL;
+CREATE INDEX idx_hosted_gallery_retention
+  ON hosted_media_galleries(non_public_since,purged_at);
+
+CREATE TABLE hosted_media_gallery_photos (
+  gallery_id INTEGER NOT NULL REFERENCES hosted_media_galleries(id) ON DELETE CASCADE,
+  ordinal INTEGER NOT NULL CHECK(ordinal >= 0),
+  source_url TEXT NOT NULL,
+  anchor_id TEXT,
+  full_hash TEXT NOT NULL REFERENCES hosted_media_files(hash),
+  thumb_hash TEXT NOT NULL REFERENCES hosted_media_files(hash),
+  PRIMARY KEY(gallery_id,ordinal)
+);
+CREATE INDEX idx_hosted_gallery_photo_full ON hosted_media_gallery_photos(full_hash);
+CREATE INDEX idx_hosted_gallery_photo_thumb ON hosted_media_gallery_photos(thumb_hash);
+`,
 ];
 
 /**

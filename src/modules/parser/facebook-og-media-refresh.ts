@@ -19,7 +19,7 @@ export interface FacebookOgPhotoProof {
 const MAX_HTML_BYTES = 2 * 1024 * 1024;
 const MAX_IMAGE_PROOF_BYTES = 64;
 
-function facebookPostIdentity(value: string): { postId: string; groupId: string } | null {
+export function facebookPostIdentity(value: string): { postId: string; groupId: string } | null {
   try {
     const url = new URL(value);
     if (url.protocol !== 'https:' || url.username || url.password || url.port

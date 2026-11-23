@@ -22,6 +22,18 @@ function jsonArray(value: unknown): unknown[] {
 function stringList(value: unknown): string[] { return jsonArray(value).filter((entry): entry is string => typeof entry === 'string'); }
 function nonEmpty(value: unknown): string | null { return typeof value === 'string' && value.trim() ? value.trim() : null; }
 
+function hostedMediaUrl(hash: string, variant: 'full' | 'thumb', sourceUrl: unknown): string {
+  const original = nonEmpty(sourceUrl);
+  let fallback = '';
+  if (original) {
+    try {
+      const protocol = new URL(original).protocol;
+      if (protocol === 'http:' || protocol === 'https:') fallback = '#source=' + encodeURIComponent(original);
+    } catch { /* Invalid historical source URL: browser will show a placeholder. */ }
+  }
+  return `/api/v1/media/${hash}/${variant}${fallback}`;
+}
+
 const OUT_OF_AREA_TERMS = [
   'phnom penh','phnompenh','ភ្នំពេញ','kandal','kandal province','kandal district','kandal, cambodia','ខេត្តកណ្ដាល','kampot','kep',
   'sihanoukville','preah sihanouk','battambang','poipet','kampong cham','kampong thom','kampong speu',
@@ -278,7 +290,21 @@ export class CanonicalListingRepository {
         json_extract(s.raw_payload_json,'$.listing.phone')) AS contact_phone,
       (SELECT group_concat(normalized_value,' / ') FROM source_item_identifiers si
         WHERE si.source_item_id=s.id AND si.type='TELEGRAM') AS contact_telegram,
-      ${photoProjection} AS occurrence_media
+      ${photoProjection} AS occurrence_media,
+      (SELECT json_group_array(json_object(
+        'ordinal',ordered.ordinal,'sourceUrl',ordered.source_url,
+        'fullHash',ordered.full_hash,'thumbHash',ordered.thumb_hash,
+        'photoCount',ordered.photo_count))
+        FROM (SELECT photo.ordinal,photo.source_url,photo.full_hash,photo.thumb_hash,
+          (SELECT COUNT(*) FROM hosted_media_gallery_photos all_photos WHERE all_photos.gallery_id=gallery.id) AS photo_count
+          FROM hosted_media_galleries gallery
+          JOIN hosted_media_gallery_photos photo ON photo.gallery_id=gallery.id
+          JOIN hosted_media_files full_file ON full_file.hash=photo.full_hash
+          JOIN hosted_media_files thumb_file ON thumb_file.hash=photo.thumb_hash
+          WHERE gallery.source_item_id=s.id AND gallery.is_active=1 AND gallery.purged_at IS NULL
+            AND s.source_type='FACEBOOK_GROUP'
+          ORDER BY photo.ordinal
+        ) ordered) AS hosted_media
       ${detail ? ',s.raw_payload_json' : ''}`;
   }
 
@@ -472,7 +498,19 @@ export class CanonicalListingRepository {
     ],city);
     const locationKey=verifiedSangkat ? getCanonicalLocationKey(verifiedSangkat.canonicalName,city) : null;
     const media=typeof row.occurrence_media==='string'?row.occurrence_media.split('\n').filter(Boolean):[];
-    const photos=media.length?media:detail
+    const gallery=jsonArray(row.hosted_media);
+    const verifiedGallery=gallery.length>0 && gallery.every((entry,index)=>{
+      if (!entry || typeof entry!=='object' || Array.isArray(entry)) return false;
+      const photo=entry as Record<string,unknown>;
+      return photo.ordinal===index && photo.photoCount===gallery.length
+        && typeof photo.fullHash==='string' && /^[0-9a-f]{64}$/.test(photo.fullHash)
+        && typeof photo.thumbHash==='string' && /^[0-9a-f]{64}$/.test(photo.thumbHash);
+    });
+    const hostedPhotos=verifiedGallery?gallery.map((entry)=>{
+      const photo=entry as Record<string,unknown>;
+      return hostedMediaUrl(String(detail?photo.fullHash:photo.thumbHash),detail?'full':'thumb',photo.sourceUrl);
+    }):[];
+    const photos=hostedPhotos.length?hostedPhotos:media.length?media:detail
       ? stringList(raw.photos??payloadListing.photos??raw.image_urls??raw.images).length?stringList(raw.photos??payloadListing.photos??raw.image_urls??raw.images)
         :jsonArray(raw.photoAssets).map((p)=>typeof p==='string'?p:nonEmpty((p as Record<string,unknown>)?.url)).filter((p):p is string=>Boolean(p))
       :[];

@@ -5,6 +5,7 @@ import { fetchMapMarkers, fetchPropertyById } from '../services/api';
 import { triggerHaptic } from '../services/telegram';
 import { ArrowLeft, ChevronRight, Waves, MapPin } from 'lucide-react';
 import { formatPropertyTypeLabel } from '../formatters';
+import { PhotoWithFallback } from './PhotoWithFallback';
 
 interface MapViewProps {
   filters: FilterState;
@@ -390,7 +391,7 @@ export const MapView: React.FC<MapViewProps> = ({
                 <span className="text-[10px] font-extrabold mt-0.5">{selectedMarker.count}+</span>
               </div>
             ) : selectedMarker.thumbnail ? (
-              <img
+              <PhotoWithFallback
                 src={selectedMarker.thumbnail}
                 alt=""
                 className="w-16 h-16 rounded-xl object-cover shrink-0"
